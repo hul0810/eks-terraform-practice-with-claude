@@ -1,0 +1,26 @@
+terraform {
+  required_version = ">= 1.9"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.46"
+    }
+  }
+}
+
+provider "aws" {
+  region  = "ap-northeast-2"
+  profile = "terraform"
+
+  assume_role {
+    role_arn = "arn:aws:iam::891396992584:role/TerraformExecutionRole"
+  }
+
+  default_tags {
+    tags = {
+      environment = "common"
+      managed_by  = "terraform"
+    }
+  }
+}
