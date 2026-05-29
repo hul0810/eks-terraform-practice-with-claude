@@ -50,25 +50,25 @@
 
 ### 2-2. modules/eks + environments/dev eks 추가
 
-- [ ] `modules/vpc/main.tf`에 ELB 서브넷 태그 추가
-  - [ ] Public 서브넷: `kubernetes.io/role/elb = "1"`
-  - [ ] Private 서브넷: `kubernetes.io/role/internal-elb = "1"`
-- [ ] `modules/eks/variables.tf` 작성
-- [ ] `modules/eks/main.tf` 작성
-  - [ ] `terraform-aws-modules/eks v21.20.0` 호출
-  - [ ] 엔드포인트 설정 (dev: Public+Private / prd: Private only)
-  - [ ] 컨트롤 플레인 로깅 활성화 (API, Audit, Authenticator 등)
-  - [ ] 시스템용 Managed Node Group 구성 (Karpenter 실행용)
-    - [ ] Taint: `CriticalAddonsOnly=true:NoSchedule`
-    - [ ] Label: `role: system`
-    - [ ] `lifecycle { create_before_destroy = true }` 적용
-  - [ ] Security Group Rule을 인라인 대신 별도 리소스로 분리
-    - [ ] `aws_vpc_security_group_ingress_rule`
-    - [ ] `aws_vpc_security_group_egress_rule`
-- [ ] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint, oidc_provider_arn 등)
-- [ ] `environments/develop/ap-northeast-2/shared/eks/` 디렉토리 생성 및 구성 파일 작성
-  - [ ] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
-- [ ] `terraform plan` 검토
+- [x] `modules/vpc/main.tf`에 ELB 서브넷 태그 추가
+  - [x] Public 서브넷: `kubernetes.io/role/elb = "1"`
+  - [x] Private 서브넷: `kubernetes.io/role/internal-elb = "1"`
+- [x] `modules/eks/variables.tf` 작성
+- [x] `modules/eks/main.tf` 작성
+  - [x] `terraform-aws-modules/eks v21.22.0` 호출 (v21.20.0 → v21.22.0 최신 버전 적용)
+  - [x] 엔드포인트 설정 (dev: Public+Private / prd: Private only)
+  - [x] 컨트롤 플레인 로깅 on/off 변수화 (CloudWatch 비용 제어, 기본 비활성화)
+  - [x] 시스템용 Managed Node Group 구성 (Karpenter 실행용)
+    - [x] Taint: `CriticalAddonsOnly=true:NoSchedule`
+    - [x] Label: `role: system`
+    - [x] `lifecycle { create_before_destroy = true }` 적용 (모듈 내부 하드코딩 확인)
+  - [x] Security Group Rule을 인라인 대신 별도 리소스로 분리
+    - [x] `aws_vpc_security_group_ingress_rule`
+    - [x] `aws_vpc_security_group_egress_rule`
+- [x] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint, oidc_provider_arn 등)
+- [x] `environments/develop/ap-northeast-2/shared/eks/` 디렉토리 생성 및 구성 파일 작성
+  - [x] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
+- [x] `terraform plan` 검토 (vpc: 8 change / eks: 30 add, 오류 없음)
 - [ ] `terraform apply` 실행
 
 ### 2-3. modules/karpenter + environments/dev karpenter 추가
@@ -78,38 +78,39 @@
   - [ ] `karpenter.sh/discovery = var.cluster_name`
 - [ ] `modules/karpenter/variables.tf` 작성
 - [ ] `modules/karpenter/main.tf` 작성
-  - [ ] `terraform-aws-modules/eks//modules/karpenter` 서브모듈 사용
-  - [ ] Karpenter 컨트롤러 IAM 역할 + 노드 인스턴스 프로파일
-  - [ ] SQS + EventBridge (스팟 인터럽션 처리)
-  - [ ] Karpenter Helm 차트 배포 (시스템 노드 그룹 대상)
+  - [ ] `aws-ia/eks-blueprints-addons ~> 1.21` 사용
+    (Karpenter IAM Role + SQS 인터럽션 큐 + EventBridge Rule 4개 + Helm 배포 통합 처리)
+  - [ ] `enable_karpenter = true` 플래그 활성화
   - [ ] `EC2NodeClass` 리소스 정의 (AMI Family: AL2023, Private 서브넷)
   - [ ] `NodePool` 리소스 정의
     - [ ] dev: spot + on-demand 혼합, TTL 30분
     - [ ] prd: on-demand 전용, TTL 60분
 - [ ] `modules/karpenter/outputs.tf` 작성
-- [ ] `environments/develop/ap-northeast-2/shared/eks/` 의 locals.tf에 karpenter 설정값 추가 후 모듈 호출
+- [ ] `environments/develop/ap-northeast-2/shared/karpenter/` 디렉토리 생성 및 구성 파일 작성
+  - [ ] `providers.tf` 작성 (AWS + `helm` + `kubernetes` provider 포함)
+  - [ ] `backend.tf`, `locals.tf`, `main.tf`, `outputs.tf` 작성
 - [ ] `terraform plan` 검토
 - [ ] `terraform apply` 실행
 
 ### 2-4. modules/eks-addons + environments/dev addons 추가
 
 - [ ] `modules/eks-addons/variables.tf` 작성
-- [ ] `modules/eks-addons/irsa.tf` 작성
-  - [ ] `terraform-aws-modules/iam v6.6.0` 사용
-  - [ ] AWS Load Balancer Controller용 IRSA 역할
-  - [ ] EBS CSI Driver용 IRSA 역할
-- [ ] `modules/eks-addons/main.tf` 작성 (EKS 관리형 애드온)
-  - [ ] `aws_eks_addon` - `vpc-cni`
-  - [ ] `aws_eks_addon` - `coredns`
-  - [ ] `aws_eks_addon` - `kube-proxy`
-  - [ ] `aws_eks_addon` - `aws-ebs-csi-driver`
-  - [ ] `aws_eks_addon` - `eks-pod-identity-agent`
-- [ ] `modules/eks-addons/helm.tf` 작성 (Helm 애드온)
-  - [ ] AWS Load Balancer Controller
-  - [ ] Metrics Server
-  - [ ] kube-prometheus-stack (Prometheus + Grafana + AlertManager)
+- [ ] `modules/eks-addons/main.tf` 작성
+  - [ ] `aws-ia/eks-blueprints-addons ~> 1.21` 사용 (IRSA + EKS addon + Helm 통합 처리)
+  - [ ] EKS 관리형 애드온 (enable 플래그)
+    - [ ] `enable_aws_vpc_cni = true`
+    - [ ] `enable_coredns = true`
+    - [ ] `enable_kube_proxy = true`
+    - [ ] `enable_aws_ebs_csi_driver = true`
+    - [ ] `enable_eks_pod_identity_agent = true`
+  - [ ] Helm 애드온 (enable 플래그)
+    - [ ] `enable_aws_load_balancer_controller = true`
+    - [ ] `enable_metrics_server = true`
+    - [ ] `enable_kube_prometheus_stack = true`
 - [ ] `modules/eks-addons/outputs.tf` 작성
-- [ ] `environments/develop/ap-northeast-2/shared/eks/` 의 locals.tf에 addons 설정값 추가 후 모듈 호출
+- [ ] `environments/develop/ap-northeast-2/shared/eks-addons/` 디렉토리 생성 및 구성 파일 작성
+  - [ ] `providers.tf` 작성 (AWS + `helm` + `kubernetes` provider 포함)
+  - [ ] `backend.tf`, `locals.tf`, `main.tf`, `outputs.tf` 작성
 - [ ] `terraform plan` 검토
 - [ ] `terraform apply` 실행
 

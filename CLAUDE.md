@@ -35,6 +35,7 @@
 ## Terraform 작성 지시사항
 
 상세 원칙 전체: `@docs/terraform-principles.md` 참조
+**핵심 철학**: 초기에 올바른 구조를 갖춘다. 설정 비용이 낮고 장기 효과가 높다면 현재 규모와 관계없이 확장 가능한 구조를 기본값으로 선택한다.
 
 핵심 요약:
 - 환경별 설정값은 `locals.tf`에 집중 관리. `terraform.tfvars` 사용 금지
@@ -42,7 +43,9 @@
 - 인라인 블록 금지 (Security Group rule, S3 설정 등 별도 리소스로 분리)
 - `depends_on` 최소화, `moved` 블록으로 state 이전
 - 삭제 불가 리소스: `lifecycle { prevent_destroy = true }`
-- Provider 버전: `~> X.Y` 형식
+- 공식 모듈 버전: `~> X.Y.Z` 형식 (패치만 허용)
+- Provider 버전: `~> X.Y` 형식 (마이너까지 허용)
+- 커스텀 모듈: `modules/{name}/{version}/` 디렉토리 구조 (예: `modules/vpc/1.0.0/`)
 
 ---
 

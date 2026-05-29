@@ -24,11 +24,15 @@ terraform-eks-practice/
 ├── global/                                 # 환경 무관 글로벌 인프라
 │   └── tfstate-backend/                    # S3 버킷 + DynamoDB (state 저장소)
 │
-├── modules/                                # 재사용 Terraform 모듈
+├── modules/                                # 재사용 Terraform 모듈 (디렉토리 기반 버전 관리)
 │   ├── vpc/
-│   ├── eks/                                # (예정)
+│   │   └── 1.0.0/                          # 버전 디렉토리 (인터페이스 변경 시 2.0.0/ 추가)
+│   ├── eks/
+│   │   └── 1.0.0/
 │   ├── karpenter/                          # (예정)
+│   │   └── 1.0.0/
 │   └── eks-addons/                         # (예정)
+│       └── 1.0.0/
 │
 └── environments/
     ├── develop/
@@ -105,14 +109,14 @@ locals {
 
 ## 신규 리소스 추가 절차
 
-1. `modules/{resource}/` 에 재사용 모듈 작성 (variables, main, outputs)
+1. `modules/{resource}/1.0.0/` 에 재사용 모듈 작성 (variables, main, outputs) — 신규 모듈은 항상 버전 디렉토리부터 시작
 2. `environments/{env}/{region}/{project}/{resource}/` 디렉토리 생성
 3. 아래 파일 작성:
 
 | 파일 | 역할 |
 |------|------|
 | `backend.tf` | S3 backend, key 패턴 준수 |
-| `providers.tf` | `~> X.Y` 버전 제약 + `assume_role` 포함 |
+| `providers.tf` | Provider `~> X.Y` 버전 제약 + `assume_role` 포함 |
 | `locals.tf` | 환경별 설정값 집중 관리 |
 | `data.tf` | 동적 데이터 소스 (AZ, region, caller identity 등) |
 | `main.tf` | `modules/{resource}` 호출 |
