@@ -65,11 +65,21 @@
   - [x] Security Group Rule을 인라인 대신 별도 리소스로 분리
     - [x] `aws_vpc_security_group_ingress_rule`
     - [x] `aws_vpc_security_group_egress_rule`
+  - [x] `cluster_addons` 블록 추가 (bootstrap add-on 3종)
+    - [x] `vpc-cni` (`before_compute = true`: 노드 그룹 생성 전 CNI 먼저 배포)
+    - [x] `kube-proxy`
+    - [x] `coredns`
 - [x] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint, oidc_provider_arn 등)
 - [x] `environments/develop/ap-northeast-2/shared/eks/` 디렉토리 생성 및 구성 파일 작성
   - [x] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
 - [x] `terraform plan` 검토 (vpc: 8 change / eks: 30 add, 오류 없음)
-- [ ] `terraform apply` 실행
+- [~] `terraform apply` 실행
+  - [x] EKS 클러스터 생성 완료
+  - [ ] 노드 그룹 재생성 (CREATE_FAILED 상태 → destroy 후 재apply)
+    - cluster_addons 미설정으로 VPC CNI 미존재 → CNI 초기화 실패가 원인
+    - 해결: cluster_addons 추가 후 아래 순서로 재적용
+      1. `terraform destroy -target='module.eks.module.eks.module.eks_managed_node_group["system"].aws_eks_node_group.this[0]'`
+      2. `terraform apply`
 
 ### 2-3. modules/karpenter + environments/dev karpenter 추가
 
