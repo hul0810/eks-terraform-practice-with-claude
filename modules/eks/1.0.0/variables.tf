@@ -1,0 +1,82 @@
+################################################################################
+# EKS 모듈 입력 변수
+################################################################################
+
+variable "cluster_name" {
+  description = "EKS 클러스터 이름 (IAM Role, Security Group 등 연관 리소스의 Name에도 사용됨)"
+  type        = string
+}
+
+variable "kubernetes_version" {
+  description = "Kubernetes 버전. AWS EKS가 지원하는 버전만 지정 가능 (예: \"1.32\")"
+  type        = string
+
+  validation {
+    # 1.XX 형식 검증 — EKS 지원 버전 범위(1.25 이상)는 AWS 콘솔에서 별도 확인 필요
+    condition     = can(regex("^1\\.[0-9]+$", var.kubernetes_version))
+    error_message = "kubernetes_version은 \"1.XX\" 형식이어야 합니다 (예: \"1.32\")."
+  }
+}
+
+variable "vpc_id" {
+  description = "EKS 클러스터 및 노드 Security Group을 생성할 VPC ID"
+  type        = string
+}
+
+variable "subnet_ids" {
+  description = "노드 그룹(Managed Node Group)을 배치할 서브넷 ID 목록. 멀티 AZ 고가용성을 위해 최소 2개 이상의 서브넷(다른 AZ) 필요"
+  type        = list(string)
+
+  validation {
+    condition     = length(var.subnet_ids) >= 2
+    error_message = "subnet_ids는 고가용성을 위해 최소 2개 이상이어야 합니다."
+  }
+}
+
+variable "endpoint_public_access" {
+  description = "EKS API 서버 퍼블릭 엔드포인트 활성화 여부. develop=true(로컬 kubectl 접근), production=false(VPN/Bastion 경유)"
+  type        = bool
+  default     = false
+}
+
+variable "public_access_cidrs" {
+  description = "EKS API 서버 퍼블릭 엔드포인트 허용 CIDR 목록. endpoint_public_access=true 시 반드시 IP를 제한해야 한다. 기본값 0.0.0.0/0은 인터넷 전체 노출이므로 환경별로 반드시 재정의할 것."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "enabled_log_types" {
+  description = "활성화할 컨트롤 플레인 로그 타입 목록. 빈 리스트이면 비활성화 (CloudWatch Logs 비용 절감). 가능한 값: api, audit, authenticator, controllerManager, scheduler"
+  type        = list(string)
+  default     = []
+}
+
+variable "system_node_instance_types" {
+  description = "시스템 노드 그룹 EC2 인스턴스 타입 목록 (우선순위 순). Karpenter, CoreDNS, LBC 등 시스템 애드온이 실행되므로 최소 t3.medium 이상 권장"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "system_node_min_size" {
+  description = "시스템 노드 그룹 최소 노드 수"
+  type        = number
+  default     = 1
+}
+
+variable "system_node_max_size" {
+  description = "시스템 노드 그룹 최대 노드 수"
+  type        = number
+  default     = 3
+}
+
+variable "system_node_desired_size" {
+  description = "시스템 노드 그룹 초기(희망) 노드 수"
+  type        = number
+  default     = 2
+}
+
+variable "system_node_ami_type" {
+  description = "시스템 노드 그룹 AMI 타입. AL2023_x86_64_STANDARD = Amazon Linux 2023 x86_64 기본 이미지"
+  type        = string
+  default     = "AL2023_x86_64_STANDARD"
+}
