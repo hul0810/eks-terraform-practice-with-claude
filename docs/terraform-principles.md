@@ -95,6 +95,16 @@
 | 공식 모듈 (terraform-aws-modules, aws-ia 등) | `~> X.Y.Z` | 마이너도 인터페이스 변경 위험. 마이너 업그레이드는 CHANGELOG 확인 후 의도적으로 수동 변경 |
 | Provider (hashicorp/aws, kubernetes 등) | `~> X.Y` | 마이너는 기능 추가만, breaking change는 메이저에서만 발생 |
 
+### EKS 관리형 Add-on
+
+| 대상 | 형식 | 이유 |
+|------|------|------|
+| EKS 관리형 add-on (vpc-cni, kube-proxy, coredns 등) | `addon_version = "vX.Y.Z-eksbuildN"` 명시 고정 | `most_recent`는 apply 시점마다 버전이 달라져 환경 간 일관성 보장 불가 |
+
+- 버전 선택 기준: `aws eks describe-addon-versions --kubernetes-version <k8s-ver>` 조회 후 EKS 권장(`defaultVersion: true`) 버전 사용
+- 업그레이드: CHANGELOG 확인 후 `addon_version` 값을 의도적으로 수동 변경
+- `most_recent = true` **사용 금지**
+
 ### 커스텀 모듈 — 디렉토리 기반 버전 관리
 커스텀 모듈은 `modules/{name}/{version}/` 디렉토리 구조로 관리한다.
 
