@@ -2,7 +2,7 @@ data "aws_region" "current" {}
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "6.6.1"
+  version = "~> 6.6.1"
 
   name = var.vpc_name
   cidr = var.vpc_cidr
@@ -36,6 +36,16 @@ module "vpc" {
   single_nat_gateway     = var.enable_nat_gateway ? var.single_nat_gateway : true
   one_nat_gateway_per_az = var.enable_nat_gateway ? !var.single_nat_gateway : false
 
+  # AWS Load Balancer Controller가 서비스 어노테이션으로 서브넷을 자동 탐색하는 데 필요.
+  # 이 태그가 없으면 Ingress 생성 시 "no matching subnets" 오류가 발생한다.
+  public_subnet_tags = {
+    "kubernetes.io/role/elb" = "1"
+  }
+
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+
   enable_dns_hostnames = true
   enable_dns_support   = true
 }
@@ -43,7 +53,7 @@ module "vpc" {
 # v6부터 모듈 인라인 지원 제거. Gateway 타입은 무료이며 NAT GW 데이터 비용 절감.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = module.vpc.vpc_id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
 
   # EKS 노드/Pod의 NAT GW 비용 절감이 목적.
