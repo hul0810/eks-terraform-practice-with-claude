@@ -10,13 +10,13 @@
 
 전체 정책: `docs/terraform-principles.md` → **EKS 관리형 Add-on** 섹션 참조.
 
-### 현재 고정 버전 (EKS 1.32 / ap-northeast-2 / 2026-05-30 조회)
+### 현재 고정 버전 (EKS 1.33 / ap-northeast-2 / 2026-05-31 조회)
 
 | Add-on | 고정 버전 | EKS 권장 여부 |
 |--------|-----------|--------------|
 | vpc-cni | `v1.20.5-eksbuild.1` | default |
-| kube-proxy | `v1.32.13-eksbuild.5` | default |
-| coredns | `v1.11.4-eksbuild.33` | default |
+| kube-proxy | `v1.33.10-eksbuild.2` | default |
+| coredns | `v1.12.4-eksbuild.10` | default |
 
 ### 업그레이드 절차
 

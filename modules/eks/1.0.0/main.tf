@@ -67,10 +67,10 @@ module "eks" {
       before_compute = true
     }
     kube-proxy = {
-      addon_version = "v1.32.13-eksbuild.5"
+      addon_version = "v1.33.10-eksbuild.2"
     }
     coredns = {
-      addon_version = "v1.11.4-eksbuild.33"
+      addon_version = "v1.12.4-eksbuild.10"
     }
   }
 

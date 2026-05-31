@@ -7,7 +7,7 @@ locals {
 
   eks = {
     cluster_name       = "${local.project}-${local.env}"
-    kubernetes_version = "1.32"
+    kubernetes_version = "1.33"
 
     # develop: 로컬 PC에서 kubectl 직접 접근 편의를 위해 public 엔드포인트 허용
     # production: false로 변경 후 VPN/Bastion 경유
