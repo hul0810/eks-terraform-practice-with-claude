@@ -1,0 +1,5 @@
+version: 0.1
+
+projects:
+  - path: environments/develop/ap-northeast-2/shared/eks
+  - path: environments/develop/ap-northeast-2/shared/vpc

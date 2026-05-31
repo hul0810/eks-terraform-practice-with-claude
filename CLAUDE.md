@@ -9,10 +9,22 @@
 
 ---
 
+## 비용 정책
+
+**핵심 원칙: 실무 중심 인프라를 구축하되 비용을 최우선으로 고려한다.**
+
+- Terraform 코드 변경 후 `/cost-check` 실행 권장 (배포 전 예상 비용 delta 확인)
+- production 변경은 `/review-terraform`에 비용 체크 포함 (4단계에서 자동 실행)
+- EKS 버전 지원 일정 필수 확인: Extended Support 진입 시 $0.50/hr 추가 발생
+- 실제 비용 이상 감지 또는 원인 분석 필요 시: `cost-engineer` 에이전트에게 요청
+
+---
+
 ## MCP 사용 규칙
 
 - **Terraform 코드 작성 시**: `terraform` MCP로 provider/모듈 버전 및 리소스 스키마를 확인한 후 작성한다.
 - **AWS 인프라 구축 시**: `aws-knowledge-mcp-server` MCP로 서비스 문서 및 베스트 프랙티스를 확인한다.
+- **비용 조회 시**: `awslabs.billing-cost-management-mcp-server` MCP로 실제 청구 데이터, 이상 감지, 최적화 추천을 조회한다.
 - 상세 조회 순서 및 규칙: `@docs/terraform-principles.md` 참조
 
 ---
@@ -60,17 +72,20 @@
 | AWS Architect | `/aws-architect` | 아키텍처 설계 검토, Well-Architected 리뷰 요청 시 |
 | Security Engineer | `/security-engineer` | IAM·네트워크·암호화·EKS 보안 검토 요청 시 |
 | Kubernetes Specialist | `/kubernetes-specialist` | Karpenter·add-on·Helm values·K8s 리소스 작업 시 |
+| Cost Engineer | `/cost-check` | infracost 예상 비용 확인, Cost Explorer 실제 비용 분석, 최적화 제안 |
 
 ### 권장 작업 흐름
 
 ```
 코드 작성 (terraform-writer)
+  → /cost-check (배포 전 예상 비용 확인)
   → 코드 리뷰 (terraform-reviewer)
   → 보안 검토 (security-engineer)
   → 아키텍처 리뷰 (aws-architect)
+  → 비용 리뷰 (cost-engineer)
 ```
 
-prd 변경 시 `/review-terraform` Skill이 위 3단계 리뷰를 자동 진행한다.
+prd 변경 시 `/review-terraform` Skill이 위 4단계 리뷰를 자동 진행한다.
 
 ---
 

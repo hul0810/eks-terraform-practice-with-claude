@@ -136,3 +136,76 @@ modules/
 - 모듈 인터페이스(variables / outputs)는 호출자가 필요한 것만 노출한다.
 - 모듈 내부에서 provider를 직접 선언하지 않는다 (호출자에서 전달).
 - 리소스별 설계 원칙은 해당 모듈 디렉토리의 `CLAUDE.md`를 참조한다.
+
+---
+
+## 비용 최적화 설계 기본값
+
+**핵심 원칙: 신규 리소스 작성 시 아래 기본값을 적용한다. 이탈 시 명시적 근거가 필요하다.**
+
+### EKS
+
+| 항목 | 기본값 | 이유 |
+|------|--------|------|
+| 클러스터 버전 | Standard Support 내 최신 버전 | Extended Support 진입 시 +$0.60/hr (+$438/월) |
+| 버전 업그레이드 주기 | Standard Support 종료 60일 전 | Extended Support 누적 지출 방지 |
+| 노드그룹 구매 옵션 | Spot 우선, On-Demand 최소화 | Spot은 On-Demand 대비 최대 70% 절감 |
+| Karpenter NodePool | Spot → On-Demand 순 우선순위 | 중단 불가 워크로드만 On-Demand 지정 |
+| 관리형 노드그룹 | system 노드풀은 On-Demand | CoreDNS 등 시스템 컴포넌트 안정성 보장 |
+
+> EKS 버전 라이프사이클 확인: `aws eks describe-addon-versions` 또는 AWS 공식 문서
+
+### NAT Gateway
+
+| 항목 | 기본값 | 이유 |
+|------|--------|------|
+| develop 환경 | 단일 AZ에 NAT Gateway 1개 | 고가용성보다 비용 우선 ($0.059/hr × 대수) |
+| production 환경 | AZ당 NAT Gateway 1개 | AZ 장애 시 트래픽 단절 방지 |
+| AZ 간 트래픽 | 최소화 설계 | AZ 간 데이터 전송 $0.01/GB 추가 발생 |
+
+> NAT Gateway 비용 구조: 시간 요금 $0.059/hr + 처리 데이터 $0.059/GB
+
+### EC2 / 노드 인스턴스
+
+| 항목 | 기본값 | 이유 |
+|------|--------|------|
+| EBS 볼륨 타입 | `gp3` | gp2 대비 20% 저렴, 동일 성능 기본 제공 |
+| develop 인스턴스 클래스 | t-계열 (버스트 가능) | 낮은 기본 성능 + 버스트 = 비용 효율 |
+| production 인스턴스 클래스 | m-계열 (범용) 또는 워크로드에 맞게 | 예측 가능한 성능 필요 시 |
+| Savings Plans | 안정적 On-Demand 사용량에 적용 권장 | 1년 약정 시 최대 40% 절감 |
+
+### RDS
+
+| 항목 | 기본값 | 이유 |
+|------|--------|------|
+| Multi-AZ | `false` (develop), `true` (production) | develop은 단일 AZ로 비용 절반 |
+| 인스턴스 클래스 | develop: `db.t3.*`, production: `db.m6g.*` | t3는 버스트 가능, 개발 환경에 적합 |
+| 스토리지 타입 | `gp3` | gp2 대비 저렴, IOPS/throughput 독립 설정 |
+| 자동 백업 보존 | develop: 1일, production: 7일 | 불필요한 스냅샷 스토리지 비용 방지 |
+
+### CloudWatch Logs
+
+| 항목 | 기본값 | 이유 |
+|------|--------|------|
+| `retention_in_days` | develop: 7, production: 30 | **미설정 시 무기한 보관** → 비용 무제한 누적 |
+| 로그 그룹 생성 | 반드시 `retention_in_days` 명시 | 기본값 없음, 생략 불가 |
+
+### S3
+
+| 항목 | 기본값 | 이유 |
+|------|--------|------|
+| 스토리지 클래스 | `STANDARD` (자주 접근) / `INTELLIGENT_TIERING` (접근 패턴 불규칙) | Intelligent Tiering은 자동 계층 이동으로 최대 40% 절감 |
+| Lifecycle 규칙 | 비현재 버전 보존: develop 3개, production 30일 | Versioning 활성화 시 구버전 무한 누적 방지 |
+| 불완전 멀티파트 업로드 | 7일 후 중단 규칙 필수 | 완료되지 않은 업로드가 청구됨 |
+
+### 비용 설계 체크리스트
+
+신규 리소스 작성 시 아래 항목을 확인한다:
+
+- [ ] EKS 버전이 Standard Support 기간 내인가?
+- [ ] NAT Gateway 수가 환경 기준에 맞는가? (develop 1개 / production AZ당 1개)
+- [ ] EBS 볼륨이 `gp3`인가?
+- [ ] CloudWatch Log Group에 `retention_in_days`가 설정되어 있는가?
+- [ ] RDS Multi-AZ가 환경에 맞게 설정되어 있는가?
+- [ ] S3 Lifecycle 규칙이 설정되어 있는가?
+- [ ] 장기 실행 On-Demand 리소스에 Savings Plans 적용 여부를 검토했는가?
