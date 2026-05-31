@@ -1,6 +1,6 @@
 # Terraform 로컬 디렉토리 및 파일
 .terraform/
-.terraform.lock.hcl
+# .terraform.lock.hcl 은 provider 버전 고정을 위해 git으로 관리한다
 
 # 상태 파일 (원격 백엔드 사용 - 로컬 커밋 금지)
 *.tfstate
