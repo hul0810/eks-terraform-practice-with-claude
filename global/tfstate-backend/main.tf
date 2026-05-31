@@ -5,7 +5,6 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
 
   bucket_name = "${local.project}-tfstate-${local.account_id}"
-  table_name  = "${local.project}-tfstate-lock"
 }
 
 # --------------------------------------------------
@@ -55,19 +54,27 @@ resource "aws_s3_bucket_ownership_controls" "tfstate" {
 }
 
 # --------------------------------------------------
-# DynamoDB 테이블 (Terraform 상태 잠금)
+# S3 버킷 수명 주기 (버전 보관 개수 제한)
 # --------------------------------------------------
-resource "aws_dynamodb_table" "tfstate_lock" {
-  name         = local.table_name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
+resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
 
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
+  # 버저닝 활성화 이후에 적용되어야 한다
+  depends_on = [aws_s3_bucket_versioning.tfstate]
 
-  lifecycle {
-    prevent_destroy = true
+  rule {
+    id     = "limit-noncurrent-versions"
+    status = "Enabled"
+
+    noncurrent_version_expiration {
+      # 최신 5개 버전만 보관하고 나머지 이전 버전은 만료
+      newer_noncurrent_versions = 5
+      noncurrent_days           = 1
+    }
+
+    # 만료된 객체 삭제 마커 자동 제거 (버전 정리 후 남는 마커 제거)
+    expiration {
+      expired_object_delete_marker = true
+    }
   }
 }
