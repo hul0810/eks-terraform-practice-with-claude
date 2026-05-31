@@ -1,7 +1,7 @@
 ---
 name: review-terraform
 description: >
-  변경된 Terraform 코드를 terraform-reviewer, security-engineer, aws-architect 에이전트가 순차 리뷰한다.
+  변경된 Terraform 코드를 terraform-reviewer, security-engineer, aws-architect, cost-engineer 에이전트가 순차 리뷰한다.
   environments/production/ 변경 시 자동 호출된다. develop 환경에서는 /review-terraform으로 수동 호출한다.
 disable-model-invocation: false
 allowed-tools:
@@ -11,6 +11,7 @@ allowed-tools:
   - Bash(rm .claude/.prd-changed)
   - Bash(test -f .claude/.prd-changed*)
   - Bash(git diff HEAD --name-only*)
+  - Bash(infracost*)
 ---
 
 ## 에이전트별 검토 범위
@@ -19,9 +20,10 @@ allowed-tools:
 
 | 에이전트 | 검토 영역 |
 |----------|-----------|
-| terraform-reviewer | HCL 코드 품질, 리소스 설계, provider 버전, 비용 최적화, 베스트 프랙티스 |
+| terraform-reviewer | HCL 코드 품질, 리소스 설계, provider 버전, 베스트 프랙티스 |
 | security-engineer | IAM 최소 권한, Security Group 규칙, KMS 암호화, EKS RBAC, 네트워크 보안 |
 | aws-architect | Well-Architected 5개 축, 멀티 AZ 설계, 재해복구, 운영성, 서비스 한도 |
+| cost-engineer | infracost 예상 비용 delta, Cost Explorer 실제 비용, 비용 함정 진단, 최적화 제안 |
 
 ---
 
@@ -68,10 +70,19 @@ allowed-tools:
 - 리뷰 완료 후 결과 마지막에 `REVIEW_STATUS: PASSED` 또는 `REVIEW_STATUS: BLOCKED` 출력 요청
   (High 이상 위험도 항목 존재 시 BLOCKED)
 
-### Step 4: 결과 종합
+### Step 4: 비용 리뷰
 
-- **세 리뷰 모두 PASSED**: `.claude/.prd-changed` 마커 파일 삭제 후 완료 보고
-- **하나라도 BLOCKED**: 마커 파일 유지, 이슈 목록과 수정 방향 안내.
+`cost-engineer` 에이전트를 사용하여 비용 영향을 분석한다.
+에이전트에게 다음을 전달한다:
+- 리뷰 대상 환경 디렉토리 목록
+- infracost diff 실행 및 예상 비용 변화 분석 요청 (infracost가 없으면 분석 생략 후 메모)
+- AWS Billing MCP로 최근 30일 실제 비용(`get_cost_and_usage`) 및 이상 감지(`get_anomalies`) 조회 요청
+- 리뷰 완료 후 결과 마지막에 `COST_STATUS: OK`, `COST_STATUS: ATTENTION`, 또는 `COST_STATUS: REVIEW_REQUIRED` 출력 요청
+
+### Step 5: 결과 종합
+
+- **네 리뷰 모두 PASSED/OK**: `.claude/.prd-changed` 마커 파일 삭제 후 완료 보고
+- **하나라도 BLOCKED 또는 COST_STATUS: REVIEW_REQUIRED**: 마커 파일 유지, 이슈 목록과 수정 방향 안내.
   수정 후 `/review-terraform`을 다시 호출해야 함
 
 ### 긴급 우회 (비권장)
