@@ -15,9 +15,11 @@ resource "terraform_data" "require_tag_policy_enabled" {
 # --------------------------------------------------
 # AWS Organizations 태그 정책
 # --------------------------------------------------
-# enforcement_mode = WARN: 콘솔/CLI로 생성하는 임시 리소스는 차단하지 않는다.
-# Terraform 관리 리소스는 tag_policy_compliance = "error"로 별도 강제화한다.
-# → Terraform 코드 품질 보장 + 스타트업 개발 속도 보장을 동시에 달성.
+# 콘솔/CLI: 차단하지 않는다 (enforcement_mode 없음 = WARN).
+# Terraform: tag_policy_compliance = "error" + report_required_tag_for로 키 누락 시 plan 차단.
+#   - report_required_tag_for: Terraform provider의 ListRequiredTags API(2025-11)와 연동되는 필드.
+#   - enforced_for는 이 API와 무관한 구형 필드로 tag_policy_compliance에 영향을 주지 않음.
+# 태그 값 유효성(@@assign 준수): validate_tags precondition이 담당.
 resource "aws_organizations_policy" "required_tags" {
   name        = "eks-practice-required-tags"
   description = "EKS Practice 계정 필수 태그 정책 (Terraform 전용 강제화)"
@@ -27,15 +29,46 @@ resource "aws_organizations_policy" "required_tags" {
 
   content = jsonencode({
     tags = {
-      # 허용값 명시: 오타(dev, prod 등) 방지 및 거버넌스 문서화 역할
       environment = {
+        tag_key = {
+          "@@assign" = "environment"
+        }
+        # 허용값 문서화: 거버넌스 기준 정의 및 validate_tags remote state output의 단일 소스.
         tag_value = {
           "@@assign" = ["develop", "production", "common"]
         }
+        # tag_policy_compliance가 이 리소스 타입에서 키 누락을 plan 단계에서 차단한다.
+        report_required_tag_for = {
+          "@@assign" = [
+            "ec2:vpc",
+            "ec2:subnet",
+            "ec2:internet-gateway",
+            "ec2:route-table",
+            "ec2:security-group",
+            "ec2:natgateway",
+            "eks:cluster",
+            "eks:nodegroup"
+          ]
+        }
       }
       managed_by = {
+        tag_key = {
+          "@@assign" = "managed_by"
+        }
         tag_value = {
           "@@assign" = ["terraform"]
+        }
+        report_required_tag_for = {
+          "@@assign" = [
+            "ec2:vpc",
+            "ec2:subnet",
+            "ec2:internet-gateway",
+            "ec2:route-table",
+            "ec2:security-group",
+            "ec2:natgateway",
+            "eks:cluster",
+            "eks:nodegroup"
+          ]
         }
       }
     }
