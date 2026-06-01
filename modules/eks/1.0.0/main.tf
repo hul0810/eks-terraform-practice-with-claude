@@ -120,6 +120,8 @@ module "eks" {
       # 외부에서 lifecycle 블록을 중복 선언하면 오류가 발생하므로 여기서는 생략한다.
     }
   }
+
+  tags = var.additional_tags
 }
 
 ################################################################################
@@ -147,4 +149,6 @@ resource "aws_vpc_security_group_ingress_rule" "node_to_node" {
   ip_protocol                  = "-1"
 
   description = "Allow all traffic between nodes (ICMP, UDP app traffic beyond module defaults)"
+
+  tags = var.additional_tags
 }

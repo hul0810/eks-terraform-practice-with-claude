@@ -48,6 +48,9 @@ module "vpc" {
 
   enable_dns_hostnames = true
   enable_dns_support   = true
+
+  # tags는 모든 서브넷·라우팅 테이블에 전파되므로 사용 금지. vpc_tags는 aws_vpc 리소스에만 적용.
+  vpc_tags = var.additional_tags
 }
 
 # v6부터 모듈 인라인 지원 제거. Gateway 타입은 무료이며 NAT GW 데이터 비용 절감.
@@ -64,6 +67,8 @@ resource "aws_vpc_endpoint" "s3" {
 
   # module.vpc 내 route table의 create/destroy 완료 후 endpoint가 수정되도록 보장
   depends_on = [module.vpc]
+
+  tags = var.additional_tags
 }
 
 resource "terraform_data" "validate_subnet_counts" {
