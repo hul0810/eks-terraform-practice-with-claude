@@ -80,3 +80,9 @@ variable "system_node_ami_type" {
   type        = string
   default     = "AL2023_x86_64_STANDARD"
 }
+
+variable "additional_tags" {
+  description = "모든 리소스에 추가할 태그 맵. providers.tf의 default_tags로 공통 태그(environment, managed_by)를 관리하므로, 이 변수는 리소스 식별에 필요한 추가 태그에만 사용한다."
+  type        = map(string)
+  default     = {}
+}

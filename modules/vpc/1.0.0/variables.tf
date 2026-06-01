@@ -58,3 +58,9 @@ variable "single_nat_gateway" {
   type        = bool
   default     = true
 }
+
+variable "additional_tags" {
+  description = "VPC 및 VPC Endpoint 리소스에 추가할 태그 맵. 서브넷·라우팅 테이블에는 전파되지 않는다. providers.tf의 default_tags로 공통 태그(environment, managed_by)를 관리하므로, 이 변수는 리소스 식별에 필요한 추가 태그에만 사용한다."
+  type        = map(string)
+  default     = {}
+}
