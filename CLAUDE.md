@@ -52,7 +52,7 @@
 
 ## Production 배포 정책
 
-**`environments/production/` 경로에서 `terraform apply`는 Claude가 직접 실행하지 않는다.**
+**`project/environments/production/` 경로에서 `terraform apply`는 Claude가 직접 실행하지 않는다.**
 
 이 지시는 실수로 인한 운영 환경 변경을 방지하기 위한 것이다. 아래 절차를 따른다:
 
@@ -78,7 +78,7 @@
 - 삭제 불가 리소스: `lifecycle { prevent_destroy = true }`
 - 공식 모듈 버전: `~> X.Y.Z` 형식 (패치만 허용)
 - Provider 버전: `~> X.Y` 형식 (마이너까지 허용)
-- 커스텀 모듈: `modules/{name}/{version}/` 디렉토리 구조 (예: `modules/vpc/1.0.0/`)
+- 커스텀 모듈: 루트 `modules/{name}/{version}/` 디렉토리 구조 (예: `modules/vpc/1.0.0/`), 모든 프로젝트가 공유
 
 ---
 

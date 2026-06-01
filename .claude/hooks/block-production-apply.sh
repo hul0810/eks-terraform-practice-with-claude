@@ -1,5 +1,5 @@
 #!/bin/bash
-# PreToolUse 훅: environments/production/ 에서 terraform apply 강제 차단
+# PreToolUse 훅: project/environments/production/ 에서 terraform apply 강제 차단
 # stdin: {"tool_name": "Bash", "tool_input": {"command": "..."}, ...}
 
 input_json=$(cat)
@@ -34,7 +34,7 @@ Claude가 직접 실행할 수 없습니다.
   1. /review-terraform 스킬로 코드 리뷰 완료
   2. PR 생성 및 팀 검토·승인
   3. 터미널에서 사용자가 직접 실행:
-       cd environments/production/<region>/<project>/<resource>/
+       cd project/environments/production/<region>/<project>/<resource>/
        terraform apply
 
 EOF

@@ -10,7 +10,7 @@ marker_file="$claude_dir/.prd-changed"
 changed=$(cat "$marker_file")
 
 cat >&2 <<EOF
-[production 리뷰 게이트] environments/production/ 파일 변경이 감지되었습니다.
+[production 리뷰 게이트] project/environments/production/ 파일 변경이 감지되었습니다.
 
 $changed
 

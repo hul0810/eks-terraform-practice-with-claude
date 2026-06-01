@@ -1,7 +1,7 @@
 terraform {
   backend "s3" {
     bucket       = "eks-practice-tfstate-MGMT_ACCOUNT_ID"
-    key          = "develop/ap-northeast-2/shared/vpc/terraform.tfstate"
+    key          = "project/develop/ap-northeast-2/shared/vpc/terraform.tfstate"
     region       = "ap-northeast-2"
     use_lockfile = true
     encrypt      = true

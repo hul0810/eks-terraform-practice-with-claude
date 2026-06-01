@@ -4,7 +4,7 @@ data "terraform_remote_state" "vpc" {
   backend = "s3"
   config = {
     bucket  = "eks-practice-tfstate-MGMT_ACCOUNT_ID"
-    key     = "develop/ap-northeast-2/shared/vpc/terraform.tfstate"
+    key     = "project/develop/ap-northeast-2/shared/vpc/terraform.tfstate"
     region  = "ap-northeast-2"
     profile = "terraform"
     assume_role = {
