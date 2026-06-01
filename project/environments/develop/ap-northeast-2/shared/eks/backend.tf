@@ -1,7 +1,7 @@
 terraform {
   backend "s3" {
     bucket       = "eks-practice-tfstate-891396992584"
-    key          = "develop/ap-northeast-2/shared/eks/terraform.tfstate"
+    key          = "project/develop/ap-northeast-2/shared/eks/terraform.tfstate"
     region       = "ap-northeast-2"
     use_lockfile = true
     encrypt      = true

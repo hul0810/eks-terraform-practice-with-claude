@@ -63,14 +63,14 @@ scope는 변경이 가장 집중된 디렉토리 이름으로 결정한다.
 
 | scope | 대응 경로 |
 |-------|----------|
-| `vpc` | `modules/vpc/` |
-| `eks` | `modules/eks/` |
-| `karpenter` | `modules/karpenter/` |
-| `eks-addons` | `modules/eks-addons/` |
-| `rds` | `modules/rds/` |
-| `develop` | `environments/develop/` |
-| `production` | `environments/production/` |
-| `shared` | `environments/{env}/{region}/shared/` |
+| `vpc` | `project/modules/vpc/` |
+| `eks` | `project/modules/eks/` |
+| `karpenter` | `project/modules/karpenter/` |
+| `eks-addons` | `project/modules/eks-addons/` |
+| `rds` | `project/modules/rds/` |
+| `develop` | `project/environments/develop/` |
+| `production` | `project/environments/production/` |
+| `shared` | `project/environments/{env}/{region}/shared/` |
 | `tfstate` | `global/tfstate-backend/` |
 | scope 없음 | 여러 영역에 걸친 변경, `.claude/`, `docs/` 변경 |
 
@@ -147,7 +147,7 @@ feat(vpc): ELB 서브넷 태그 추가
 
 ### State Lock
 
-동일한 root module 디렉토리에서 두 명 이상이 동시에 작업하면 DynamoDB state lock 충돌이 발생한다. 작업 시작 전 같은 `{env}/{region}/{project}/{resource}` 경로를 편집 중인 사람이 있는지 반드시 확인한다. 충돌 시 state 손상으로 이어질 수 있다.
+동일한 root module 디렉토리에서 두 명 이상이 동시에 작업하면 DynamoDB state lock 충돌이 발생한다. 작업 시작 전 같은 `project/environments/{env}/{region}/{service}/{resource}` 경로를 편집 중인 사람이 있는지 반드시 확인한다. 충돌 시 state 손상으로 이어질 수 있다.
 
 ### 작업 순서
 

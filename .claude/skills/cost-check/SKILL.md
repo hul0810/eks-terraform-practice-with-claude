@@ -40,8 +40,8 @@ allowed-tools:
 git diff HEAD --name-only -- "*.tf" "**/*.tf"
 ```
 
-변경된 파일에서 `environments/` 하위 디렉토리만 추출해 중복 제거한다.
-예: `environments/develop/ap-northeast-2/shared/eks/locals.tf` → `environments/develop/ap-northeast-2/shared/eks`
+변경된 파일에서 `project/environments/` 하위 디렉토리만 추출해 중복 제거한다.
+예: `project/environments/develop/ap-northeast-2/shared/eks/locals.tf` → `project/environments/develop/ap-northeast-2/shared/eks`
 
 변경된 .tf 파일이 없으면:
 ```

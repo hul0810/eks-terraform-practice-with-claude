@@ -2,7 +2,7 @@
 name: review-terraform
 description: >
   변경된 Terraform 코드를 terraform-reviewer, security-engineer, aws-architect, cost-engineer 에이전트가 순차 리뷰한다.
-  environments/production/ 변경 시 자동 호출된다. develop 환경에서는 /review-terraform으로 수동 호출한다.
+  project/environments/production/ 변경 시 자동 호출된다. develop 환경에서는 /review-terraform으로 수동 호출한다.
 disable-model-invocation: false
 allowed-tools:
   - Agent
