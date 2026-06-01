@@ -50,6 +50,14 @@ description: 인프라 보안을 검토할 때 사용. IAM 권한, 네트워크 
 - [ ] AWS Secrets Manager 또는 Parameter Store를 사용하는가
 - [ ] Kubernetes Secret이 etcd에서 암호화되어 저장되는가
 
+### 태그 거버넌스
+- [ ] `providers.tf`에 `tag_policy_compliance = "error"`가 설정되어 있는가
+- [ ] `main.tf`에 `terraform_data.validate_tags` precondition이 선언되어 있는가
+- [ ] `data.tf`에 `terraform_remote_state.tag_policy` 참조가 포함되어 있는가
+- [ ] `locals.tf`의 `common_tags`가 `environment` / `managed_by` 두 키만 포함하는가
+- [ ] 태그 값이 허용값(`develop`/`production`/`common`, `terraform`) 내에 있는가
+> 상세 기준: `@docs/tag-governance.md`
+
 ### 모니터링
 - [ ] CloudTrail이 활성화되어 있는가
 - [ ] GuardDuty EKS 보호가 활성화되어 있는가

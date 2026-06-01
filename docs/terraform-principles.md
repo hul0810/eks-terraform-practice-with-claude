@@ -43,6 +43,11 @@
   - `environment`: `develop` / `production` / `common`
   - `managed_by`: `terraform`
   - 키와 값 모두 소문자
+- **태그 거버넌스 3계층 구조** (상세: `@docs/tag-governance.md`):
+  - AWS Organizations Tag Policy → 허용값 정의 및 AWS 수준 컴플라이언스 리포팅
+  - `tag_policy_compliance = "error"` → Terraform plan 시 태그 키 부재 차단
+  - `validate_tags` precondition → Terraform plan 시 태그 값 위반 차단 (허용값은 tag-policy remote state에서 읽음)
+- 신규 root module 작성 시 위 3계층 구성 필수 (`@docs/tag-governance.md` 체크리스트 참조)
 
 ---
 
