@@ -1,10 +1,10 @@
 locals {
-  env     = "develop"
-  project = "eks-practice"
+  environment = "develop"
+  project     = "eks-practice"
 
   # providers.tf default_tags의 단일 정의 지점. data source 참조 금지 (providers.tf 순환 의존 방지).
   common_tags = {
-    environment = local.env
+    environment = local.environment
     managed_by  = "terraform"
   }
 
@@ -12,7 +12,7 @@ locals {
   private_subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnet_ids
 
   eks = {
-    cluster_name       = "${local.project}-${local.env}"
+    cluster_name       = "${local.project}-${local.environment}"
     kubernetes_version = "1.33"
 
     # develop: 로컬 PC에서 kubectl 직접 접근 편의를 위해 public 엔드포인트 허용

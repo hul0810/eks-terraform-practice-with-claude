@@ -1,15 +1,15 @@
 locals {
-  env     = "develop"
-  project = "eks-practice"
+  environment = "develop"
+  project     = "eks-practice"
 
   # providers.tf default_tags의 단일 정의 지점. data source 참조 금지 (providers.tf 순환 의존 방지).
   common_tags = {
-    environment = local.env
+    environment = local.environment
     managed_by  = "terraform"
   }
 
   vpc = {
-    name               = "${local.project}-${local.env}"
+    name               = "${local.project}-${local.environment}"
     cidr               = "10.10.0.0/16"
     azs                = data.aws_availability_zones.available.names
     public_subnets     = ["10.10.0.0/24", "10.10.1.0/24", "10.10.2.0/24", "10.10.3.0/24"]
@@ -19,7 +19,7 @@ locals {
     enable_nat_gateway = false
     single_nat_gateway = true # NAT GW 활성화 시 단일 NGW 사용 (develop 비용 절감)
     additional_tags = {
-      Name = "${local.project}-${local.env}"
+      Name = "${local.project}-${local.environment}"
     }
   }
 }

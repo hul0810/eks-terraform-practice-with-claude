@@ -17,8 +17,8 @@ provider "aws" {
     role_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
   }
 
-  # AWS Organizations Tag Policy의 필수 태그 요구사항을 plan 단계에서 검증.
-  # 태그 누락 시 apply 전에 즉시 실패. AWS Provider v6.22.0+ 필요.
+  # Organizations 정책 report_required_tag_for 리소스 타입에서 태그 키 누락 시 plan 차단.
+  # 태그 값 유효성 검사는 main.tf의 validate_tags precondition이 담당.
   tag_policy_compliance = "error"
 
   default_tags {
