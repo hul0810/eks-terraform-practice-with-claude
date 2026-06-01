@@ -24,10 +24,10 @@ provider "aws" {
   assume_role {
     role_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
   }
+  # AWS Organizations Tag Policy의 필수 태그 요구사항을 plan 단계에서 검증.
+  # 태그 누락 시 apply 전에 즉시 실패. AWS Provider v6.22.0+ 필요.
+  tag_policy_compliance = "error"
   default_tags {
-    tags = {
-      environment = "develop"
-      managed_by  = "terraform"
-    }
+    tags = local.common_tags
   }
 }

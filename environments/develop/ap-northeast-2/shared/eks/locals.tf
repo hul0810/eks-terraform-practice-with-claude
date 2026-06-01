@@ -2,6 +2,12 @@ locals {
   env     = "develop"
   project = "eks-practice"
 
+  # providers.tf default_tags의 단일 정의 지점. data source 참조 금지 (providers.tf 순환 의존 방지).
+  common_tags = {
+    environment = local.env
+    managed_by  = "terraform"
+  }
+
   vpc_id             = data.terraform_remote_state.vpc.outputs.vpc_id
   private_subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnet_ids
 

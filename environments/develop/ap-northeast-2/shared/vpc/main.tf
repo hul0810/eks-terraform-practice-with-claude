@@ -10,4 +10,6 @@ module "vpc" {
   tgw_subnets        = local.vpc.tgw_subnets
   enable_nat_gateway = local.vpc.enable_nat_gateway
   single_nat_gateway = local.vpc.single_nat_gateway
+
+  additional_tags = local.vpc.additional_tags
 }
