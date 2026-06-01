@@ -53,12 +53,23 @@
   - 현재 리전: `data "aws_region" "current" {}` → `.name`
   - 계정 ID: `data "aws_caller_identity" "current" {}` → `.account_id`
   - 특정 AZ 예외(인스턴스 타입 미지원 등)는 data source 결과를 그대로 쓰되 해당 리소스에서 개별 필터링한다.
-- **인라인 블록 금지**: 별도 리소스로 분리할 수 있다면 반드시 분리한다.
+- **인라인 블록 금지**: 별도 리소스로 분리할 수 있다면 반드시 분리한다. 중첩 블록은 Terraform이 내부 순서를 제어하므로, rule 추가·삭제 시 순서 재계산으로 기존 규칙을 삭제 후 재생성하는 파괴적 변경이 발생할 수 있다. 별도 리소스로 분리하면 각 rule이 독립 리소스로 관리되어 이 문제를 방지한다.
   - Security Group `ingress` / `egress` → `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule`
   - S3 `versioning`, `server_side_encryption_configuration` 등 → 별도 리소스
 - **`depends_on` 최소화**: 암묵적 의존성(리소스 참조)을 최대한 활용한다.
 - **`moved` 블록 활용**: 리소스 이름 변경이나 모듈 이동 시 state 이전에 사용한다.
 - **주석**: WHY가 명확하지 않을 때만 한국어로 작성한다. WHAT 설명 주석은 작성하지 않는다.
+
+---
+
+## 협업 코드 작성 기준
+
+코드는 혼자 작성하지만 협업 환경을 전제로 작성한다. 아래 기준은 선택이 아닌 의무다.
+
+- **`variable` `description` 필수**: 없으면 호출자가 입력값의 의도를 알 수 없다. 코드 리뷰 반려 기준이다.
+- **`output` 선언 의무**: 다른 root module이 참조하는 값은 반드시 `outputs.tf`에 선언한다. 선언하지 않으면 `terraform_remote_state`로 참조할 수 없다.
+- **리소스 명명**: 이름만으로 환경·목적·대상을 파악할 수 있어야 한다. 약어를 사용할 경우 `CLAUDE.md`에 정의한다.
+- **`sensitive` 출력 명시**: 인증서, 비밀번호 등 민감한 값을 담는 `output`에는 `sensitive = true`를 설정한다. 미설정 시 plan/apply 로그에 노출된다.
 
 ---
 
