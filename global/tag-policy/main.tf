@@ -71,6 +71,28 @@ resource "aws_organizations_policy" "required_tags" {
           ]
         }
       }
+      project = {
+        tag_key = {
+          "@@assign" = "project"
+        }
+        # 허용값 문서화: 거버넌스 기준 정의 및 validate_tags remote state output의 단일 소스.
+        tag_value = {
+          "@@assign" = ["eks-practice"]
+        }
+        # tag_policy_compliance가 이 리소스 타입에서 키 누락을 plan 단계에서 차단한다.
+        report_required_tag_for = {
+          "@@assign" = [
+            "ec2:vpc",
+            "ec2:subnet",
+            "ec2:internet-gateway",
+            "ec2:route-table",
+            "ec2:security-group",
+            "ec2:natgateway",
+            "eks:cluster",
+            "eks:nodegroup"
+          ]
+        }
+      }
     }
   })
 
