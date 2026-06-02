@@ -81,6 +81,16 @@ variable "system_node_ami_type" {
   default     = "AL2023_x86_64_STANDARD"
 }
 
+variable "project" {
+  description = "프로젝트 이름. 시스템 노드 그룹 이름 조합에 사용된다 ({project}-system-{environment}). cluster_name 대신 사용하는 이유: cluster_name은 project+environment를 이미 포함해 이름이 길어지면 IAM role name_prefix 38자 한도를 초과한다."
+  type        = string
+}
+
+variable "environment" {
+  description = "배포 환경 (develop / production). 시스템 노드 그룹 이름 접미사로 사용되어 AWS 콘솔에서 환경을 즉시 식별할 수 있게 한다."
+  type        = string
+}
+
 variable "additional_tags" {
   description = "모든 리소스에 추가할 태그 맵. providers.tf의 default_tags로 공통 태그(environment, managed_by)를 관리하므로, 이 변수는 리소스 식별에 필요한 추가 태그에만 사용한다."
   type        = map(string)

@@ -80,6 +80,8 @@ module "eks" {
   # (Karpenter가 자기 자신을 스케줄링할 수 없는 부트스트랩 문제 해결)
   eks_managed_node_groups = {
     system = {
+      # 클러스터 이름을 포함한 이름으로 AWS 콘솔에서 소속 클러스터를 즉시 식별할 수 있게 한다.
+      name           = "${var.project}-system-${var.environment}"
       instance_types = var.system_node_instance_types
       ami_type       = var.system_node_ami_type
 
@@ -114,6 +116,10 @@ module "eks" {
           effect = "NO_SCHEDULE"
         }
       }
+
+      # IAM role name_prefix 한도(38자) 초과 방지: name_prefix 대신 name을 직접 사용(한도 64자).
+      # {project}-system-{environment}-eks-node-group = 42자로 name_prefix 한도를 초과한다.
+      iam_role_use_name_prefix = false
 
       # create_before_destroy = true 는 terraform-aws-modules/eks v21.x 서브모듈
       # (modules/eks-managed-node-group/main.tf) 내부에 이미 하드코딩되어 있다.
