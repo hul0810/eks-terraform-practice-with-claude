@@ -69,7 +69,10 @@
     - [x] `vpc-cni` (`before_compute = true`: 노드 그룹 생성 전 CNI 먼저 배포)
     - [x] `kube-proxy`
     - [x] `coredns`
-- [x] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint, oidc_provider_arn 등)
+- [x] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint 등)
+  - [ ] `oidc_provider_arn` output 제거 — Pod Identity 전용 전략으로 IRSA 미사용
+  - [ ] `modules/eks/1.0.0/main.tf` — `enable_irsa = false` 변경
+  - [ ] `environments/develop/.../eks/outputs.tf` — `oidc_provider_arn` output 제거
 - [x] `environments/develop/ap-northeast-2/shared/eks/` 디렉토리 생성 및 구성 파일 작성
   - [x] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
 - [x] `terraform plan` 검토 (vpc: 8 change / eks: 30 add, 오류 없음)
@@ -106,7 +109,7 @@
 
 - [ ] `modules/eks-addons/variables.tf` 작성
 - [ ] `modules/eks-addons/main.tf` 작성
-  - [ ] `aws-ia/eks-blueprints-addons ~> 1.21` 사용 (IRSA + EKS addon + Helm 통합 처리)
+  - [ ] `aws-ia/eks-blueprints-addons ~> 1.21` 사용 (EKS addon + Helm 통합 처리, Pod Identity 방식)
   - [ ] EKS 관리형 애드온 (enable 플래그)
     - [ ] `enable_aws_vpc_cni = true`
     - [ ] `enable_coredns = true`
@@ -115,6 +118,7 @@
     - [ ] `enable_eks_pod_identity_agent = true`
   - [ ] Helm 애드온 (enable 플래그)
     - [ ] `enable_aws_load_balancer_controller = true`
+    - [ ] `enable_external_dns = true`
     - [ ] `enable_metrics_server = true`
     - [ ] `enable_kube_prometheus_stack = true`
 - [ ] `modules/eks-addons/outputs.tf` 작성
