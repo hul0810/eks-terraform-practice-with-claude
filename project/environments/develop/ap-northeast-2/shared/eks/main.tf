@@ -10,6 +10,10 @@ resource "terraform_data" "validate_tags" {
       condition     = contains(data.terraform_remote_state.tag_policy.outputs.allowed_managed_by, local.common_tags.managed_by)
       error_message = "managed_by 태그 허용값: ${join(", ", data.terraform_remote_state.tag_policy.outputs.allowed_managed_by)}. 현재 값: '${local.common_tags.managed_by}'"
     }
+    precondition {
+      condition     = contains(data.terraform_remote_state.tag_policy.outputs.allowed_projects, local.common_tags.project)
+      error_message = "project 태그 허용값: ${join(", ", data.terraform_remote_state.tag_policy.outputs.allowed_projects)}. 현재 값: '${local.common_tags.project}'"
+    }
   }
 }
 
@@ -25,6 +29,9 @@ module "eks" {
   endpoint_public_access = local.eks.endpoint_public_access
   public_access_cidrs    = local.eks.public_access_cidrs
   enabled_log_types      = local.eks.enabled_log_types
+
+  project     = local.project
+  environment = local.environment
 
   system_node_instance_types = local.eks.system_node.instance_types
   system_node_ami_type       = local.eks.system_node.ami_type
