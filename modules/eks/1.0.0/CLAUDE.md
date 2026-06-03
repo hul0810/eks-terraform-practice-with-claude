@@ -138,15 +138,3 @@ EKS 클러스터, 시스템 노드 그룹, bootstrap addon(vpc-cni, kube-proxy, 
 
 Karpenter, LBC 등 애플리케이션 레벨 addon은 클러스터 구축 후 독립 운영하므로
 별도 실행 환경으로 분리한다.
-
----
-
-## KMS 전략
-
-| 환경 | create_kms_key | encryption_config | 이유 |
-|------|----------------|-------------------|------|
-| develop | `false` | `{}` | KMS 키 비용($1/월/키) 절감, 학습 목적 |
-| production | `true` | `{ resources = ["secrets"] }` | 시크릿 암호화로 보안 강화 |
-
-production으로 전환 시 `main.tf`에서 `create_kms_key = true`, `encryption_config = { resources = ["secrets"] }` 로 변경한다.
-기존 클러스터에 KMS를 추가하면 클러스터 재생성(Force Replace)이 발생할 수 있으므로 초기 생성 시 결정하는 것을 권장한다.
