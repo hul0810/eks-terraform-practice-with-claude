@@ -40,12 +40,7 @@ module "eks" {
   # (API 단독 모드에서는 Karpenter NodeClass의 노드 IAM 역할 자동 등록이 불가)
   authentication_mode = "API_AND_CONFIG_MAP"
 
-  # ── KMS 암호화 ───────────────────────────────────────────────────────────────
-  # develop 환경에서는 KMS 키 비용($1/월/키) 절감을 위해 비활성화.
-  # 모듈 내부: enable_encryption_config = (var.encryption_config != null)
-  # → null 로 명시해야 완전 비활성화. {} (빈 객체)는 null이 아니므로 오류 발생.
-  # production: create_kms_key = true, encryption_config = { resources = ["secrets"] }
-  create_kms_key    = false
+  # upstream 기본값(encryption_config = {})을 override해야 봉투 암호화가 비활성화됨
   encryption_config = null
 
   # ── 핵심 클러스터 Add-on ──────────────────────────────────────────────────────
