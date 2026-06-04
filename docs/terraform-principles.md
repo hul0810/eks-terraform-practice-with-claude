@@ -58,9 +58,27 @@
   - 현재 리전: `data "aws_region" "current" {}` → `.name`
   - 계정 ID: `data "aws_caller_identity" "current" {}` → `.account_id`
   - 특정 AZ 예외(인스턴스 타입 미지원 등)는 data source 결과를 그대로 쓰되 해당 리소스에서 개별 필터링한다.
-- **인라인 블록 금지**: 별도 리소스로 분리할 수 있다면 반드시 분리한다. 중첩 블록은 Terraform이 내부 순서를 제어하므로, rule 추가·삭제 시 순서 재계산으로 기존 규칙을 삭제 후 재생성하는 파괴적 변경이 발생할 수 있다. 별도 리소스로 분리하면 각 rule이 독립 리소스로 관리되어 이 문제를 방지한다.
-  - Security Group `ingress` / `egress` → `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule`
+- **리소스 주소 안정성 (for_each 기반 관리)**: 리소스 추가·삭제 시 불필요한 cascading 재생성(일시 차단·다운타임)을 방지하기 위해 `for_each`-based stable key(`["key"]`) 관리를 기본으로 한다.
+
+  | 패턴 | 문제점 |
+  |------|--------|
+  | 인라인 블록 (`ingress {}`, `egress {}`, `versioning {}` 등) | 상위 리소스 전체 재생성 → 모든 하위 설정 일시 삭제 |
+  | `count` 기반 리소스 배열 | 중간 요소 추가/삭제 시 인덱스 이동 → 후속 리소스 전부 재생성 |
+
+  적용 예시:
+  - Security Group rule → `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule`
   - S3 `versioning`, `server_side_encryption_configuration` 등 → 별도 리소스
+
+- **공식 모듈 사용 시 리소스 생성 방식 사전 확인** (코드 작성 전 필수): 공식 모듈이 추가 리소스를 위한 파라미터를 제공하는 경우, 해당 파라미터의 내부 구현(`for_each` vs `count`)을 먼저 확인한다.
+
+  | 모듈 내부 구현 | 판단 기준 | 대응 방식 |
+  |--------------|----------|----------|
+  | `for_each` 기반 (`map(object(...))` 타입 파라미터) | 안정적 → 모듈 파라미터 사용 | 모듈 파라미터로 전달 (외부 리소스 주입 금지) |
+  | `count` 기반 (`list(object(...))` 또는 number 타입) | 불안정 → 외부 분리 필요 | 외부에 `for_each`-based 별도 리소스 선언 |
+  | 파라미터 미제공 | 외부 분리 필요 | 외부에 `for_each`-based 별도 리소스 선언 |
+
+  확인 방법: `terraform` MCP → `get_module_details`로 파라미터 type 조회.
+  `map(object({...}))` 타입 → `for_each` 가능성 높음. 확신이 없으면 GitHub raw URL로 모듈 소스 직접 확인.
 - **`depends_on` 최소화**: 암묵적 의존성(리소스 참조)을 최대한 활용한다.
 - **`moved` 블록 활용**: 리소스 이름 변경이나 모듈 이동 시 state 이전에 사용한다.
 - **주석**: WHY가 명확하지 않을 때만 한국어로 작성한다. WHAT 설명 주석은 작성하지 않는다.

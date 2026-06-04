@@ -72,9 +72,43 @@ lifecycle {
 
 ## Security Group Rule 관리 패턴
 
-- **`aws_security_group` 인라인 블록 금지**: `ingress {}`/`egress {}` 블록 대신 별도 리소스를 사용한다.
-- **모듈 소유 SG**: 공식 모듈이 생성·소유하는 SG에 외부에서 규칙을 주입하지 않는다. 모듈이 제공하는 파라미터(`node_security_group_additional_rules` 등)로 관리한다.
-- **커스텀 모듈 소유 SG**: `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule` 별도 리소스로 선언한다.
+### 원칙: for_each 기반 stable key 관리
+
+SG rule 관리의 핵심은 **리소스 주소의 안정성**이다. 잘못된 패턴은 rule 추가/삭제 시
+의도치 않은 재생성(일시 차단)을 유발한다:
+
+| 패턴 | 문제 |
+|------|------|
+| `aws_security_group` 인라인 블록 | rule 변경 시 SG 전체 재생성 → 모든 rule 일시 삭제 |
+| `count` 기반 리소스 | 중간 삽입/삭제 시 인덱스 이동 → 후속 rule 전부 재생성 |
+| `for_each` 기반 리소스 | `["key"]` 주소로 관리 — 다른 rule에 영향 없이 추가/삭제 가능 |
+
+### v21.x 공식 모듈의 구현 방식
+
+`terraform-aws-modules/eks/aws` v21.x는 단일 `for_each`로 모든 node SG rule을 통합 관리한다:
+
+```hcl
+# terraform-aws-eks v21.x node_groups.tf (소스 확인 완료)
+resource "aws_security_group_rule" "node" {
+  for_each = { for k, v in merge(
+    local.node_security_group_rules,
+    local.node_security_group_recommended_rules,
+    var.node_security_group_additional_rules,   # ← 여기 병합
+  ) : k => v if local.create_node_sg }
+}
+```
+
+→ `node_security_group_additional_rules`로 전달한 규칙은 동일한 `for_each`에 병합되어
+`aws_security_group_rule.node["ingress_self_all"]`처럼 stable key로 관리된다.
+`for_each` 기반이므로 원칙의 목적이 모듈 내부에서 달성된다.
+
+### 적용 규칙
+
+- **node SG 추가 규칙**: `node_security_group_additional_rules` 파라미터로 전달
+  (외부에서 `module.eks.node_security_group_id`를 참조해 별도 리소스 주입 금지 — 모듈 소유권 침해)
+- **공식 모듈이 `count`-based이거나 파라미터가 없는 경우**: 외부에 `for_each`-based 별도 리소스 선언
+  (현재 v21.x에는 해당 없음)
+- **어떤 경우에도 금지**: 인라인 블록 및 `count`-based 패턴
 
 ---
 
