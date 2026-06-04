@@ -1,11 +1,19 @@
 ################################################################################
 # EKS 클러스터 접근 제어 (Access Entries)
 #
-# 콘솔/CLI로 등록 시 클러스터 재생성 후 접근 권한이 사라지는 문제를 방지한다.
-# "누가 이 클러스터에 접근할 수 있는가"는 환경 종속 정책이므로 모듈이 아닌
-# 환경 레벨에서 관리한다.
+# EKS API 기반 접근 제어. IAM 엔티티(User/Role)에 Kubernetes 권한을 부여한다.
+# AWS IAM 권한(EKS 생성/수정)과 Kubernetes 권한(kubectl)은 별도 레이어로 분리된다.
+# → 인프라를 생성하는 권한과 클러스터에 접근하는 권한이 다르다.
 #
-# 접근 주체 추가/제거: locals.tf의 access_entries 블록을 수정 후 terraform apply.
+# 접근 주체 관리: locals.tf의 access_entries 블록
+#   - principal_arn: 접근을 허용할 IAM User 또는 Role ARN
+#   - policy_arn: 부여할 Kubernetes 권한 수준
+#       · AmazonEKSClusterAdminPolicy : 클러스터 전체 관리자
+#       · AmazonEKSEditPolicy         : 네임스페이스 수준 편집
+#       · AmazonEKSViewPolicy         : 읽기 전용
+#   - access_scope.type: "cluster"(전체) 또는 "namespace"(특정 네임스페이스)
+#
+# 클러스터를 재생성해도 Terraform apply 한 번으로 접근 권한이 자동 복원된다.
 ################################################################################
 
 resource "aws_eks_access_entry" "this" {
@@ -24,6 +32,7 @@ resource "aws_eks_access_policy_association" "this" {
   policy_arn    = each.value.policy_arn
 
   access_scope {
-    type = "cluster"
+    type       = each.value.access_scope.type
+    namespaces = try(each.value.access_scope.namespaces, null)
   }
 }
