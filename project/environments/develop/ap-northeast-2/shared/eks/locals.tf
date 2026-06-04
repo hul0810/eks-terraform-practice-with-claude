@@ -40,16 +40,21 @@ locals {
   # EKS 클러스터 접근 주체 목록
   # 클러스터가 재생성되어도 접근 권한이 자동 복원되도록 Terraform으로 관리한다.
   # principal_arn: IAM User 또는 Role ARN
-  # policy_arn: AmazonEKSClusterAdminPolicy (클러스터 전체 admin)
-  #             AmazonEKSEditPolicy (네임스페이스 수준 편집)
-  #             AmazonEKSViewPolicy (읽기 전용)
+  # policy_associations: principal당 여러 정책을 map으로 선언 가능
+  #   policy_arn: AmazonEKSClusterAdminPolicy (클러스터 전체 admin)
+  #               AmazonEKSEditPolicy (네임스페이스 수준 편집)
+  #               AmazonEKSViewPolicy (읽기 전용)
   # access_scope.type: "cluster" (전체) 또는 "namespace" (특정 네임스페이스)
   # access_scope.namespaces: type이 "namespace"일 때만 지정
   access_entries = {
     study = {
       principal_arn = "arn:aws:iam::891396992584:user/study"
-      policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-      access_scope  = { type = "cluster" }
+      policy_associations = {
+        cluster_admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
     }
   }
 }
