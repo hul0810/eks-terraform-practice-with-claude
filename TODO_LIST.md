@@ -16,7 +16,6 @@
   - [x] S3 버킷 생성 (버전 관리 + SSE-S3 암호화 + public access 차단)
   - [x] DynamoDB 테이블 생성 (PAY_PER_REQUEST, LockID 해시키)
 - [x] `global/tfstate-backend/outputs.tf` 작성 (버킷명, 테이블명 출력)
-- [x] `terraform init && terraform apply` 실행
 
 ---
 
@@ -44,9 +43,6 @@
 - [x] `environments/develop/ap-northeast-2/shared/vpc/data.tf` 작성 (`aws_availability_zones` 동적 조회)
 - [x] `environments/develop/ap-northeast-2/shared/vpc/main.tf` 작성 (vpc 모듈 호출)
 - [x] `environments/develop/ap-northeast-2/shared/vpc/outputs.tf` 작성 (vpc 출력값 노출)
-- [x] `terraform init` 실행 (`environments/develop/ap-northeast-2/shared/vpc/` 에서)
-- [x] `terraform plan` 검토
-- [x] `terraform apply` 실행
 
 ### 2-2. modules/eks + environments/dev eks 추가
 
@@ -69,22 +65,40 @@
     - [x] `vpc-cni` (`before_compute = true`: 노드 그룹 생성 전 CNI 먼저 배포)
     - [x] `kube-proxy`
     - [x] `coredns`
-- [x] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint 등)
-  - [ ] `oidc_provider_arn` output 제거 — Pod Identity 전용 전략으로 IRSA 미사용
-  - [ ] `modules/eks/1.0.0/main.tf` — `enable_irsa = false` 변경
-  - [ ] `environments/develop/.../eks/outputs.tf` — `oidc_provider_arn` output 제거
+- [x] `modules/eks/outputs.tf` 작성 (cluster_name, endpoint 등, oidc_provider_arn 포함)
 - [x] `environments/develop/ap-northeast-2/shared/eks/` 디렉토리 생성 및 구성 파일 작성
   - [x] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
-- [x] `terraform plan` 검토 (vpc: 8 change / eks: 30 add, 오류 없음)
-- [~] `terraform apply` 실행
   - [x] EKS 클러스터 생성 완료
-  - [ ] 노드 그룹 재생성 (CREATE_FAILED 상태 → destroy 후 재apply)
-    - cluster_addons 미설정으로 VPC CNI 미존재 → CNI 초기화 실패가 원인
-    - 해결: cluster_addons 추가 후 아래 순서로 재적용
-      1. `terraform destroy -target='module.eks.module.eks.module.eks_managed_node_group["system"].aws_eks_node_group.this[0]'`
-      2. `terraform apply`
 
-### 2-3. modules/karpenter + environments/dev karpenter 추가
+### 2-3. modules/eks-addons + environments/dev addons 추가
+
+> **순서 중요**: eks-pod-identity-agent는 modules/eks(2-2)에서 이미 설치됨.
+> 이 모듈에서 eks-pod-identity-agent 중복 선언 금지.
+>
+> 전략: 관리형 우선 (`docs/addon-strategy.md` 참조)
+> - AWS 관리형이 있는 것: `aws_eks_addon` 직접 선언
+> - 관리형 없는 것만: `aws-ia/eks-blueprints-addons` Helm 래핑 사용
+
+- [ ] `modules/eks-addons/variables.tf` 작성
+- [ ] `modules/eks-addons/main.tf` 작성
+  - [ ] **EKS 관리형 (`aws_eks_addon` 직접 선언, Pod Identity IAM 포함)**
+    - [ ] `aws-ebs-csi-driver` — IAM: `AmazonEBSCSIDriverPolicy`
+    - [ ] `metrics-server` — IAM 불필요 (Community 관리형)
+    - [ ] `external-dns` — IAM: Route53 권한 (Community 관리형)
+  - [ ] **Helm 전용 (`aws-ia/eks-blueprints-addons ~> 1.21`)**
+    - [ ] `enable_aws_load_balancer_controller = true` — IAM: `AWSLoadBalancerControllerIAMPolicy`
+    - [ ] `enable_kube_prometheus_stack = true`
+- [ ] `modules/eks-addons/outputs.tf` 작성
+- [ ] `environments/develop/ap-northeast-2/shared/eks/main.tf`에 `module "eks_addons"` 추가
+  - [ ] `depends_on = [module.eks]` 명시
+  - [ ] `providers.tf`에 `helm`, `kubernetes` provider 추가
+  - [ ] 초기 구축 순서 주석 추가: `terraform apply -target=module.eks` 먼저
+- [ ] `terraform plan` 검토
+- [ ] `terraform apply` 실행
+
+### 2-4. modules/karpenter + environments/dev karpenter 추가
+
+> **전제**: 2-3 eks-addons 완료 후 진행 (eks-pod-identity-agent 설치 완료 상태)
 
 - [ ] `modules/vpc/variables.tf`에 `cluster_name` variable 추가
 - [ ] `modules/vpc/main.tf`에 Private 서브넷 Karpenter 탐색 태그 추가
@@ -99,32 +113,8 @@
     - [ ] dev: spot + on-demand 혼합, TTL 30분
     - [ ] prd: on-demand 전용, TTL 60분
 - [ ] `modules/karpenter/outputs.tf` 작성
-- [ ] `environments/develop/ap-northeast-2/shared/karpenter/` 디렉토리 생성 및 구성 파일 작성
-  - [ ] `providers.tf` 작성 (AWS + `helm` + `kubernetes` provider 포함)
-  - [ ] `backend.tf`, `locals.tf`, `main.tf`, `outputs.tf` 작성
-- [ ] `terraform plan` 검토
-- [ ] `terraform apply` 실행
-
-### 2-4. modules/eks-addons + environments/dev addons 추가
-
-- [ ] `modules/eks-addons/variables.tf` 작성
-- [ ] `modules/eks-addons/main.tf` 작성
-  - [ ] `aws-ia/eks-blueprints-addons ~> 1.21` 사용 (EKS addon + Helm 통합 처리, Pod Identity 방식)
-  - [ ] EKS 관리형 애드온 (enable 플래그)
-    - [ ] `enable_aws_vpc_cni = true`
-    - [ ] `enable_coredns = true`
-    - [ ] `enable_kube_proxy = true`
-    - [ ] `enable_aws_ebs_csi_driver = true`
-    - [ ] `enable_eks_pod_identity_agent = true`
-  - [ ] Helm 애드온 (enable 플래그)
-    - [ ] `enable_aws_load_balancer_controller = true`
-    - [ ] `enable_external_dns = true`
-    - [ ] `enable_metrics_server = true`
-    - [ ] `enable_kube_prometheus_stack = true`
-- [ ] `modules/eks-addons/outputs.tf` 작성
-- [ ] `environments/develop/ap-northeast-2/shared/eks-addons/` 디렉토리 생성 및 구성 파일 작성
-  - [ ] `providers.tf` 작성 (AWS + `helm` + `kubernetes` provider 포함)
-  - [ ] `backend.tf`, `locals.tf`, `main.tf`, `outputs.tf` 작성
+- [ ] `environments/develop/ap-northeast-2/shared/eks/main.tf`에 `module "karpenter"` 추가
+  - [ ] `depends_on = [module.eks_addons]` 명시
 - [ ] `terraform plan` 검토
 - [ ] `terraform apply` 실행
 
@@ -156,6 +146,60 @@
 - [ ] `kubectl get pods -n monitoring` - Prometheus/Grafana 확인
 - [ ] 테스트 Deployment 배포 후 Karpenter 노드 프로비저닝 확인
 - [ ] Grafana 대시보드 접속 확인
+
+---
+
+## Phase 5. GitOps 전환 (Terraform → ArgoCD)
+
+> **목적**: 여러 환경·클러스터로 확장 시 반복 작업을 최소화하기 위해
+> Helm 애드온 관리를 Terraform에서 ArgoCD로 이관한다.
+>
+> **전환 전제**: Phase 2-4 완료 후 진행. ArgoCD가 시스템 노드에 배포된 상태 기준.
+
+### 5-1. ArgoCD 설치
+
+- [ ] `modules/eks-addons/main.tf`에 ArgoCD Helm 설치 추가
+  - [ ] `enable_argocd = true` (aws-ia/eks-blueprints-addons)
+  - [ ] HA 구성 values 설정 (redis-ha, server replicas)
+  - [ ] `CriticalAddonsOnly` toleration 추가 (시스템 노드에 스케줄)
+- [ ] ArgoCD UI 접속 확인 (`kubectl port-forward svc/argocd-server -n argocd 8080:443`)
+
+### 5-2. IAM/AWS 리소스와 Helm 리소스 분리
+
+> 이 단계의 핵심: Terraform은 AWS 리소스(IAM Role, SQS, EventBridge)만 관리하고
+> Helm Chart 설치는 ArgoCD에 위임한다.
+
+- [ ] `modules/eks-addons/main.tf` 수정
+  - [ ] `aws-ia/eks-blueprints-addons` 블록에 `create_kubernetes_resources = false` 추가
+    - Terraform이 생성하던 `helm_release` 리소스 제거됨
+    - IAM Role, SQS, EventBridge Rule은 계속 Terraform이 관리
+- [ ] `terraform plan`으로 `helm_release` 리소스 삭제 확인 후 `terraform apply`
+
+### 5-3. ArgoCD ApplicationSet 작성
+
+> 하나의 ApplicationSet 선언으로 모든 환경에 동일 Chart 배포.
+
+- [ ] `argocd/applicationsets/` 디렉토리 생성
+- [ ] `argocd/applicationsets/eks-addons.yaml` 작성
+  - [ ] Generator: 환경 목록 (`develop`, `production`)
+  - [ ] 공통 Chart 버전 선언 (LBC, kube-prometheus-stack)
+  - [ ] 환경별 values 파일 경로 연결 (`values-{{env}}.yaml`)
+- [ ] `argocd/values/` 디렉토리 생성
+  - [ ] `values-develop.yaml` — dev 환경 오버라이드 (replica 수, resource limits 등)
+  - [ ] `values-production.yaml` — prd 환경 오버라이드
+
+### 5-4. Karpenter GitOps 전환
+
+- [ ] `modules/karpenter/main.tf`에 `create_kubernetes_resources = false` 추가
+  - Terraform: IAM Role + SQS + EventBridge만 유지
+  - ArgoCD: Karpenter Helm Chart + EC2NodeClass + NodePool 관리
+- [ ] `argocd/applicationsets/karpenter.yaml` 작성
+
+### 5-5. 검증
+
+- [ ] ArgoCD UI에서 전체 애드온 Synced 상태 확인
+- [ ] `kubectl edit` 으로 임의 변경 후 ArgoCD 자동 복구 확인 (드리프트 감지)
+- [ ] 새 환경 추가 시나리오 테스트: ApplicationSet 목록에 환경 1개 추가 → 자동 배포 확인
 
 ---
 
