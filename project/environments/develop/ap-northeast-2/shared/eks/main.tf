@@ -40,4 +40,6 @@ module "eks" {
   system_node_desired_size   = local.eks.system_node.desired_size
 
   zonal_shift_config = { enabled = false }
+
+  access_entries = local.access_entries
 }
