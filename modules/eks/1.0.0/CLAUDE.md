@@ -70,13 +70,29 @@ lifecycle {
 
 ---
 
-## Security Group Rule 분리 패턴
+## Security Group Rule 관리 패턴
 
-프로젝트 원칙에 따라 인라인 `ingress`/`egress` 블록을 금지하고 별도 리소스로 분리한다.
+- **`aws_security_group` 인라인 블록 금지**: `ingress {}`/`egress {}` 블록 대신 별도 리소스를 사용한다.
+- **모듈 소유 SG**: 공식 모듈이 생성·소유하는 SG에 외부에서 규칙을 주입하지 않는다. 모듈이 제공하는 파라미터(`node_security_group_additional_rules` 등)로 관리한다.
+- **커스텀 모듈 소유 SG**: `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule` 별도 리소스로 선언한다.
 
-| 리소스명 | 방향 | 포트 | 목적 |
-|----------|------|------|------|
-| `aws_vpc_security_group_ingress_rule.node_to_node` | 노드 → 노드 | ALL | ICMP·UDP 등 모듈 기본값(1025-65535/tcp)이 커버하지 못하는 비-TCP 프로토콜 허용 |
+---
+
+## Security Group 구조 및 역할
+
+### 3계층 구조
+
+| SG | 생성 주체 | 부착 대상 | 역할 |
+|----|-----------|-----------|------|
+| `clusterSecurityGroupId` (eks-cluster-sg-*) | EKS 자동 생성 | EKS owned ENI + 노드 EC2 | 노드 ↔ 컨트롤 플레인 기본 통신 채널 (self-reference ALL) |
+| `cluster_sg` (`create_security_group = true`) | 모듈 생성 | EKS owned ENI | 외부 접근 제어 앵커 — Bastion/VPN SG 화이트리스트 추가 시 이 SG에 인바운드 규칙을 붙인다. 현재 규칙 없음 |
+| `node_sg` | 모듈 생성 | 노드 EC2 | 노드 레벨 트래픽 제어 |
+
+### node_sg에 추가된 커스텀 규칙 (`node_security_group_additional_rules`)
+
+| 키 | 방향 | 포트 | 목적 |
+|----|------|------|------|
+| `ingress_self_all` | 노드 → 노드 | ALL | ICMP·UDP 등 모듈 기본값(1025-65535/tcp)이 커버하지 못하는 비-TCP 프로토콜 허용 |
 
 ### 모듈이 node_security_group_recommended_rules로 이미 생성하는 규칙 (중복 선언 금지)
 
