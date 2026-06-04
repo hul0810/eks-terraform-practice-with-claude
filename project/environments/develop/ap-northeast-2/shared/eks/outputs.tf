@@ -16,9 +16,8 @@ output "cluster_certificate_authority_data" {
   sensitive   = true
 }
 
-# Phase 2-3 Karpenter IAM Role 생성 시 필요
 output "oidc_provider_arn" {
-  description = "IRSA용 OIDC Provider ARN (Karpenter, LBC, EBS CSI Driver IAM Role 생성에 사용)"
+  description = "IRSA용 OIDC Provider ARN. 기본 전략은 Pod Identity이나 서드파티 도구 호환성을 위해 유지한다."
   value       = module.eks.oidc_provider_arn
   sensitive   = false
 }
