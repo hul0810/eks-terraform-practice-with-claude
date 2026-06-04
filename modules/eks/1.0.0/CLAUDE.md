@@ -8,7 +8,24 @@
 
 ## Add-on 버전 관리
 
-전체 정책: `docs/terraform-principles.md` → **EKS 관리형 Add-on** 섹션 참조.
+전체 정책: `docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴).
+
+### 이 모듈이 관리하는 범위
+
+**Bootstrap 애드온 4종만** 이 모듈의 `addons` 블록에서 관리한다.
+나머지 애드온(ebs-csi-driver, LBC 등)은 `modules/eks-addons`에서 관리한다.
+
+- 분리 이유: bootstrap 애드온은 노드 조인 및 IAM 연동의 전제 조건이라 클러스터 lifecycle에 묶여야 한다.
+  나머지는 클러스터 구축 후 독립적으로 설치·운영한다.
+- `eks-pod-identity-agent`를 bootstrap으로 관리하는 이유: Pod Identity 전략의 전제 조건으로,
+  이 agent 없이는 Karpenter·LBC·EBS CSI 등 모든 IAM 연동이 불가하다. Karpenter보다 반드시 먼저 설치되어야 한다.
+
+### IRSA와 Pod Identity
+
+`enable_irsa = true`로 OIDC Provider를 유지한다. 이 프로젝트의 기본 IAM 전략은 Pod Identity이지만,
+서드파티 도구나 특정 상황에서 IRSA가 필요할 수 있으므로 옵션으로 열어둔다.
+- 신규 애드온 IAM 연동 시 Pod Identity(`aws_eks_pod_identity_association`) 우선 사용
+- IRSA 사용이 불가피한 경우에만 `oidc_provider_arn` output을 참조
 
 ### 현재 고정 버전 (EKS 1.33 / ap-northeast-2 / 2026-05-31 조회)
 
@@ -17,6 +34,7 @@
 | vpc-cni | `v1.20.5-eksbuild.1` | default |
 | kube-proxy | `v1.33.10-eksbuild.2` | default |
 | coredns | `v1.12.4-eksbuild.10` | default |
+| eks-pod-identity-agent | `v1.3.10-eksbuild.3` | default |
 
 ### 업그레이드 절차
 

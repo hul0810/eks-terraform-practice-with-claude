@@ -24,7 +24,7 @@ output "cluster_certificate_authority_data" {
 }
 
 output "oidc_provider_arn" {
-  description = "IRSA(IAM Roles for Service Accounts)용 OIDC Provider ARN. Phase 2-3 Karpenter IAM Role 생성 시 필요"
+  description = "IRSA(IAM Roles for Service Accounts)용 OIDC Provider ARN. 기본 전략은 Pod Identity이나 서드파티 도구 호환성을 위해 OIDC Provider를 유지한다."
   value       = module.eks.oidc_provider_arn
   sensitive   = false
 }

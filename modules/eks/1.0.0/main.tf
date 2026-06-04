@@ -51,8 +51,8 @@ module "eks" {
 
   # ── IRSA (IAM Roles for Service Accounts) ────────────────────────────────────
   # OIDC Provider를 생성하여 Pod가 IAM 역할을 직접 assume할 수 있게 한다.
-  # Karpenter, AWS Load Balancer Controller, EBS CSI Driver 등 모든 AWS 연동 애드온의 전제 조건.
-  # 노드 IAM 역할에 과도한 권한을 부여하는 대신 Pod별로 최소 권한을 부여할 수 있다.
+  # 이 프로젝트의 기본 IAM 전략은 Pod Identity이지만, 서드파티 도구나 특정 상황에서
+  # IRSA가 필요할 수 있으므로 OIDC Provider는 활성화 상태로 유지한다.
   enable_irsa = true
 
   # ── 인증 모드 ────────────────────────────────────────────────────────────────
@@ -97,6 +97,11 @@ module "eks" {
     }
     coredns = {
       addon_version = "v1.12.4-eksbuild.10"
+    }
+    # Pod Identity 전략의 전제 조건. 이 agent 없이는 aws_eks_pod_identity_association이
+    # 동작하지 않아 EBS CSI, LBC 등 모든 IAM 연동이 불가하므로 bootstrap 단계에서 설치한다.
+    eks-pod-identity-agent = {
+      addon_version = "v1.3.10-eksbuild.3"
     }
   }
 
