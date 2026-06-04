@@ -74,7 +74,7 @@
 - 환경별 설정값은 `locals.tf`에 집중 관리. `terraform.tfvars` 사용 금지
 - 태그: `environment` / `managed_by` 2개만, 소문자
 - 태그 거버넌스: `@docs/tag-governance.md` 참조 (신규 root module 작성 시 3계층 구성 필수)
-- 인라인 블록 금지 (Security Group rule, S3 설정 등 별도 리소스로 분리)
+- 리소스 주소 안정성: `for_each` 기반 관리 필수, `count` 및 인라인 블록 금지. 공식 모듈 사용 시 `for_each` 파라미터 제공 여부 사전 확인 후 모듈 파라미터 또는 별도 리소스 결정 (`@docs/terraform-principles.md` → 리소스 주소 안정성 섹션)
 - `depends_on` 최소화, `moved` 블록으로 state 이전
 - 삭제 불가 리소스: `lifecycle { prevent_destroy = true }`
 - 공식 모듈 버전: `~> X.Y.Z` 형식 (패치만 허용)
