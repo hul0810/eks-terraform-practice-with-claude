@@ -110,3 +110,22 @@ variable "zonal_shift_config" {
   })
   default = null
 }
+
+variable "access_entries" {
+  description = "EKS Access Entry 목록. IAM 엔티티(User/Role)에 Kubernetes 권한을 부여한다. principal_arn별로 policy_associations를 중첩 map으로 선언한다. 클러스터가 재생성되어도 terraform apply 한 번으로 접근 권한이 자동 복원된다."
+  type = map(object({
+    principal_arn     = string
+    type              = optional(string, "STANDARD")
+    kubernetes_groups = optional(list(string))
+    user_name         = optional(string)
+    tags              = optional(map(string), {})
+    policy_associations = optional(map(object({
+      policy_arn = string
+      access_scope = object({
+        namespaces = optional(list(string))
+        type       = string
+      })
+    })), {})
+  }))
+  default = {}
+}

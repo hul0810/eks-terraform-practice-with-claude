@@ -153,11 +153,14 @@ module "eks" {
   }
 
   # ── 노드 간 추가 규칙 ────────────────────────────────────────────────────────
-  # 환경별로 필요한 추가 규칙을 주입한다. 모듈 소유 SG의 규칙은 외부 리소스 주입 대신
-  # 이 파라미터로 관리한다. 기본값 {}이므로 추가 규칙이 없으면 생략 가능.
+  # node_security_group_enable_recommended_rules가 커버하지 않는 비-TCP 프로토콜
+  # (ICMP, UDP 애플리케이션 트래픽 등)을 노드 간에 허용한다.
+  # 모듈 소유 SG의 규칙은 외부 리소스 주입 대신 모듈 파라미터로 관리한다.
   node_security_group_additional_rules = var.node_security_group_additional_rules
 
   zonal_shift_config = var.zonal_shift_config
+
+  access_entries = var.access_entries
 
   tags = var.additional_tags
 }
