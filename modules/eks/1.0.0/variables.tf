@@ -39,7 +39,7 @@ variable "endpoint_public_access" {
   default     = false
 }
 
-variable "public_access_cidrs" {
+variable "endpoint_public_access_cidrs" {
   description = "EKS API 서버 퍼블릭 엔드포인트 허용 CIDR 목록. endpoint_public_access=true 시 반드시 IP를 제한해야 한다. 기본값 0.0.0.0/0은 인터넷 전체 노출이므로 환경별로 반드시 재정의할 것."
   type        = list(string)
   default     = ["0.0.0.0/0"]
@@ -95,4 +95,18 @@ variable "additional_tags" {
   description = "모든 리소스에 추가할 태그 맵. providers.tf의 default_tags로 공통 태그(environment, managed_by)를 관리하므로, 이 변수는 리소스 식별에 필요한 추가 태그에만 사용한다."
   type        = map(string)
   default     = {}
+}
+
+variable "node_security_group_additional_rules" {
+  description = "node_sg에 추가할 보안 그룹 규칙 맵. node_security_group_enable_recommended_rules가 커버하지 못하는 규칙을 환경별로 주입한다. 업스트림 모듈의 node_security_group_additional_rules 스키마를 따른다."
+  type        = any
+  default     = {}
+}
+
+variable "zonal_shift_config" {
+  description = "ARC Zonal Shift 활성화 여부. null이면 모듈 기본값(비활성화) 사용. 콘솔에서 값을 변경하면 Terraform 드리프트가 발생하므로 반드시 이 변수로 명시적으로 관리한다."
+  type = object({
+    enabled = optional(bool)
+  })
+  default = null
 }

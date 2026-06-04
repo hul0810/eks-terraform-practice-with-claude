@@ -15,13 +15,34 @@ module "eks" {
   vpc_id     = var.vpc_id
   subnet_ids = var.subnet_ids
 
+  # ── 추가 보안 그룹 (cluster_sg) ─────────────────────────────────────────────
+  # 모듈이 생성하여 EKS owned ENI에 추가로 부착하는 SG.
+  # 노드 ↔ 컨트롤 플레인 기본 통신은 clusterSecurityGroupId self-reference(ALL)로 충분하지만,
+  # 이 SG는 Bastion/VPN 등 외부 접근 제어 규칙을 추가할 때 앵커 역할을 한다.
+  # 기본값이 true이지만 의도를 명시한다.
+  #
+  # [모듈 버그] create_security_group = false 설정 시 주의 — 사실상 false는 사용 불가:
+  #   1. false로 설정하면 security_group_id(기본값 "")가 빈 문자열이 되어
+  #      ingress_cluster_443/kubelet 규칙의 source_security_group_id = ""로 AWS API 요청이 가고
+  #      SG 규칙 생성이 무기한 블로킹된다.
+  #   2. 회피하려면 security_group_id에 기존 SG를 지정해야 하나,
+  #      EKS clusterSecurityGroupId(eks-cluster-sg-*)는 AWS API 제약으로 추가 SG 등록 자체가 불가.
+  #   3. 결국 false를 사용하려면 완전히 별도로 생성한 외부 SG가 있어야 하므로 현실적으로 true가 필수.
+  create_security_group = true
+
+  # ── 노드 권장 규칙 활성화 ────────────────────────────────────────────────────
+  # egress_all, CoreDNS(53), ephemeral(1025-65535), webhook(4443/6443/8443/9443/10251) 포함.
+  # false로 끄면 노드 egress가 사라져 ECR Pull, AWS API 호출 불가.
+  # 기본값이 true이지만 의도를 명시한다.
+  node_security_group_enable_recommended_rules = true
+
   # ── 엔드포인트 접근 설정 ─────────────────────────────────────────────────────
   # private_access는 항상 활성화: 노드 ↔ 컨트롤 플레인 통신이 VPC 내부로 유지되어
   # 네트워크 비용 및 지연 시간을 줄이고, 외부 노출 없이 안전한 통신을 보장한다.
   # public_access는 환경별로 다름: develop=true(로컬 kubectl), production=false(VPN 경유)
   endpoint_private_access      = true
   endpoint_public_access       = var.endpoint_public_access
-  endpoint_public_access_cidrs = var.public_access_cidrs
+  endpoint_public_access_cidrs = var.endpoint_public_access_cidrs
 
   # ── 컨트롤 플레인 로그 ───────────────────────────────────────────────────────
   # 기본 비활성화(빈 리스트)로 CloudWatch Logs 비용을 절감한다.
@@ -39,6 +60,16 @@ module "eks" {
   # Karpenter가 노드 등록 시 aws-auth ConfigMap을 사용하므로 이 모드가 필요하다.
   # (API 단독 모드에서는 Karpenter NodeClass의 노드 IAM 역할 자동 등록이 불가)
   authentication_mode = "API_AND_CONFIG_MAP"
+
+  # ── 클러스터 생성자 접근 권한 ────────────────────────────────────────────────
+  # 이 옵션을 true로 설정하면 terraform apply를 실행한 IAM 엔티티(현재: TerraformExecutionRole)에
+  # AmazonEKSClusterAdminPolicy를 Access Entry로 자동 부여한다.
+  #
+  # false로 유지하는 이유:
+  #   - TerraformExecutionRole은 AWS API(EKS 생성/수정)만 호출하므로 K8s ClusterAdmin 불필요
+  #   - 클러스터 접근 주체는 environments/.../eks/locals.tf의 access_entries에 명시적으로 선언한다
+  #     → 누가 어떤 권한으로 접근하는지 코드로 추적 가능
+  enable_cluster_creator_admin_permissions = false
 
   # upstream 기본값(encryption_config = {})을 override해야 봉투 암호화가 비활성화됨
   encryption_config = null
@@ -90,9 +121,8 @@ module "eks" {
       # 비용 절감용 Spot은 Karpenter NodePool(앱 워크로드 레이어)에서 별도 적용한다.
       capacity_type = "ON_DEMAND"
 
-      # 클러스터 SG를 노드에 직접 부착: kubelet → API 서버 443/tcp 통신 허용
-      # 클러스터 SG 인바운드는 self-reference만 있으므로, 노드가 클러스터 SG를 가져야
-      # endpoint_private_access=true 환경에서 컨트롤 플레인과 통신할 수 있다.
+      # EKS 자동 생성 SG(clusterSecurityGroupId)를 노드에 부착.
+      # 이 SG의 inbound self-reference(ALL)가 노드 ↔ 컨트롤 플레인 양방향 통신을 허용한다.
       # 기본값이 false이므로 반드시 명시해야 한다.
       attach_cluster_primary_security_group = true
 
@@ -122,34 +152,12 @@ module "eks" {
     }
   }
 
-  tags = var.additional_tags
-}
+  # ── 노드 간 추가 규칙 ────────────────────────────────────────────────────────
+  # 환경별로 필요한 추가 규칙을 주입한다. 모듈 소유 SG의 규칙은 외부 리소스 주입 대신
+  # 이 파라미터로 관리한다. 기본값 {}이므로 추가 규칙이 없으면 생략 가능.
+  node_security_group_additional_rules = var.node_security_group_additional_rules
 
-################################################################################
-# 노드 Security Group 추가 규칙
-#
-# terraform-aws-modules/eks v21.x가 node_security_group_recommended_rules로
-# 기본 생성하는 규칙 목록:
-#   - ingress_cluster_443 / ingress_cluster_kubelet
-#   - ingress_self_coredns_tcp / ingress_self_coredns_udp
-#   - ingress_nodes_ephemeral (1025-65535/tcp self)
-#   - ingress_cluster_4443/6443/8443/9443/10251 (webhook 포트)
-#   - egress_all (0.0.0.0/0 ALL)
-#
-# 아래는 모듈이 커버하지 않는 추가 규칙만 선언한다.
-# ※ 인라인 ingress/egress 블록 금지 원칙에 따라 별도 리소스로 분리한다.
-################################################################################
-
-# 노드 간 전체 프로토콜 허용 (Self-reference)
-# 모듈 기본값은 ephemeral 포트(1025-65535/tcp)와 DNS(53)만 허용한다.
-# VPC CNI 환경에서 ICMP, UDP 애플리케이션 트래픽 등 비-TCP 프로토콜도
-# 노드 간에 차단되지 않도록 ALL 프로토콜 self-reference 규칙을 추가한다.
-resource "aws_vpc_security_group_ingress_rule" "node_to_node" {
-  security_group_id            = module.eks.node_security_group_id
-  referenced_security_group_id = module.eks.node_security_group_id
-  ip_protocol                  = "-1"
-
-  description = "Allow all traffic between nodes (ICMP, UDP app traffic beyond module defaults)"
+  zonal_shift_config = var.zonal_shift_config
 
   tags = var.additional_tags
 }
