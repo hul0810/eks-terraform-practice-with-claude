@@ -43,10 +43,13 @@ locals {
   # policy_arn: AmazonEKSClusterAdminPolicy (클러스터 전체 admin)
   #             AmazonEKSEditPolicy (네임스페이스 수준 편집)
   #             AmazonEKSViewPolicy (읽기 전용)
+  # access_scope.type: "cluster" (전체) 또는 "namespace" (특정 네임스페이스)
+  # access_scope.namespaces: type이 "namespace"일 때만 지정
   access_entries = {
     study = {
       principal_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:user/study"
       policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+      access_scope  = { type = "cluster" }
     }
   }
 }

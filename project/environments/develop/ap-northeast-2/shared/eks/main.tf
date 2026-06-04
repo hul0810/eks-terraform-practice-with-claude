@@ -27,7 +27,7 @@ module "eks" {
   subnet_ids = local.private_subnet_ids
 
   endpoint_public_access = local.eks.endpoint_public_access
-  public_access_cidrs    = local.eks.public_access_cidrs
+  endpoint_public_access_cidrs = local.eks.public_access_cidrs
   enabled_log_types      = local.eks.enabled_log_types
 
   project     = local.project
@@ -38,4 +38,6 @@ module "eks" {
   system_node_min_size       = local.eks.system_node.min_size
   system_node_max_size       = local.eks.system_node.max_size
   system_node_desired_size   = local.eks.system_node.desired_size
+
+  zonal_shift_config = { enabled = false }
 }
