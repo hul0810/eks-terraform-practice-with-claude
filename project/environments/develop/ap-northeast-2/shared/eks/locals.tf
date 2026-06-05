@@ -56,5 +56,15 @@ locals {
         }
       }
     }
+    # helm/kubernetes provider가 aws eks get-token --role-arn으로 이 Role을 assume하므로 클러스터 admin 권한 필요
+    terraform_execution = {
+      principal_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
+      policy_associations = {
+        cluster_admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
   }
 }
