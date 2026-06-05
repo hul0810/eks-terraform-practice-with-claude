@@ -58,16 +58,41 @@
   - 현재 리전: `data "aws_region" "current" {}` → `.name`
   - 계정 ID: `data "aws_caller_identity" "current" {}` → `.account_id`
   - 특정 AZ 예외(인스턴스 타입 미지원 등)는 data source 결과를 그대로 쓰되 해당 리소스에서 개별 필터링한다.
-- **리소스 주소 안정성 (for_each 기반 관리)**: 리소스 추가·삭제 시 불필요한 cascading 재생성(일시 차단·다운타임)을 방지하기 위해 `for_each`-based stable key(`["key"]`) 관리를 기본으로 한다.
+- **리소스 주소 안정성 — count vs for_each 선택 기준**:
 
-  | 패턴 | 문제점 |
-  |------|--------|
-  | 인라인 블록 (`ingress {}`, `egress {}`, `versioning {}` 등) | 상위 리소스 전체 재생성 → 모든 하위 설정 일시 삭제 |
-  | `count` 기반 리소스 배열 | 중간 요소 추가/삭제 시 인덱스 이동 → 후속 리소스 전부 재생성 |
+  | 상황 | 패턴 | 이유 |
+  |------|------|------|
+  | 단순 on/off 토글 (0 또는 1개, 순서 무관) | `count = bool ? 1 : 0` | 공식 모듈 표준(aws-ia/eks-blueprints-addons 등). 재인덱싱 불가(최대 1개). |
+  | 여러 개를 반복하거나 순서 영향이 있는 리소스 | `for_each = map/set` | 키 기반 stable address. 중간 삽입·삭제 시 후속 리소스에 영향 없음. |
+  | 인라인 블록 (`ingress {}`, `egress {}` 등) | 별도 리소스로 분리 | 상위 리소스 전체 재생성 방지. |
 
-  적용 예시:
-  - Security Group rule → `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule`
-  - S3 `versioning`, `server_side_encryption_configuration` 등 → 별도 리소스
+  **count 사용 조건 (둘 다 충족해야 함)**:
+  1. Boolean 토글 — 해당 리소스가 정확히 0개 또는 1개만 존재
+  2. 순서 독립 — 같은 scope에 동일 타입 리소스가 여러 개 존재하지 않음
+
+  **count 사용 금지 케이스**:
+  - Security Group ingress/egress rule 목록 (`count = length(var.rules)` 형태)
+  - `for_each` 맵 대신 배열을 순회하는 모든 경우
+
+  ```hcl
+  # ✅ count 올바른 사용 — 단일 on/off, 순서 무관
+  resource "aws_eks_addon" "external_dns" {
+    count = var.enable_external_dns ? 1 : 0
+    ...
+  }
+
+  # ✅ for_each 올바른 사용 — 여러 개, 키 기반
+  resource "aws_vpc_security_group_ingress_rule" "node" {
+    for_each = var.ingress_rules   # map(object(...))
+    ...
+  }
+
+  # ❌ count 잘못된 사용 — 목록 순회, 재인덱싱 위험
+  resource "aws_vpc_security_group_ingress_rule" "node" {
+    count = length(var.ingress_rules)
+    ...
+  }
+  ```
 
 - **공식 모듈 사용 시 리소스 생성 방식 사전 확인** (코드 작성 전 필수): 공식 모듈이 추가 리소스를 위한 파라미터를 제공하는 경우, 해당 파라미터의 내부 구현(`for_each` vs `count`)을 먼저 확인한다.
 

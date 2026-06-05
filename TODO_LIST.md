@@ -70,31 +70,45 @@
   - [x] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
   - [x] EKS 클러스터 생성 완료
 
-### 2-3. modules/eks-addons + environments/dev addons 추가
+### 2-3. modules/eks-addons + environments/dev eks-addons 추가
 
-> **순서 중요**: eks-pod-identity-agent는 modules/eks(2-2)에서 이미 설치됨.
-> 이 모듈에서 eks-pod-identity-agent 중복 선언 금지.
+> **아키텍처**: 분리 root module 패턴 (Option C)
+> - `environments/.../eks/` — 클러스터 state (완성, 변경 없음)
+> - `environments/.../eks-addons/` — 애드온 state (신규, `terraform_remote_state.eks` 참조)
+> - Helm provider: `data "aws_eks_cluster"` data source로 초기화 (2단계 apply 불필요)
 >
+> **순서 중요**: eks-pod-identity-agent는 modules/eks(2-2)에서 이미 설치됨. 중복 선언 금지.
 > 전략: 관리형 우선 (`docs/addon-strategy.md` 참조)
-> - AWS 관리형이 있는 것: `aws_eks_addon` 직접 선언
-> - 관리형 없는 것만: `aws-ia/eks-blueprints-addons` Helm 래핑 사용
 
-- [ ] `modules/eks-addons/variables.tf` 작성
-- [ ] `modules/eks-addons/main.tf` 작성
-  - [ ] **EKS 관리형 (`aws_eks_addon` 직접 선언, Pod Identity IAM 포함)**
-    - [ ] `aws-ebs-csi-driver` — IAM: `AmazonEBSCSIDriverPolicy`
-    - [ ] `metrics-server` — IAM 불필요 (Community 관리형)
-    - [ ] `external-dns` — IAM: Route53 권한 (Community 관리형)
-  - [ ] **Helm 전용 (`aws-ia/eks-blueprints-addons ~> 1.21`)**
-    - [ ] `enable_aws_load_balancer_controller = true` — IAM: `AWSLoadBalancerControllerIAMPolicy`
-    - [ ] `enable_kube_prometheus_stack = true`
-- [ ] `modules/eks-addons/outputs.tf` 작성
-- [ ] `environments/develop/ap-northeast-2/shared/eks/main.tf`에 `module "eks_addons"` 추가
-  - [ ] `depends_on = [module.eks]` 명시
-  - [ ] `providers.tf`에 `helm`, `kubernetes` provider 추가
-  - [ ] 초기 구축 순서 주석 추가: `terraform apply -target=module.eks` 먼저
-- [ ] `terraform plan` 검토
-- [ ] `terraform apply` 실행
+- [x] `modules/eks-addons/1.0.0/variables.tf` 작성
+- [x] `modules/eks-addons/1.0.0/main.tf` 작성 — **Pod Identity 전략**
+  - [x] 각 섹션에 blueprints 미사용 이유 주석 명시 (Pod Identity vs IRSA 선택 근거)
+  - [x] **EKS 관리형 (`aws_eks_addon` + Pod Identity IAM)**
+    - [x] `aws-ebs-csi-driver` v1.60.1-eksbuild.1 — IAM: `AmazonEBSCSIDriverPolicy`
+    - [x] `metrics-server` v0.8.1-eksbuild.10 — IAM 불필요
+    - [x] `external-dns` v0.21.0-eksbuild.4 — IAM: Route53 권한 (조건부, `enable_external_dns`)
+  - [x] **Helm 전용 (`aws-ia/eks-blueprints-addons ~> 1.23.0`)**
+    - [x] `enable_aws_load_balancer_controller = true` — 관리형 addon 없어 blueprints IRSA 예외 사용
+    - ~~`enable_kube_prometheus_stack`~~ — Observability는 Phase 6으로 이동
+- [x] `modules/eks-addons/1.0.0/outputs.tf` 작성
+- [x] `modules/eks-addons/1.0.0/CLAUDE.md` 작성
+- [x] `modules/eks-addons-pod-identity/1.0.0/` 작성 — **Pod Identity 전용 구현** (비교 참조용, 배포 X)
+  - [x] `variables.tf` — `oidc_provider_arn` 없음, `vpc_id` 추가 (LBC Helm values용)
+  - [x] `main.tf` — 모든 애드온(EBS CSI, External DNS, **LBC 포함**)을 Pod Identity로만 구현
+    - [x] LBC: `helm_release` 직접 사용 + `aws_eks_pod_identity_association` — blueprints 없음
+    - [x] LBC IAM 정책: Statement를 기능별로 그룹화하여 인라인 작성
+    - [x] Helm values에 `serviceAccount.annotations.eks.amazonaws.com/role-arn` 미설정 (Pod Identity 특징)
+  - [x] `outputs.tf`
+  - [x] `modules/eks-addons/1.0.0/`(blueprints 혼합)과의 차이점을 주석으로 비교 문서화
+- [x] `environments/develop/ap-northeast-2/shared/eks-addons/` 신규 root module 생성
+  - [x] `backend.tf` — key: `project/develop/ap-northeast-2/shared/eks-addons/terraform.tfstate`
+  - [x] `providers.tf` — aws + helm + kubernetes (data "aws_eks_cluster" 경유)
+  - [x] `data.tf` — `terraform_remote_state.eks` + `data.aws_eks_cluster.this`
+  - [x] `locals.tf` — 클러스터 정보, 애드온 버전 집중 관리
+  - [x] `main.tf` — `module "eks_addons"` 호출
+  - [x] `outputs.tf`
+- [x] `terraform plan` 검토
+- [x] `terraform apply` 실행 — EBS CSI, Metrics Server, External DNS, LBC 배포 완료
 
 ### 2-4. modules/karpenter + environments/dev karpenter 추가
 
@@ -143,9 +157,7 @@
 - [ ] `kubectl get pods -A` - 전체 파드 상태 확인
 - [ ] `kubectl get pods -n kube-system` - 관리형 애드온 확인
 - [ ] `kubectl get pods -n karpenter` - Karpenter 동작 확인
-- [ ] `kubectl get pods -n monitoring` - Prometheus/Grafana 확인
 - [ ] 테스트 Deployment 배포 후 Karpenter 노드 프로비저닝 확인
-- [ ] Grafana 대시보드 접속 확인
 
 ---
 
@@ -200,6 +212,23 @@
 - [ ] ArgoCD UI에서 전체 애드온 Synced 상태 확인
 - [ ] `kubectl edit` 으로 임의 변경 후 ArgoCD 자동 복구 확인 (드리프트 감지)
 - [ ] 새 환경 추가 시나리오 테스트: ApplicationSet 목록에 환경 1개 추가 → 자동 배포 확인
+
+---
+
+## Phase 6. Observability 구축 (Prometheus + Grafana)
+
+> **전제**: Phase 2-4 완료 후 진행 (Karpenter 앱 노드 프로비저닝 완료 상태)
+> kube-prometheus-stack pre-install hook이 앱 노드를 필요로 하므로 Karpenter 이후에 설치한다.
+
+- [ ] `modules/eks-addons/1.0.0/main.tf`에 kube-prometheus-stack 추가
+  - [ ] `enable_kube_prometheus_stack = true` (aws-ia/eks-blueprints-addons)
+  - [ ] chart 버전 변수화 (`kube_prometheus_stack_chart_version`)
+  - [ ] Grafana, Prometheus, Alertmanager values 정의
+- [ ] `modules/eks-addons/1.0.0/variables.tf`에 `kube_prometheus_stack_chart_version` 변수 추가
+- [ ] `environments/develop/ap-northeast-2/shared/eks-addons/locals.tf`에 버전 추가
+- [ ] `terraform apply` 실행
+- [ ] `kubectl get pods -n kube-prometheus-stack` — 파드 상태 확인
+- [ ] Grafana 대시보드 접속 확인
 
 ---
 
