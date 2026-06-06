@@ -1,10 +1,14 @@
 ---
 name: cost-engineer
 description: >
-  AWS 인프라 비용을 분석하는 전문 에이전트.
-  infracost 예측값(배포 전)과 AWS Billing MCP 실제 데이터(배포 후) 양쪽을 활용해
-  비용 변동 원인을 진단하고 최적화 방향을 제시한다.
+  AWS 인프라 비용 분석 시 proactively 호출.
+  Terraform 변경 후 비용 영향 분석, 실제 AWS 비용 조회·이상 감지·최적화 제안 요청 시 자동 위임.
   /cost-check 스킬과 /review-terraform 스킬에서 호출된다.
+model: sonnet
+memory: project
+color: green
+skills:
+  - cost-check
 ---
 
 ## 페르소나

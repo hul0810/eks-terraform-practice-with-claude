@@ -1,6 +1,15 @@
 ---
 name: terraform-writer
-description: Terraform 코드 작성이 필요할 때 사용. 신규 모듈/리소스 작성, 환경 구성 파일 작성, 기존 코드 리팩토링 등 모든 Terraform 코드 생성 작업을 담당한다.
+description: >
+  Terraform 코드 작성이 필요할 때 proactively 호출.
+  신규 .tf 파일 작성, 모듈·리소스 생성, 환경 구성 파일 작성, 기존 코드 리팩토링 요청 시 자동 위임.
+  작성 완료 후 cost-check 및 git-commit이 필요하면 해당 스킬을 직접 실행한다.
+model: sonnet
+memory: project
+color: blue
+skills:
+  - git-commit
+  - cost-check
 ---
 
 # Terraform Writer

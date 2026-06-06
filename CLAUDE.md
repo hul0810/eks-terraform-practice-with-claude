@@ -103,29 +103,44 @@
 
 ## 에이전트 활용 가이드
 
-작업 성격에 따라 아래 에이전트를 호출한다. 에이전트 없이 작업할 때는 이 파일의 지시사항을 따른다.
+**핵심 원칙: 작업 성격이 아래 트리거 조건 중 하나라도 해당하면 즉시 해당 에이전트에 위임한다. 직접 처리하지 않는다.**
 
-| 에이전트 | 호출 명령 | 사용 시점 |
-|----------|-----------|-----------|
-| Terraform Writer | `/terraform-writer` | 신규 모듈·리소스 작성, 환경 구성 파일 작성, 리팩토링 |
-| Terraform Reviewer | `/terraform-reviewer` | 작성된 Terraform 코드 검토 요청 시 |
-| AWS Architect | `/aws-architect` | 아키텍처 설계 검토, Well-Architected 리뷰 요청 시 |
-| Security Engineer | `/security-engineer` | IAM·네트워크·암호화·EKS 보안 검토 요청 시 |
-| Kubernetes Specialist | `/kubernetes-specialist` | Karpenter·add-on·Helm values·K8s 리소스 작업 시 |
-| Cost Engineer | `/cost-check` | infracost 예상 비용 확인, Cost Explorer 실제 비용 분석, 최적화 제안 |
+### 능동적 위임 규칙 (자동 호출 트리거)
+
+| 트리거 조건 | 위임 에이전트 | 연동 스킬 |
+|------------|-------------|---------|
+| `.tf` 파일 신규 작성·모듈 생성·리팩토링 요청 | `terraform-writer` | `git-commit`, `cost-check` |
+| Terraform 코드 리뷰·Best Practice 검토 요청 | `terraform-reviewer` | `code-review`, `simplify` |
+| IAM·네트워크·암호화·EKS 보안 검토 요청 | `security-engineer` | `security-review` |
+| Well-Architected·EKS 설계·HA·DR 검토 요청 | `aws-architect` | `code-review` |
+| Karpenter·add-on·Helm values·K8s 리소스 작업 | `kubernetes-specialist` | `code-review` |
+| 비용 분석·이상 감지·최적화 제안 요청 | `cost-engineer` | `cost-check` |
+
+> 각 에이전트는 `description`에 "proactively" 트리거 조건이 명시되어 있다.
+> Claude는 description을 읽고 작업을 자동으로 위임한다.
+
+### 에이전트 직접 호출 명령
+
+| 에이전트 | 명령 | 모델 |
+|----------|------|------|
+| Terraform Writer | `/terraform-writer` | Sonnet |
+| Terraform Reviewer | `/terraform-reviewer` | Sonnet |
+| AWS Architect | `/aws-architect` | Opus (심층 분석) |
+| Security Engineer | `/security-engineer` | Sonnet |
+| Kubernetes Specialist | `/kubernetes-specialist` | Sonnet |
+| Cost Engineer | `/cost-check` | Sonnet |
 
 ### 권장 작업 흐름
 
 ```
-코드 작성 (terraform-writer)
-  → /cost-check (배포 전 예상 비용 확인)
-  → 코드 리뷰 (terraform-reviewer)
-  → 보안 검토 (security-engineer)
-  → 아키텍처 리뷰 (aws-architect)
-  → 비용 리뷰 (cost-engineer)
+코드 작성 (terraform-writer) → git-commit + cost-check 스킬 자동 실행
+  → 코드 리뷰 (terraform-reviewer) → code-review + simplify 스킬 활용
+  → 보안 검토 (security-engineer) → security-review 스킬 활용
+  → 아키텍처 리뷰 (aws-architect) → code-review 스킬 활용
+  → 비용 리뷰 (cost-engineer) → cost-check 스킬 활용
 ```
 
-prd 변경 시 `/review-terraform` Skill이 위 4단계 리뷰를 자동 진행한다.
+prd 변경 시 `/review-terraform` Skill이 위 4단계 리뷰(terraform-reviewer → security-engineer → aws-architect → cost-engineer)를 자동 진행한다.
 
 ---
 

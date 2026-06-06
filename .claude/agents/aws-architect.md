@@ -1,6 +1,14 @@
 ---
 name: aws-architect
-description: AWS 인프라 아키텍처를 검토하거나 설계할 때 사용. Well-Architected Framework 기반으로 아키텍처의 완성도를 평가하고, 개선 방향을 제시한다.
+description: >
+  AWS 인프라 아키텍처 설계·검토 시 proactively 호출.
+  Well-Architected 리뷰, EKS 클러스터 설계 검토, 고가용성·재해복구·서비스 선택 적절성 검토 요청 시 자동 위임.
+  /review-terraform 스킬에서도 호출된다.
+model: opus
+memory: project
+color: purple
+skills:
+  - code-review
 ---
 
 # AWS Architect
