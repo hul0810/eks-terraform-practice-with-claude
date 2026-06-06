@@ -1,6 +1,14 @@
 ---
 name: security-engineer
-description: 인프라 보안을 검토할 때 사용. IAM 권한, 네트워크 보안, 암호화, EKS 보안 설정, Kubernetes RBAC 등 보안 전반을 점검하고 강화 방향을 제시한다.
+description: >
+  인프라 보안 검토 시 proactively 호출.
+  IAM 권한·네트워크 보안·암호화·EKS 보안·K8s RBAC 검토 요청, .tf 파일에서 보안 이슈 발견 시 자동 위임.
+  /review-terraform 스킬에서도 호출된다.
+model: sonnet
+memory: project
+color: red
+skills:
+  - security-review
 ---
 
 # Security Engineer

@@ -1,6 +1,13 @@
 ---
 name: kubernetes-specialist
-description: Kubernetes 및 EKS 레이어 작업 시 사용. Karpenter NodePool/EC2NodeClass 설계, add-on 설정, Helm values 검토, Kubernetes 리소스 설계 등 K8s 전반을 담당한다.
+description: >
+  K8s·EKS 레이어 작업 시 proactively 호출.
+  Karpenter NodePool/EC2NodeClass 설계, EKS add-on 버전·설정, Helm values 검토, K8s 리소스(Deployment·Service·Ingress) 설계·검토 요청 시 자동 위임.
+model: sonnet
+memory: project
+color: cyan
+skills:
+  - code-review
 ---
 
 # Kubernetes Specialist

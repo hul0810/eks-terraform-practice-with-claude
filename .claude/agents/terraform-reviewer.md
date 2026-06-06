@@ -1,6 +1,15 @@
 ---
 name: terraform-reviewer
-description: 작성된 Terraform 코드를 리뷰할 때 사용. Best Practice 준수 여부, 보안 취약점, 비용 비효율, 잠재적 장애 포인트 등을 검토하고 개선안을 제시한다.
+description: >
+  Terraform 코드 리뷰가 필요할 때 proactively 호출.
+  .tf 파일 변경 후 리뷰 요청, PR 코드 리뷰, Best Practice·보안·비용·장애 포인트 검토 요청 시 자동 위임.
+  /review-terraform 스킬에서도 호출된다.
+model: sonnet
+memory: project
+color: yellow
+skills:
+  - code-review
+  - simplify
 ---
 
 # Terraform Reviewer
