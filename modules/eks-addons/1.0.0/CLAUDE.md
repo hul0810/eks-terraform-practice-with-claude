@@ -1,101 +1,79 @@
 # modules/eks-addons 설계 원칙
 
-## 이 모듈이 관리하는 애드온 (5종)
+## 이 모듈이 관리하는 애드온 (4종)
 
 | 애드온 | 설치 방법 | IAM 방식 |
 |--------|-----------|---------|
-| aws-ebs-csi-driver | EKS 관리형 addon | Pod Identity |
-| metrics-server | EKS 관리형 addon | 없음 (불필요) |
-| external-dns | EKS 관리형 addon (조건부) | Pod Identity |
-| aws-load-balancer-controller | Helm (eks-blueprints-addons) | IRSA |
-| kube-prometheus-stack | Helm (eks-blueprints-addons) | 없음 |
+| aws-load-balancer-controller | Helm (eks-blueprints-addons) | IRSA (blueprints 자동 처리) |
+| external-dns | Helm (eks-blueprints-addons) | IRSA (blueprints 자동 처리) |
+| metrics-server | Helm (eks-blueprints-addons) | 없음 |
+| karpenter | Helm (eks-blueprints-addons) | IRSA (blueprints 자동 처리) |
+
+> EBS CSI Driver는 Bootstrap 애드온으로 분류되어 `modules/eks`에서 관리한다.
+> kube-prometheus-stack은 Phase 6에서 별도 추가 예정.
 
 ---
 
-## 고정 버전 (EKS 1.33 / ap-northeast-2 / 2026-06-05 조회)
+## 고정 버전 (2026-06-06 기준)
 
-| 구분 | 이름 | 고정 버전 |
-|------|------|-----------|
-| EKS 관리형 addon | aws-ebs-csi-driver | `v1.60.1-eksbuild.1` |
-| EKS 관리형 addon | metrics-server | `v0.8.1-eksbuild.10` |
-| EKS 관리형 addon | external-dns | `v0.21.0-eksbuild.4` |
-| Terraform 모듈 | aws-ia/eks-blueprints-addons | `~> 1.23.0` |
-| Helm chart | aws-load-balancer-controller | `3.4.0` |
-| Helm chart | kube-prometheus-stack | `86.1.1` |
-
----
-
-## eks-pod-identity-agent 중복 선언 금지
-
-`eks-pod-identity-agent`는 `modules/eks`의 `addons` 블록에서 bootstrap 단계에 설치된다.
-이 모듈에서 중복 선언하면 `aws_eks_addon` 리소스 충돌로 `apply`가 실패한다.
-
-모든 Pod Identity(`aws_eks_pod_identity_association`) 연동은 agent가 이미 실행 중임을 전제로 한다.
+| 애드온 | 고정 버전 |
+|--------|-----------|
+| aws-ia/eks-blueprints-addons (Terraform 모듈) | `~> 1.23.0` |
+| aws-load-balancer-controller (Helm chart) | `3.4.0` |
+| external-dns (Helm chart) | `1.14.5` |
+| metrics-server (Helm chart) | `3.12.2` |
+| karpenter (Helm chart) | `1.3.3` |
 
 ---
 
-## LBC IAM: IRSA 사용 이유
+## IAM 전략: IRSA (blueprints가 강제하는 방식)
 
-LBC는 EKS 관리형 addon이 없는 Helm-only 컴포넌트다.
-`eks-blueprints-addons` 모듈이 내부적으로 IRSA 방식으로 IAM Role을 생성하고
-Helm values에 `serviceAccount.annotations`를 자동 주입한다.
+이 모듈의 IAM 연동은 IRSA를 사용한다. **blueprints 모듈이 IRSA만 지원하기 때문이다.**
+Pod Identity 전환 계획이 공식적으로 없어 blueprints를 사용하는 한 IRSA를 벗어날 수 없다.
+(github.com/aws-ia/terraform-aws-eks-blueprints-addons/issues/289 — Closed as Not Planned)
 
-Pod Identity로 전환하려면 `eks-blueprints-addons`의 내부 구현을 대체해야 한다.
-모듈 외부에서 IAM Role을 별도로 만들고 `set`으로 주입하는 방식은 관리 이중화를 초래하므로
-현재 버전(1.23.0)에서는 Blueprints의 IRSA 구현을 그대로 사용한다.
+blueprints 외부에서 관리하는 `aws_eks_addon`(EBS CSI)은 Pod Identity를 사용한다.
+IAM 방식 선택 기준: blueprints 사용 → IRSA / blueprints 미사용 → Pod Identity.
 
-`modules/eks`에서 `enable_irsa = true`로 OIDC Provider를 유지하는 이유 중 하나가 이것이다.
+blueprints 모듈에 `oidc_provider_arn`을 전달하면 각 애드온의 IAM Role 생성과
+Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한다.
 
 ---
 
-## kube-prometheus-stack: Pending 정상 시나리오
+## 조건부 설치 패턴
 
-kube-prometheus-stack Pod에는 `CriticalAddonsOnly` toleration이 없다.
-Karpenter NodePool 구성 완료(Karpenter 설치 → NodeClass → NodePool 순서) 이전에는
-앱 워크로드를 수용할 노드가 없어 Pod가 Pending 상태가 된다.
+`enable_external_dns`, `enable_karpenter` 변수로 각 애드온을 활성화/비활성화한다.
+blueprints 모듈의 `enable_*` 파라미터에 직접 전달된다.
 
-이는 의도된 동작이다. Karpenter가 NodePool을 인식하면 자동으로 노드를 프로비저닝하고
-Pod가 Running 상태로 전환된다.
+---
+
+## Karpenter NodeClass / NodePool
+
+blueprints는 Karpenter 컨트롤러 IAM Role, SQS 인터럽션 큐, EventBridge Rule, Helm chart를
+자동으로 설치한다. **EC2NodeClass와 NodePool은 Kubernetes 리소스**이므로 이 모듈에서 관리하지 않는다.
+클러스터 apply 이후 별도로 적용한다.
 
 ---
 
 ## External DNS 조건부 설치 패턴
 
-공식 모듈 표준(`aws-ia/eks-blueprints-addons` 등)에 따라 단순 on/off 토글은 `count = bool ? 1 : 0`을 사용한다.
-이 리소스들은 독립적으로 0개 또는 1개만 존재하고 순서 의존성이 없어 재인덱싱 문제가 발생하지 않는다.
-
 ```hcl
-count = var.enable_external_dns ? 1 : 0
+enable_external_dns = var.enable_external_dns  # blueprints 파라미터로 전달
 ```
-
-리소스 주소: `aws_iam_role.external_dns[0]`
-출력에서 꺼낼 때: `var.enable_external_dns ? aws_iam_role.external_dns[0].arn : null`
-
-**count vs for_each 선택 기준** (`docs/terraform-principles.md` 참조):
-- `count = bool ? 1 : 0`: 단일 on/off, 순서 무관한 경우 (공식 모듈 표준)
-- `for_each`: 여러 개를 반복하거나 순서 영향이 있는 경우 (SG ingress rule 등)
 
 ---
 
 ## 버전 업그레이드 절차
 
-### EKS 관리형 addon
-
 ```bash
-aws eks describe-addon-versions \
-  --kubernetes-version <k8s-ver> \
-  --addon-name <addon-name> \
-  --region ap-northeast-2
+helm repo update
+helm search repo <chart-name> --versions
 ```
 
-`defaultVersion: true` 버전 확인 후 `variables.tf`의 `addon_versions` 기본값 및
-`environments/.../eks-addons/locals.tf`의 값을 수동 변경한다.
+최신 stable 버전 확인 후 `environments/.../eks-addons/locals.tf`의 chart version 값을 수정한다.
 
-### Helm chart
-
-Artifact Hub 또는 GitHub Releases에서 최신 stable 버전 확인:
+참고 링크:
 - LBC: https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases
-- kube-prometheus-stack: https://github.com/prometheus-community/helm-charts/releases
-
-`environments/.../eks-addons/locals.tf`의 `lbc_chart_version` / `kube_prometheus_stack_chart_version`
-값을 수동 변경한다.
+- ExternalDNS: https://github.com/kubernetes-sigs/external-dns/releases
+- Metrics Server: https://github.com/kubernetes-sigs/metrics-server/releases
+- Karpenter: https://github.com/aws/karpenter-provider-aws/releases
