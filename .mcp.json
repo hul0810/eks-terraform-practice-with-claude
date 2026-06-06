@@ -32,6 +32,21 @@
         "AWS_PROFILE": "terraform",
         "AWS_REGION": "ap-northeast-2"
       }
+    },
+    "awslabs.eks-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "awslabs.eks-mcp-server@latest",
+        "awslabs.eks-mcp-server.exe",
+        "--allow-write",
+        "--allow-sensitive-data-access"
+      ],
+      "env": {
+        "AWS_PROFILE": "terraform",
+        "AWS_REGION": "ap-northeast-2",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
     }
   }
 }
