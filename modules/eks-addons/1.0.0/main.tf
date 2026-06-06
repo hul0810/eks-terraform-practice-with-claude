@@ -31,6 +31,11 @@ module "eks_blueprints_addons" {
   aws_load_balancer_controller = {
     chart_version = var.lbc_chart_version
     set = [
+      # LBC v3.x는 vpcId 미지정 시 IMDS에서 VPC ID를 조회한다.
+      # Pod에서 IMDSv2 hop limit(기본 1) 초과로 IMDS 접근이 불가하므로 직접 주입한다.
+      { name = "vpcId", value = var.vpc_id },
+      # 기본값 2 — dev는 replica_counts.lbc=1로 낮춰 시스템 노드 리소스를 확보한다
+      { name = "replicaCount", value = tostring(var.replica_counts.lbc) },
       # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
       { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },
@@ -45,6 +50,14 @@ module "eks_blueprints_addons" {
   external_dns_route53_zone_arns = var.external_dns_route53_zone_arns
   external_dns = {
     chart_version = var.external_dns_chart_version
+    set = [
+      # 기본값 1이나 명시적으로 관리
+      { name = "replicaCount", value = tostring(var.replica_counts.external_dns) },
+      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
+      { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].operator", value = "Exists" },
+      { name = "tolerations[0].effect",   value = "NoSchedule" },
+    ]
   }
 
   # ── Metrics Server ────────────────────────────────────────────────────────────
@@ -52,6 +65,14 @@ module "eks_blueprints_addons" {
   enable_metrics_server = var.enable_metrics_server
   metrics_server = {
     chart_version = var.metrics_server_chart_version
+    set = [
+      # 기본값 1이나 명시적으로 관리
+      { name = "replicas", value = tostring(var.replica_counts.metrics_server) },
+      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
+      { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].operator", value = "Exists" },
+      { name = "tolerations[0].effect",   value = "NoSchedule" },
+    ]
   }
 
   # ── Karpenter ─────────────────────────────────────────────────────────────────
@@ -61,6 +82,8 @@ module "eks_blueprints_addons" {
   karpenter = {
     chart_version = var.karpenter_chart_version
     set = [
+      # 기본값 2 — dev는 replica_counts.karpenter=1로 낮춰 시스템 노드 Pending 해소
+      { name = "replicas", value = tostring(var.replica_counts.karpenter) },
       # 시스템 노드에 스케줄 — Karpenter 자체가 앱 노드에서 실행되면 부트스트랩 문제 발생
       { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },

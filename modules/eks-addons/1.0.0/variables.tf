@@ -32,6 +32,16 @@ variable "oidc_provider_arn" {
   }
 }
 
+variable "vpc_id" {
+  description = "EKS 클러스터가 속한 VPC ID. LBC가 VPC ID를 IMDS에서 조회하지 않도록 직접 주입한다"
+  type        = string
+
+  validation {
+    condition     = can(regex("^vpc-[0-9a-f]{8,17}$", var.vpc_id))
+    error_message = "vpc_id는 \"vpc-\" 접두사로 시작하는 유효한 VPC ID이어야 합니다 (예: \"vpc-0a1b2c3d4e5f67890\")."
+  }
+}
+
 variable "enable_aws_load_balancer_controller" {
   description = "AWS Load Balancer Controller 설치 여부"
   type        = bool
@@ -80,6 +90,22 @@ variable "enable_karpenter" {
 variable "karpenter_chart_version" {
   description = "Karpenter Helm chart 버전 (예: \"1.3.3\")"
   type        = string
+}
+
+variable "replica_counts" {
+  description = "애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값"
+  type = object({
+    lbc            = optional(number, 2) # LBC: replicaCount 기본 2
+    karpenter      = optional(number, 2) # Karpenter: replicas 기본 2
+    external_dns   = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)
+    metrics_server = optional(number, 1) # MetricsServer: replicas 기본 1
+  })
+  default = {}
+
+  validation {
+    condition     = alltrue([for v in values(var.replica_counts) : v >= 1])
+    error_message = "replica_counts의 모든 값은 1 이상이어야 합니다. 0으로 설정하면 해당 애드온 Pod가 생성되지 않습니다."
+  }
 }
 
 variable "additional_tags" {
