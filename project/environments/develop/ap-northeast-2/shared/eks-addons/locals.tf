@@ -13,9 +13,19 @@ locals {
   cluster_name      = data.terraform_remote_state.eks.outputs.cluster_name
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
+  # aws_eks_cluster data source로 VPC ID 조회 — remote_state에 vpc_id output이 없어 data source 활용
+  vpc_id            = data.aws_eks_cluster.this.vpc_config[0].vpc_id
 
   # eks/locals.tf의 kubernetes_version과 동기화 — EKS 버전 업그레이드 시 함께 변경한다
   cluster_version = "1.33"
+
+  # dev: 시스템 노드 1개(비용 절감)로 모든 애드온 replica=1. prd는 모듈 기본값 사용
+  replica_counts = {
+    lbc            = 1
+    karpenter      = 1
+    external_dns   = 1
+    metrics_server = 1
+  }
 
   eks_addons = {
     # 2026-06-05 기준 최신 stable 버전

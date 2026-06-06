@@ -5,6 +5,7 @@ module "eks_addons" {
   cluster_endpoint  = local.cluster_endpoint
   cluster_version   = local.cluster_version
   oidc_provider_arn = local.oidc_provider_arn
+  vpc_id            = local.vpc_id
 
   enable_aws_load_balancer_controller = local.eks_addons.enable_aws_load_balancer_controller
   lbc_chart_version                   = local.eks_addons.lbc_chart_version
@@ -16,5 +17,6 @@ module "eks_addons" {
   enable_karpenter             = local.eks_addons.enable_karpenter
   karpenter_chart_version      = local.eks_addons.karpenter_chart_version
 
+  replica_counts  = local.replica_counts
   additional_tags = local.common_tags
 }
