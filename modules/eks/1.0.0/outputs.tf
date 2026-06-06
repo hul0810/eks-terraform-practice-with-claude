@@ -55,6 +55,6 @@ output "node_security_group_id" {
 
 output "node_role_arn" {
   description = "시스템 노드 그룹 IAM Role ARN. Karpenter가 노드를 aws-auth ConfigMap에 등록할 때 참조한다"
-  value       = module.system_node_group.iam_role_arn
+  value       = module.eks.eks_managed_node_groups["system"].iam_role_arn
   sensitive   = false
 }

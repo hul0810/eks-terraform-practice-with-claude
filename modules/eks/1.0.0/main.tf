@@ -1,79 +1,19 @@
 ################################################################################
 # EKS 클러스터 모듈
 #
-# terraform-aws-modules/eks v21.x 를 래핑하여 프로젝트 공통 설정을 캡슐화한다.
+# terraform-aws-modules/eks v21.22.0 를 래핑하여 프로젝트 공통 설정을 캡슐화한다.
 # 버전: 21.22.0 (2026-05-28 기준 최신)
 #
-# 노드 그룹 분리 설계:
-#   module "eks"        → 클러스터 + 모든 애드온 (노드 그룹 없음)
-#   module "system_node_group" → 노드 그룹만, depends_on = [module.eks]
-#
-# before_compute = true는 해당 addon 리소스의 depends_on만 제거할 뿐,
-# 노드 그룹이 addon 완료를 기다리는 의존성은 생성하지 않는다.
-# 결과적으로 addon과 노드 그룹이 병렬 생성되어 vpc-cni ACTIVE 전에 노드가
-# 조인을 시도하고 CNI 초기화에 실패할 수 있다.
-# 이를 해결하기 위해 노드 그룹을 module "eks" 외부로 분리하고
-# depends_on = [module.eks]로 명시적 순서를 강제한다.
+# 애드온 배포 순서 설계 (before_compute 기반 단일 모듈):
+#   before_compute = true  → 노드 그룹보다 먼저 배포 (클러스터 생성 직후)
+#     - eks-pod-identity-agent: aws-node Pod Identity 크레덴셜 획득의 전제 조건
+#     - vpc-cni: 노드 조인 시 CNI 초기화 실패 방지 (ACTIVE 보장 후 노드 조인)
+#   before_compute = false (기본값) → 모듈이 노드 그룹 완료 후 자동으로 depends_on 추가
+#     - kube-proxy, aws-ebs-csi-driver: 노드 없어도 EKS가 즉시 ACTIVE 표시
+#     - coredns: Kubernetes Deployment — 노드 없이는 ACTIVE 불가. before_compute = false로
+#       선언하면 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가하여
+#       이전 3단계 분리(Phase 1/2/3) 없이 동일한 안전성을 보장한다.
 ################################################################################
-
-################################################################################
-# Bootstrap 애드온 IAM Role — Pod Identity
-#
-# module.eks 호출 전에 선언한다. Pod Identity는 OIDC Provider ARN이 불필요하므로
-# module.eks에 의존하지 않아 순환 의존성이 발생하지 않는다.
-# IAM Role ARN을 addons 블록의 pod_identity_association으로 전달한다.
-################################################################################
-
-# ── VPC CNI (aws-node) ────────────────────────────────────────────────────────
-# 노드 IAM Role에서 AmazonEKS_CNI_Policy를 제거하고 aws-node ServiceAccount에만 부여한다.
-resource "aws_iam_role" "vpc_cni" {
-  name        = "${var.cluster_name}-vpc-cni"
-  description = "VPC CNI Pod Identity IAM Role - ${var.cluster_name}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect    = "Allow"
-        Principal = { Service = "pods.eks.amazonaws.com" }
-        Action    = ["sts:AssumeRole", "sts:TagSession"]
-      }
-    ]
-  })
-
-  tags = var.additional_tags
-}
-
-resource "aws_iam_role_policy_attachment" "vpc_cni" {
-  role       = aws_iam_role.vpc_cni.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-}
-
-# ── EBS CSI Driver (ebs-csi-controller-sa) ───────────────────────────────────
-# AWS가 권장하는 최신 정책인 AmazonEBSCSIDriverPolicyV2를 사용한다.
-# (describe-addon-configuration 조회 결과 기준 — 구버전 AmazonEBSCSIDriverPolicy 대체)
-resource "aws_iam_role" "ebs_csi" {
-  name        = "${var.cluster_name}-ebs-csi-driver"
-  description = "EBS CSI Driver Pod Identity IAM Role - ${var.cluster_name}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect    = "Allow"
-        Principal = { Service = "pods.eks.amazonaws.com" }
-        Action    = ["sts:AssumeRole", "sts:TagSession"]
-      }
-    ]
-  })
-
-  tags = var.additional_tags
-}
-
-resource "aws_iam_role_policy_attachment" "ebs_csi" {
-  role       = aws_iam_role.ebs_csi.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicyV2"
-}
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
@@ -119,6 +59,15 @@ module "eks" {
   # 디버깅이 필요할 때만 활성화: ["api", "audit", "authenticator", "controllerManager", "scheduler"]
   enabled_log_types = var.enabled_log_types
 
+  # ── 봉투암호화 비활성화 ──────────────────────────────────────────────────────
+  # encryption_config 기본값이 {}(null 아님)이므로 모듈 내부에서 enable_encryption_config = true로 평가된다.
+  # null로 명시해야 encryption_config 블록 자체가 생성되지 않아 key_arn required 에러를 피할 수 있다.
+  # EKS etcd는 AWS 관리형 암호화(AES-256)로 기본 보호된다.
+  # Kubernetes secrets 봉투암호화(CMK)가 필요해지면 외부 KMS ARN을 provider_key_arn에 지정한다.
+  create_kms_key           = false
+  attach_encryption_policy = false
+  encryption_config        = null
+
   # ── IRSA (IAM Roles for Service Accounts) ────────────────────────────────────
   # OIDC Provider를 생성하여 Pod가 IAM 역할을 직접 assume할 수 있게 한다.
   # 이 프로젝트의 기본 IAM 전략은 Pod Identity이지만, 서드파티 도구나 특정 상황에서
@@ -141,18 +90,19 @@ module "eks" {
   #     → 누가 어떤 권한으로 접근하는지 코드로 추적 가능
   enable_cluster_creator_admin_permissions = false
 
-  # ── Bootstrap Add-on ─────────────────────────────────────────────────────────
-  # 클러스터 초기화 시 함께 배포되는 필수 add-on.
-  # 이 블록이 없으면 노드가 CNI 초기화에 실패하고 NotReady → NodeCreationFailure로 이어진다.
-  #
-  # 노드 그룹(module "system_node_group")이 depends_on = [module.eks]로 선언되어 있으므로
-  # module.eks 전체(클러스터 + 모든 애드온 ACTIVE)가 완료된 후에 노드 그룹이 생성된다.
-  # vpc-cni가 ACTIVE 상태가 보장된 시점에 노드가 조인하므로 CNI 초기화 실패가 발생하지 않는다.
-  #
+  # ── 애드온 (before_compute 기반 배포 순서 제어) ──────────────────────────────
   # 버전 고정 정책: most_recent 사용 금지. 버전 조회: docs/addon-strategy.md 참조.
   addons = {
+    # eks-pod-identity-agent를 vpc-cni보다 먼저 등록해야 aws-node가
+    # 노드 기동 시 Pod Identity 크레덴셜을 즉시 획득할 수 있다.
+    eks-pod-identity-agent = {
+      addon_version  = var.addon_versions.eks_pod_identity_agent
+      before_compute = true
+    }
     vpc-cni = {
       addon_version = var.addon_versions.vpc_cni
+      # 노드가 조인하기 전 vpc-cni가 ACTIVE 상태여야 CNI 초기화 실패가 발생하지 않는다.
+      before_compute = true
       pod_identity_association = [{
         role_arn        = aws_iam_role.vpc_cni.arn
         service_account = "aws-node"
@@ -160,17 +110,17 @@ module "eks" {
     }
     kube-proxy = {
       addon_version = var.addon_versions.kube_proxy
+      # before_compute 기본값 false: EKS가 노드 없이도 즉시 ACTIVE 표시.
+      # 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가한다.
     }
     coredns = {
-      addon_version = var.addon_versions.coredns
+      addon_version               = var.addon_versions.coredns
+      resolve_conflicts_on_create = "OVERWRITE"
+      resolve_conflicts_on_update = "OVERWRITE"
+      # before_compute 기본값 false: Kubernetes Deployment이므로 노드 없이는 ACTIVE 불가.
+      # 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가하여
+      # 노드 그룹 완료 후 설치되도록 보장한다 — 외부 aws_eks_addon 분리 불필요.
     }
-    # vpc-cni의 Pod Identity 사용 전제 조건.
-    # agent가 EKS API에 먼저 등록되어야 aws-node가 Pod Identity 크레덴셜을 획득할 수 있다.
-    eks-pod-identity-agent = {
-      addon_version = var.addon_versions.eks_pod_identity_agent
-    }
-    # Pod Identity IAM Role을 addons 블록 내 pod_identity_association으로 연결한다.
-    # role_arn은 module.eks 호출 전에 생성된 aws_iam_role.ebs_csi를 참조한다 (순환 의존성 없음).
     aws-ebs-csi-driver = {
       addon_version               = var.addon_versions.ebs_csi_driver
       resolve_conflicts_on_update = "OVERWRITE"
@@ -178,6 +128,59 @@ module "eks" {
         role_arn        = aws_iam_role.ebs_csi.arn
         service_account = "ebs-csi-controller-sa"
       }]
+      # before_compute 기본값 false: EKS가 노드 없이도 즉시 ACTIVE 표시.
+    }
+  }
+
+  # ── 시스템 Managed Node Group ─────────────────────────────────────────────────
+  # Karpenter 및 시스템 애드온(CoreDNS, kube-proxy, LBC 등)이 실행되는 전용 노드 풀.
+  # Karpenter 자체가 기동되기 위한 노드가 필요하므로 MNG를 별도로 구성한다.
+  # (Karpenter가 자기 자신을 스케줄링할 수 없는 부트스트랩 문제 해결)
+  #
+  # before_compute = true 애드온(vpc-cni, eks-pod-identity-agent)이 모두 ACTIVE된 후
+  # 이 노드 그룹이 생성된다. 모듈이 내부적으로 before_compute 애드온 완료를 전제로
+  # 노드 그룹을 생성하므로, 노드 조인 시점의 CNI 초기화 경쟁 조건이 발생하지 않는다.
+  #
+  # cluster_primary_security_group_id, vpc_security_group_ids를 별도 지정하지 않는 이유:
+  #   eks_managed_node_groups 스키마에 해당 파라미터가 없다. 모듈이 클러스터 SG(clusterSecurityGroupId)와
+  #   node_sg를 노드 그룹에 자동으로 부착한다 — 외부 서브모듈 호출 시 수동 지정이 필요했던 부분.
+  eks_managed_node_groups = {
+    system = {
+      name           = "${var.project}-system-${var.environment}"
+      subnet_ids     = var.subnet_ids
+      instance_types = var.system_node_instance_types
+      ami_type       = var.system_node_ami_type
+      min_size       = var.system_node_min_size
+      max_size       = var.system_node_max_size
+      desired_size   = var.system_node_desired_size
+
+      # ON_DEMAND 하드코딩: 이 노드 그룹은 Karpenter(클러스터 오토스케일러)가 실행되는 전용 노드다.
+      # Karpenter는 Pod이므로 이 노드가 Spot 중단되면 신규 노드 프로비저닝이 불가능해진다.
+      # 클러스터 자가 회복 능력을 보장하기 위해 변수화하지 않고 ON_DEMAND로 고정한다.
+      # 비용 절감용 Spot은 Karpenter NodePool(앱 워크로드 레이어)에서 별도 적용한다.
+      capacity_type = "ON_DEMAND"
+
+      # role 레이블: Karpenter NodeAffinity 설정에서 시스템 노드를 선택할 때 사용
+      labels = { role = "system" }
+
+      # CriticalAddonsOnly taint: 일반 워크로드 Pod가 시스템 노드에 스케줄되지 않도록 격리.
+      # 시스템 노드는 사양이 작으므로 일반 워크로드와 리소스를 공유하면 시스템 컴포넌트 OOM 위험.
+      # Karpenter, CoreDNS 등 시스템 컴포넌트는 toleration을 명시하여 허용한다.
+      taints = {
+        CriticalAddonsOnly = {
+          key    = "CriticalAddonsOnly"
+          value  = "true"
+          effect = "NO_SCHEDULE"
+        }
+      }
+
+      # IAM role name_prefix 한도(38자) 초과 방지: name_prefix 대신 name을 직접 사용(한도 64자).
+      # {project}-system-{environment}-eks-node-group = 42자로 name_prefix 한도를 초과한다.
+      iam_role_use_name_prefix = false
+
+      # vpc-cni는 Pod Identity로 IAM 권한을 획득하므로 노드 IAM Role에 AmazonEKS_CNI_Policy 불필요.
+      # AWS 권장 사항: Pod Identity/IRSA 사용 시 노드 Role에서 CNI 정책 제거.
+      iam_role_attach_cni_policy = false
     }
   }
 
@@ -196,86 +199,60 @@ module "eks" {
 }
 
 ################################################################################
-# 시스템 Managed Node Group
+# Bootstrap 애드온 IAM Role — Pod Identity
 #
-# Karpenter 및 시스템 애드온(CoreDNS, kube-proxy, LBC 등)이 실행되는 전용 노드 풀.
-# Karpenter 자체가 기동되기 위한 노드가 필요하므로 MNG를 별도로 구성한다.
-# (Karpenter가 자기 자신을 스케줄링할 수 없는 부트스트랩 문제 해결)
-#
-# 분리 이유: depends_on = [module.eks]로 모든 애드온(vpc-cni 포함)이 ACTIVE된 후에
-# 노드 그룹을 생성하여 노드 조인 시점의 CNI 초기화 실패를 방지한다.
-# module "eks" 내부 eks_managed_node_groups는 애드온과 병렬로 생성되어
-# vpc-cni ACTIVE 전에 노드가 조인을 시도하는 경쟁 조건이 발생했다.
+# Terraform은 선언 순서가 아닌 의존성 그래프로 실행 순서를 결정한다.
+# module.eks가 아래 Role ARN을 참조하므로 Terraform이 이 Role들을 먼저 생성한다.
+# Pod Identity는 OIDC Provider ARN이 불필요하여 module.eks에 의존하지 않는다.
 ################################################################################
-module "system_node_group" {
-  source  = "terraform-aws-modules/eks/aws//modules/eks-managed-node-group"
-  version = "~> 21.22.0"
 
-  # ── 클러스터 연결 ─────────────────────────────────────────────────────────────
-  # module.eks가 완전히 완료(= 모든 애드온 ACTIVE)된 후 노드 그룹을 생성한다.
-  cluster_name        = module.eks.cluster_name
-  cluster_endpoint    = module.eks.cluster_endpoint
-  cluster_auth_base64 = module.eks.cluster_certificate_authority_data
-  cluster_ip_family   = "ipv4"
-  cluster_service_cidr = module.eks.cluster_service_cidr
+# ── VPC CNI (aws-node) ────────────────────────────────────────────────────────
+# 노드 IAM Role에서 AmazonEKS_CNI_Policy를 제거하고 aws-node ServiceAccount에만 부여한다.
+resource "aws_iam_role" "vpc_cni" {
+  name        = "${var.cluster_name}-vpc-cni"
+  description = "VPC CNI Pod Identity IAM Role - ${var.cluster_name}"
 
-  # ── 노드 그룹 기본 설정 ──────────────────────────────────────────────────────
-  # 클러스터 이름을 포함한 이름으로 AWS 콘솔에서 소속 클러스터를 즉시 식별할 수 있게 한다.
-  name           = "${var.project}-system-${var.environment}"
-  subnet_ids     = var.subnet_ids
-  instance_types = var.system_node_instance_types
-  ami_type       = var.system_node_ami_type
-  min_size       = var.system_node_min_size
-  max_size       = var.system_node_max_size
-  desired_size   = var.system_node_desired_size
-
-  # ON_DEMAND 하드코딩: 이 노드 그룹은 Karpenter(클러스터 오토스케일러)가 실행되는 전용 노드다.
-  # Karpenter는 Pod이므로 이 노드가 Spot 중단되면 신규 노드 프로비저닝이 불가능해진다.
-  # 클러스터 자가 회복 능력을 보장하기 위해 변수화하지 않고 ON_DEMAND로 고정한다.
-  # 비용 절감용 Spot은 Karpenter NodePool(앱 워크로드 레이어)에서 별도 적용한다.
-  capacity_type = "ON_DEMAND"
-
-  # ── Security Group 연결 ───────────────────────────────────────────────────────
-  # EKS 자동 생성 SG(clusterSecurityGroupId)를 노드에 부착.
-  # 이 SG의 inbound self-reference(ALL)가 노드 ↔ 컨트롤 플레인 양방향 통신을 허용한다.
-  cluster_primary_security_group_id = module.eks.cluster_primary_security_group_id
-  # 모듈이 생성한 node_sg를 명시적으로 연결한다.
-  # node_security_group_enable_recommended_rules 규칙(egress_all, CoreDNS, webhook 등)이
-  # 이 SG에 적용되어 있으므로 반드시 포함해야 한다.
-  vpc_security_group_ids = [module.eks.node_security_group_id]
-
-  # ── Kubernetes 레이블 및 Taint ──────────────────────────────────────────────
-  # role 레이블: Karpenter NodeAffinity 설정에서 시스템 노드를 선택할 때 사용
-  labels = { role = "system" }
-
-  # CriticalAddonsOnly taint: 일반 워크로드 Pod가 시스템 노드에 스케줄되지 않도록 격리.
-  # Karpenter, CoreDNS 등 DaemonSet/Deployment는 toleration을 명시하여 허용.
-  # effect는 EKS API 형식인 대문자 스네이크 케이스를 사용해야 한다 (NO_SCHEDULE).
-  taints = {
-    CriticalAddonsOnly = {
-      key    = "CriticalAddonsOnly"
-      value  = "true"
-      effect = "NO_SCHEDULE"
-    }
-  }
-
-  # IAM role name_prefix 한도(38자) 초과 방지: name_prefix 대신 name을 직접 사용(한도 64자).
-  # {project}-system-{environment}-eks-node-group = 42자로 name_prefix 한도를 초과한다.
-  iam_role_use_name_prefix = false
-
-  # AmazonEKS_CNI_Policy를 노드 역할에 유지한다 (기본값 true).
-  # Pod Identity가 런타임의 기본 크레덴셜 방식이지만, 첫 노드 부트스트랩 시
-  # eks-pod-identity-agent DaemonSet과 aws-node DaemonSet이 동시에 시작되어
-  # agent가 준비되기 전에 aws-node가 크레덴셜을 요청할 수 있다.
-  # 노드 역할의 AmazonEKS_CNI_Policy가 이 시점의 fallback을 제공한다.
-  # (aws-node는 Pod Identity > 노드 역할 순으로 크레덴셜을 선택한다)
-
-  # create_before_destroy = true 는 terraform-aws-modules/eks v21.x 서브모듈
-  # (modules/eks-managed-node-group/main.tf) 내부에 이미 하드코딩되어 있다.
-  # 외부에서 lifecycle 블록을 중복 선언하면 오류가 발생하므로 여기서는 생략한다.
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "pods.eks.amazonaws.com" }
+        Action    = ["sts:AssumeRole", "sts:TagSession"]
+      }
+    ]
+  })
 
   tags = var.additional_tags
+}
 
-  # module.eks 전체(클러스터 + vpc-cni 포함 모든 애드온 ACTIVE)가 완료된 후 노드 그룹을 생성한다.
-  depends_on = [module.eks]
+resource "aws_iam_role_policy_attachment" "vpc_cni" {
+  role       = aws_iam_role.vpc_cni.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+
+# ── EBS CSI Driver (ebs-csi-controller-sa) ───────────────────────────────────
+# AmazonEBSCSIDriverPolicy를 사용한다.
+# (describe-addon-configuration 반환값은 V2이나 실제 IAM에 존재하지 않는 정책명이므로 원본 사용)
+resource "aws_iam_role" "ebs_csi" {
+  name        = "${var.cluster_name}-ebs-csi-driver"
+  description = "EBS CSI Driver Pod Identity IAM Role - ${var.cluster_name}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "pods.eks.amazonaws.com" }
+        Action    = ["sts:AssumeRole", "sts:TagSession"]
+      }
+    ]
+  })
+
+  tags = var.additional_tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  role       = aws_iam_role.ebs_csi.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
