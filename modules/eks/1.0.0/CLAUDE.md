@@ -12,29 +12,48 @@
 
 ### 이 모듈이 관리하는 범위
 
-**Bootstrap 애드온 4종만** 이 모듈의 `addons` 블록에서 관리한다.
-나머지 애드온(ebs-csi-driver, LBC 등)은 `modules/eks-addons`에서 관리한다.
+**Bootstrap 애드온 5종** 이 모듈의 `addons` 블록에서 관리한다.
+나머지 애드온(LBC, ExternalDNS, Karpenter 등)은 `modules/eks-addons`에서 관리한다.
 
 - 분리 이유: bootstrap 애드온은 노드 조인 및 IAM 연동의 전제 조건이라 클러스터 lifecycle에 묶여야 한다.
   나머지는 클러스터 구축 후 독립적으로 설치·운영한다.
-- `eks-pod-identity-agent`를 bootstrap으로 관리하는 이유: Pod Identity 전략의 전제 조건으로,
-  이 agent 없이는 Karpenter·LBC·EBS CSI 등 모든 IAM 연동이 불가하다. Karpenter보다 반드시 먼저 설치되어야 한다.
+- 노드 그룹(`module "system_node_group"`)은 `depends_on = [module.eks]`로 선언되어
+  모든 Bootstrap 애드온이 ACTIVE된 후에 생성된다. vpc-cni ACTIVE 보장 후 노드 조인.
 
-### IRSA와 Pod Identity
+### IAM 전략 — Pod Identity vs IRSA
 
-`enable_irsa = true`로 OIDC Provider를 유지한다. 이 프로젝트의 기본 IAM 전략은 Pod Identity이지만,
-서드파티 도구나 특정 상황에서 IRSA가 필요할 수 있으므로 옵션으로 열어둔다.
-- 신규 애드온 IAM 연동 시 Pod Identity(`aws_eks_pod_identity_association`) 우선 사용
-- IRSA 사용이 불가피한 경우에만 `oidc_provider_arn` output을 참조
+`enable_irsa = true`로 OIDC Provider를 활성화한다.
 
-### 현재 고정 버전 (EKS 1.33 / ap-northeast-2 / 2026-05-31 조회)
+| 설치 방식 | IAM 전략 | 비고 |
+|-----------|----------|------|
+| `aws_eks_addon` (이 모듈의 EBS CSI, VPC CNI) | **Pod Identity** | `addons` 블록 내 `pod_identity_association` 인라인 전달 |
+| blueprints Helm (modules/eks-addons) | **IRSA** | blueprints 모듈이 IRSA만 지원하기 때문 |
 
-| Add-on | 고정 버전 | EKS 권장 여부 |
-|--------|-----------|--------------|
-| vpc-cni | `v1.20.5-eksbuild.1` | default |
-| kube-proxy | `v1.33.10-eksbuild.2` | default |
-| coredns | `v1.12.4-eksbuild.10` | default |
-| eks-pod-identity-agent | `v1.3.10-eksbuild.3` | default |
+OIDC Provider(`oidc_provider_arn` output)는 modules/eks-addons의 blueprints가 사용한다.
+
+### 버전 관리
+
+모든 애드온 버전은 모듈 내부에 하드코딩하지 않는다.
+`environments/.../eks/locals.tf`의 `eks.addon_versions`에서 지정한다.
+
+```hcl
+# environments/.../eks/locals.tf
+addon_versions = {
+  vpc_cni                = "v1.20.5-eksbuild.1"
+  kube_proxy             = "v1.33.10-eksbuild.2"
+  coredns                = "v1.12.4-eksbuild.10"
+  eks_pod_identity_agent = "v1.3.10-eksbuild.3"
+  ebs_csi_driver         = "v1.60.1-eksbuild.1"
+}
+```
+
+버전 조회:
+```bash
+aws eks describe-addon-versions --kubernetes-version 1.33 --addon-name <name> \
+  --region ap-northeast-2 \
+  --query 'addons[].addonVersions[?compatibilities[?defaultVersion==`true`]].addonVersion' \
+  --output text
+```
 
 ### 업그레이드 절차
 
