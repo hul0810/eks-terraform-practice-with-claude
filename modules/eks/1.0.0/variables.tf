@@ -103,12 +103,36 @@ variable "node_security_group_additional_rules" {
   default     = {}
 }
 
+variable "upgrade_policy" {
+  description = "클러스터 지원 정책. EXTENDED = 표준 지원 종료 후 Extended Support 자동 진입($0.60/hr 추가), STANDARD = 표준 지원 종료 후 다음 버전으로 자동 업그레이드. null이면 AWS 기본값(EXTENDED) 사용"
+  type = object({
+    support_type = optional(string, "EXTENDED")
+  })
+  default = null
+
+  validation {
+    condition     = var.upgrade_policy == null || contains(["EXTENDED", "STANDARD"], var.upgrade_policy.support_type)
+    error_message = "upgrade_policy.support_type은 \"EXTENDED\" 또는 \"STANDARD\" 이어야 합니다."
+  }
+}
+
 variable "zonal_shift_config" {
   description = "ARC Zonal Shift 활성화 여부. null이면 모듈 기본값(비활성화) 사용. 콘솔에서 값을 변경하면 Terraform 드리프트가 발생하므로 반드시 이 변수로 명시적으로 관리한다."
   type = object({
     enabled = optional(bool)
   })
   default = null
+}
+
+variable "addon_versions" {
+  description = "Bootstrap 애드온 버전 맵. most_recent 사용 금지 — 명시적 버전 고정이 환경 간 일관성을 보장한다"
+  type = object({
+    vpc_cni                = string
+    kube_proxy             = string
+    coredns                = string
+    eks_pod_identity_agent = string
+    ebs_csi_driver         = string
+  })
 }
 
 variable "access_entries" {

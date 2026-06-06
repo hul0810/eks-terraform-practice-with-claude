@@ -24,8 +24,20 @@ output "cluster_certificate_authority_data" {
 }
 
 output "oidc_provider_arn" {
-  description = "IRSA(IAM Roles for Service Accounts)용 OIDC Provider ARN. 기본 전략은 Pod Identity이나 서드파티 도구 호환성을 위해 OIDC Provider를 유지한다."
+  description = "IRSA용 OIDC Provider ARN. blueprints 모듈(LBC, ExternalDNS, Karpenter)과 EBS CSI IRSA 구성에 사용된다"
   value       = module.eks.oidc_provider_arn
+  sensitive   = false
+}
+
+output "vpc_cni_role_arn" {
+  description = "VPC CNI Pod Identity IAM Role ARN"
+  value       = aws_iam_role.vpc_cni.arn
+  sensitive   = false
+}
+
+output "ebs_csi_role_arn" {
+  description = "EBS CSI Driver Pod Identity IAM Role ARN"
+  value       = aws_iam_role.ebs_csi.arn
   sensitive   = false
 }
 
@@ -38,5 +50,11 @@ output "cluster_security_group_id" {
 output "node_security_group_id" {
   description = "노드 그룹 공유 Security Group ID (추가 SG 규칙 연결 시 참조)"
   value       = module.eks.node_security_group_id
+  sensitive   = false
+}
+
+output "node_role_arn" {
+  description = "시스템 노드 그룹 IAM Role ARN. Karpenter가 노드를 aws-auth ConfigMap에 등록할 때 참조한다"
+  value       = module.system_node_group.iam_role_arn
   sensitive   = false
 }
