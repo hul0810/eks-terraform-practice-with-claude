@@ -18,17 +18,18 @@ locals {
   cluster_version = "1.33"
 
   eks_addons = {
-    addon_versions = {
-      # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.33 --region ap-northeast-2
-      # 2026-06-05 기준 default 버전
-      ebs_csi_driver = "v1.60.1-eksbuild.1"
-      metrics_server = "v0.8.1-eksbuild.10"
-      external_dns   = "v0.21.0-eksbuild.4"
-    }
-
-    enable_external_dns = true
-
     # 2026-06-05 기준 최신 stable 버전
-    lbc_chart_version = "3.4.0"
+    # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
+    lbc_chart_version          = "3.4.0"
+    external_dns_chart_version = "1.14.5"
+    metrics_server_chart_version = "3.12.2"
+    karpenter_chart_version    = "1.3.3"
+
+    enable_aws_load_balancer_controller = true
+    enable_external_dns                 = true
+    # develop 환경: 빈 리스트 허용 (전체 zone 접근). production은 특정 ARN 명시 필수
+    external_dns_route53_zone_arns      = []
+    enable_metrics_server               = true
+    enable_karpenter                    = true
   }
 }

@@ -39,7 +39,10 @@ module "eks" {
   system_node_max_size       = local.eks.system_node.max_size
   system_node_desired_size   = local.eks.system_node.desired_size
 
+  upgrade_policy     = local.eks.upgrade_policy
   zonal_shift_config = { enabled = false }
+
+  addon_versions = local.eks.addon_versions
 
   access_entries = local.access_entries
 }
