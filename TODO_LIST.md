@@ -110,27 +110,29 @@
 - [x] `terraform plan` 검토
 - [x] `terraform apply` 실행 — EBS CSI, Metrics Server, External DNS, LBC 배포 완료
 
-### 2-4. modules/karpenter + environments/dev karpenter 추가
+### 2-4. Karpenter NodePool & EC2NodeClass 구성
 
-> **전제**: 2-3 eks-addons 완료 후 진행 (eks-pod-identity-agent 설치 완료 상태)
+> **전제**: 2-3 완료 (Karpenter 컨트롤러·IAM Role·SQS·EventBridge는 eks-addons blueprints에서 이미 설치 완료)
+> EC2NodeClass / NodePool은 Kubernetes 리소스이므로 eks-addons state 내 별도 파일로 관리한다.
+> (`modules/eks-addons/1.0.0/CLAUDE.md` — "NodeClass / NodePool" 섹션 참조)
 
 - [ ] `modules/vpc/variables.tf`에 `cluster_name` variable 추가
 - [ ] `modules/vpc/main.tf`에 Private 서브넷 Karpenter 탐색 태그 추가
-  - [ ] `karpenter.sh/discovery = var.cluster_name`
-- [ ] `modules/karpenter/variables.tf` 작성
-- [ ] `modules/karpenter/main.tf` 작성
-  - [ ] `aws-ia/eks-blueprints-addons ~> 1.21` 사용
-    (Karpenter IAM Role + SQS 인터럽션 큐 + EventBridge Rule 4개 + Helm 배포 통합 처리)
-  - [ ] `enable_karpenter = true` 플래그 활성화
-  - [ ] `EC2NodeClass` 리소스 정의 (AMI Family: AL2023, Private 서브넷)
-  - [ ] `NodePool` 리소스 정의
-    - [ ] dev: spot + on-demand 혼합, TTL 30분
-    - [ ] prd: on-demand 전용, TTL 60분
-- [ ] `modules/karpenter/outputs.tf` 작성
-- [ ] `environments/develop/ap-northeast-2/shared/eks/main.tf`에 `module "karpenter"` 추가
-  - [ ] `depends_on = [module.eks_addons]` 명시
+  - [ ] `"karpenter.sh/discovery" = var.cluster_name`
+- [ ] `environments/develop/ap-northeast-2/shared/eks-addons/karpenter.tf` 작성
+  - [ ] `EC2NodeClass` 정의
+    - [ ] AMI Family: AL2023
+    - [ ] subnetSelectorTerms: `karpenter.sh/discovery = cluster_name` 태그 탐색
+    - [ ] securityGroupSelectorTerms: `karpenter.sh/discovery = cluster_name` 태그 탐색
+  - [ ] `NodePool` 정의
+    - [ ] instanceCategory: c / m / r 계열
+    - [ ] dev: Spot 우선 + On-Demand 혼합 (`capacity_type: [spot, on-demand]`)
+    - [ ] disruption: consolidationPolicy=WhenEmptyOrUnderutilized, consolidateAfter=30s
 - [ ] `terraform plan` 검토
 - [ ] `terraform apply` 실행
+- [ ] `kubectl get ec2nodeclass` — NodeClass 등록 확인
+- [ ] `kubectl get nodepool` — NodePool 등록 확인
+- [ ] 테스트 Deployment 배포 후 Karpenter 앱 노드 프로비저닝 확인
 
 ---
 
