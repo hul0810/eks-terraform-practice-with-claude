@@ -31,3 +31,6 @@ Thumbs.db
 # Claude Code 세션 상태 파일
 .claude/.prd-changed
 .claude/.prd-review-skipped.log
+
+# Claude Code 에이전트 메모리 (계정별 IAM 사용자명·권한 등 민감 정보 포함 가능 — 로컬 전용 캐시)
+.claude/agent-memory/
