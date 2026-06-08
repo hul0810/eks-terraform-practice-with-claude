@@ -5,6 +5,7 @@ description: >
   자동 생성하고 스테이징·커밋·(선택적) push를 수행한다.
   원자적 커밋 강제(scope 그룹 분리), 변경 영향 분석(resource 추가/수정/삭제),
   Breaking Change 감지, Terraform 품질 체크 안내, PR 가이드 포함.
+  모듈 variables.tf/outputs.tf 변경 시 terraform-docs로 README 자동 재생성.
   브랜치 정책 검증, main 직접 커밋 차단, .tf 변경 시 review-terraform 선행 실행.
   docs/git-convention.md의 규칙을 기준으로 동작한다.
 disable-model-invocation: false
@@ -14,6 +15,7 @@ allowed-tools:
   - Bash(git diff --staged)
   - Bash(git diff --name-only)
   - Bash(git diff --name-only HEAD)
+  - Bash(terraform-docs *)
   - Bash(git branch --show-current)
   - Bash(git log --oneline -5)
   - Bash(git add -A)
@@ -92,6 +94,25 @@ feature/*, fix/*, hotfix/* 브랜치를 생성한 후 재시도하세요.
 | `project/environments/production/` 하위 | `ENV:production` |
 | `global/` 하위 | `GLOBAL` |
 | `docs/`, `.claude/`, 루트 파일 | `META` |
+
+### Step 1.5: 모듈 인터페이스 문서 자동 재생성 (terraform-docs)
+
+Step 1에서 파악한 변경 파일 중 `modules/{name}/{version}/variables.tf` 또는 `outputs.tf`가 있는 경우 실행한다. 없으면 건너뛴다.
+
+저장소 루트의 `.terraform-docs.yml`을 모든 모듈이 공유하므로 별도 옵션 없이 실행한다:
+
+```bash
+terraform-docs modules/{name}/{version}
+```
+
+`README.md`는 코드에서 추출한 인터페이스 레퍼런스(WHAT)만 담는 자동 생성물이다 — Step 3.5의 `CLAUDE.md`(WHY) 판단과 달리 사람의 판단이 개입할 여지가 없으므로, **사용자 확인 없이 즉시 재생성**하고 변경 파일 목록에 포함시켜 이후 단계(스테이징·커밋)에서 함께 다룬다. (Step 1에서 계산한 `MODULE:<name>` 그룹에 자연스럽게 포함된다.)
+
+```
+[모듈 문서 재생성]
+modules/eks/1.0.0/README.md 재생성 완료 (terraform-docs)
+```
+
+`git diff --name-only`로 실제 변경이 발생했는지 확인한다 — description 변경 등 표시 내용에 영향이 없으면 README.md는 변경되지 않으므로 스테이징 대상에서 자연히 제외된다.
 
 ### Step 2: 원자성 검사 및 분리 전략 제안
 

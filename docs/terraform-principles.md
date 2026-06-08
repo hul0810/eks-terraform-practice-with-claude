@@ -114,7 +114,7 @@
 
 코드는 혼자 작성하지만 협업 환경을 전제로 작성한다. 아래 기준은 선택이 아닌 의무다.
 
-- **`variable` `description` 필수**: 없으면 호출자가 입력값의 의도를 알 수 없다. 코드 리뷰 반려 기준이다.
+- **`variable` `description` 필수**: 없으면 호출자가 입력값의 의도를 알 수 없다. 코드 리뷰 반려 기준이다. 단순 설명에 그치지 않고 **WHY까지 포함**해서 작성한다 — `terraform-docs`가 이 내용을 그대로 모듈 README에 노출하므로 description이 단일 진실 공급원이 된다 (상세: [모듈 문서화](#모듈-문서화-terraform-docs)).
 - **`output` 선언 의무**: 다른 root module이 참조하는 값은 반드시 `outputs.tf`에 선언한다. 선언하지 않으면 `terraform_remote_state`로 참조할 수 없다.
 - **리소스 명명**: 이름만으로 환경·목적·대상을 파악할 수 있어야 한다. 약어를 사용할 경우 `CLAUDE.md`에 정의한다.
 - **`sensitive` 출력 명시**: 인증서, 비밀번호 등 민감한 값을 담는 `output`에는 `sensitive = true`를 설정한다. 미설정 시 plan/apply 로그에 노출된다.
@@ -195,6 +195,35 @@ modules/
 - 모듈 인터페이스(variables / outputs)는 호출자가 필요한 것만 노출한다.
 - 모듈 내부에서 provider를 직접 선언하지 않는다 (호출자에서 전달).
 - 리소스별 설계 원칙은 해당 모듈 디렉토리의 `CLAUDE.md`를 참조한다.
+
+---
+
+## 모듈 문서화 (terraform-docs)
+
+`modules/{name}/{version}/README.md`는 [terraform-docs](https://terraform-docs.io)가 코드에서 자동 생성한다. **직접 편집하지 않는다** — 다음 실행 시 덮어써진다 (파일 상단 마커 주석 참조).
+
+### 역할 분리: README(자동) vs CLAUDE.md(수동)
+
+| 문서 | 담당 | 작성 주체 | 변경 빈도 |
+|------|------|-----------|-----------|
+| `README.md` | 인터페이스 레퍼런스 — 변수·출력값의 타입/기본값/필수 여부/설명 (WHAT) | terraform-docs 자동 생성 | 코드 변경 시마다 |
+| `CLAUDE.md` | 설계 결정·명명 규칙·제약사항 (WHY) | 사람이 직접 작성 | 설계가 바뀔 때만 |
+
+두 문서가 같은 정보를 중복 기술하지 않도록 정보별 단일 진실 공급원을 정한다:
+
+- **변수 단위로 설명 가능한 WHY → `variable`/`output`의 `description`에 직접 작성한다.** terraform-docs가 이를 그대로 README에 노출하므로 CLAUDE.md에 다시 적을 필요가 없다 (예: "project 변수를 따로 두는 이유: cluster_name은 project+environment를 이미 포함해 길어지면 IAM role name_prefix 38자 한도를 초과하기 때문" 같은 WHY를 description 자체에 담는다).
+- **여러 변수에 걸치거나 변수 단위로 쪼갤 수 없는 설계 결정 → `CLAUDE.md`에 남긴다** (모듈 전체 아키텍처, SG 3계층 구조, 업그레이드 절차 등).
+- **모듈/Provider 버전 같은 단순 사실 → CLAUDE.md에 따로 적지 않는다.** README의 `Modules`/`Providers` 섹션이 코드(`required_providers`, 모듈 `version` 제약, `.terraform.lock.hcl`)에서 직접 추출하므로 수동 기재는 drift 위험만 만든다. CLAUDE.md에는 "왜 이 버전에 고정했는지", "업그레이드 시 무엇이 바뀌는지" 같은 WHY만 남긴다.
+
+### 실행 방법
+
+저장소 루트의 `.terraform-docs.yml`을 모든 모듈이 공유한다 (terraform-docs가 상위 디렉토리를 탐색해 자동 적용 — git이 `.gitignore`를 찾는 방식과 동일).
+
+```bash
+terraform-docs modules/{name}/{version}
+```
+
+`modules/{name}/{version}/` 구조는 평행한 독립 모듈이라 (메인 모듈 + 서브모듈을 전제하는) `recursive` 모드 대신 디렉토리별로 개별 실행한다. `variables.tf`/`outputs.tf` 변경 후 위 명령으로 README를 재생성하며, `git-commit` 스킬이 모듈 변경을 감지하면 자동으로 재생성한다.
 
 ---
 

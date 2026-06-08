@@ -1,0 +1,44 @@
+#
+# terraform-docs 설정
+#
+# 적용 방식: modules/{name}/{version}/ 은 평행한 독립 모듈 구조이므로
+# (메인 모듈 + 서브모듈을 전제하는) recursive 모드 대신 디렉토리별로 개별 실행한다.
+# 이 설정 파일은 저장소 루트에 두고, terraform-docs가 상위 디렉토리를 탐색해 공유한다.
+#
+# 역할 분리 원칙:
+#   README.md (이 설정으로 자동 생성) = 코드에서 추출한 인터페이스 레퍼런스 (WHAT)
+#   CLAUDE.md (사람이 직접 작성)      = 설계 결정·명명 규칙·제약사항 (WHY)
+# 두 문서가 같은 정보를 중복 기술하지 않도록, variable/output의 description에
+# WHY를 직접 담아 README에 자동 노출되게 한다 (자세한 기준은 docs/module-claude-template.md 참조).
+#
+
+formatter: "markdown table"
+
+# 이 프로젝트는 .tf 파일에 /** */ 형식의 헤더 주석을 쓰지 않으므로
+# header-from 기본값(main.tf)을 그대로 둔다 — 해당 블록이 없으면 헤더 섹션은 비워진다.
+header-from: "main.tf"
+footer-from: ""
+
+recursive:
+  enabled: false
+
+sort:
+  enabled: true
+  by: name
+
+output:
+  file: "README.md"
+  mode: replace
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    <!-- 이 파일은 terraform-docs가 자동 생성합니다. 직접 수정하지 마세요. -->
+    <!-- 설계 결정과 WHY는 같은 디렉토리의 CLAUDE.md를 참조하세요. -->
+
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+settings:
+  anchor: true
+  html: true
+  indent: 2
+  read-comments: true
