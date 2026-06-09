@@ -190,6 +190,11 @@ module "eks" {
   # 모듈 소유 SG의 규칙은 외부 리소스 주입 대신 모듈 파라미터로 관리한다.
   node_security_group_additional_rules = var.node_security_group_additional_rules
 
+  # EC2NodeClass의 securityGroupSelectorTerms[].tags 필터와 이 태그 값이 일치해야
+  # Karpenter가 올바른 node SG를 선택한다. 값이 cluster_name과 다르면 SG 0개 탐색으로
+  # 노드 프로비저닝이 실패한다. node_sg는 모든 노드에 부착되므로 단일 태그로 탐색 가능.
+  node_security_group_tags = var.node_security_group_tags
+
   upgrade_policy     = var.upgrade_policy
   zonal_shift_config = var.zonal_shift_config
 
