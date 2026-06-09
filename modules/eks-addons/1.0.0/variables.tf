@@ -5,6 +5,13 @@
 variable "cluster_name" {
   description = "EKS 클러스터 이름. eks-blueprints-addons 모듈의 필수 입력값"
   type        = string
+
+  validation {
+    # IAM Role 이름 최대 64자. 가장 긴 접미사 "-karpenter-controller-irsa" = 25자.
+    # cluster_name + 25 <= 64 → cluster_name <= 39자. 여유분 1자 포함해 38자로 제한.
+    condition     = length(var.cluster_name) <= 38
+    error_message = "cluster_name은 38자 이하여야 합니다. IAM Role 이름 64자 제한으로 인해 '-karpenter-controller-irsa'(25자) 접미사를 포함하면 초과합니다."
+  }
 }
 
 variable "cluster_endpoint" {

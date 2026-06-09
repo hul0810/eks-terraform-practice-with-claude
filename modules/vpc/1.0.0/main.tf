@@ -42,9 +42,14 @@ module "vpc" {
     "kubernetes.io/role/elb" = "1"
   }
 
-  private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = "1"
-  }
+  # Karpenter는 karpenter.sh/discovery 태그로 서브넷을 자동 탐색한다.
+  # cluster_name이 null이면 태그를 추가하지 않아 EKS 비연동 VPC에서도 재사용 가능하다.
+  private_subnet_tags = merge(
+    {
+      "kubernetes.io/role/internal-elb" = "1"
+    },
+    var.cluster_name != null ? { "karpenter.sh/discovery" = var.cluster_name } : {}
+  )
 
   enable_dns_hostnames = true
   enable_dns_support   = true

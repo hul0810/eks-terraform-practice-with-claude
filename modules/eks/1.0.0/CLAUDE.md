@@ -218,6 +218,20 @@ resource "aws_security_group_rule" "node" {
 |----|------|------|------|
 | `ingress_self_all` | 노드 → 노드 | ALL | ICMP·UDP 등 모듈 기본값(1025-65535/tcp)이 커버하지 못하는 비-TCP 프로토콜 허용 |
 
+### node_sg Karpenter 탐색 태그 (`node_security_group_tags`)
+
+Karpenter EC2NodeClass의 `securityGroupSelectorTerms`는 `karpenter.sh/discovery = {cluster_name}` 태그로 node SG를 자동 탐색한다.
+`node_security_group_tags` 변수로 이 태그를 주입한다.
+
+```hcl
+# environments/.../eks/main.tf 호출 예시
+node_security_group_tags = {
+  "karpenter.sh/discovery" = local.cluster_name
+}
+```
+
+`node_security_group_tags`에 넣는 이유: VPC `private_subnet_tags`의 `karpenter.sh/discovery`와 동일한 값을 node SG에도 부여해야 Karpenter가 서브넷과 SG를 동시에 탐색할 수 있다. 두 값이 불일치하면 EC2NodeClass가 SG를 0개 탐색해 노드 프로비저닝이 실패한다.
+
 ### 모듈이 node_security_group_recommended_rules로 이미 생성하는 규칙 (중복 선언 금지)
 
 | 모듈 내부 키 | 방향 | 포트 | 목적 |

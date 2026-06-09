@@ -14,7 +14,7 @@
 
 ---
 
-## 고정 버전 (2026-06-06 기준)
+## 고정 버전 (2026-06-09 기준)
 
 | 애드온 | 고정 버전 |
 |--------|-----------|
@@ -22,7 +22,7 @@
 | aws-load-balancer-controller (Helm chart) | `3.4.0` |
 | external-dns (Helm chart) | `1.14.5` |
 | metrics-server (Helm chart) | `3.12.2` |
-| karpenter (Helm chart) | `1.3.3` |
+| karpenter (Helm chart) | `1.12.1` |
 
 ---
 
@@ -37,6 +37,34 @@ IAM 방식 선택 기준: blueprints 사용 → IRSA / blueprints 미사용 → 
 
 blueprints 모듈에 `oidc_provider_arn`을 전달하면 각 애드온의 IAM Role 생성과
 Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한다.
+
+---
+
+## AWS 리소스 네이밍 규칙
+
+blueprints의 기본값(`role_name_use_prefix = true`)은 `{name}-{random}` 형태로 IAM 리소스를 생성한다.
+멀티 클러스터 환경에서 식별이 어려우므로 이 모듈은 모든 IAM 리소스에 고정 이름을 사용한다.
+
+**네이밍 패턴**: `{cluster_name}-{addon}-{suffix}`
+
+| 리소스 | 이름 패턴 | 예시 |
+|--------|-----------|------|
+| Karpenter Controller IRSA Role | `{cluster_name}-karpenter-controller-irsa` | `eks-practice-develop-karpenter-controller-irsa` |
+| Karpenter Controller IAM Policy | `{cluster_name}-karpenter-controller-irsa` | 동일 |
+| Karpenter Node IAM Role | `{cluster_name}-karpenter-node` | `eks-practice-develop-karpenter-node` |
+| Karpenter Node Instance Profile | `{cluster_name}-karpenter-node` | 동일 (Role 이름 따라감) |
+| Karpenter SQS 인터럽션 큐 | `{cluster_name}-karpenter` | `eks-practice-develop-karpenter` |
+| LBC IRSA Role | `{cluster_name}-lbc-irsa` | `eks-practice-develop-lbc-irsa` |
+| ExternalDNS IRSA Role | `{cluster_name}-external-dns-irsa` | `eks-practice-develop-external-dns-irsa` |
+
+**접미사 의미**:
+- `-irsa`: Pod ServiceAccount가 assume하는 IAM Role (IRSA 목적)
+- `-node`: EC2 노드 인스턴스가 assume하는 IAM Role (노드 부트스트랩 목적)
+- 접미사 없음: SQS 큐 등 IAM Role이 아닌 AWS 리소스
+
+**변경 불가 리소스**: Karpenter EventBridge Rules(`Karpenter-{Event}-{random}`)는 blueprints 내부 하드코딩으로 변경 불가.
+
+**ExternalDNS IAM 비생성 조건**: `external_dns_route53_zone_arns = []`이면 blueprints가 IAM Role을 생성하지 않는다. zone ARNs 설정 시 고정 이름으로 생성되도록 `role_name`을 미리 선언해둔다.
 
 ---
 
