@@ -134,6 +134,30 @@
 - [ ] `kubectl get nodepool` — NodePool 등록 확인
 - [ ] 테스트 Deployment 배포 후 Karpenter 앱 노드 프로비저닝 확인
 
+### 2-5. modules/ecr + environments/dev ecr 추가
+
+> **목적**: EKS 위에 애플리케이션 배포를 위한 컨테이너 이미지 저장소 구성
+> 리포지토리 이름 패턴: `{project}-{service}-{environment}` (예: `eks-practice-msa-develop`)
+> State 분리: ECR은 EKS와 독립적 lifecycle이므로 별도 root module로 관리
+
+- [x] `modules/ecr/1.0.0/variables.tf` 작성 — `repositories` map(object) 입력 변수
+- [x] `modules/ecr/1.0.0/main.tf` 작성 — `terraform-aws-modules/ecr ~> 3.2.0` for_each 호출
+  - [x] lifecycle policy: 태그 없는 이미지 14일 후 삭제 (priority 1), 최신 10개 유지 (priority 2)
+  - [x] image_tag_mutability: IMMUTABLE (기본값)
+  - [x] scan_on_push: true (ECR Basic 스캔, 무료)
+  - [x] encryption_type: AES256 (dev 비용 절감, prd는 KMS로 변경)
+- [x] `modules/ecr/1.0.0/outputs.tf` 작성 (repository_urls, repository_arns 맵)
+- [x] `modules/ecr/1.0.0/CLAUDE.md` 작성
+- [x] `environments/develop/ap-northeast-2/msa/ecr/` 신규 root module 생성 (서비스별 ECR — shared 아님)
+  - [x] `backend.tf` — key: `project/develop/ap-northeast-2/msa/ecr/terraform.tfstate`
+  - [x] `providers.tf` — aws provider
+  - [x] `locals.tf` — repositories 맵 (`eks-practice-msa-develop`)
+  - [x] `main.tf` — `module "ecr"` 호출
+  - [x] `outputs.tf`
+- [x] `terraform plan` 검토 — ECR 리포지토리 1개 + lifecycle policy 1개 생성 예정 확인
+- [ ] `terraform apply` 실행
+- [ ] `aws ecr describe-repositories --region ap-northeast-2` — 리포지토리 생성 확인
+
 ---
 
 ## Phase 3. 환경 구성 (prd)

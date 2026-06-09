@@ -42,7 +42,10 @@ terraform-eks-practice/
 │       │       ├── shared/                 # 모든 서비스 공용 인프라
 │       │       │   ├── vpc/                # ← root module
 │       │       │   ├── eks/                # ← root module
+│       │       │   ├── eks-addons/         # ← root module
 │       │       │   └── tgw/                # (예정)
+│       │       ├── msa/                    # MSA 서비스 전용 인프라
+│       │       │   └── ecr/                # ← root module (이미지 저장소)
 │       │       ├── api/                    # 워크로드별 인프라 (예정)
 │       │       │   ├── eks/
 │       │       │   └── rds/
@@ -85,6 +88,8 @@ terraform-eks-practice/
 |------------------|-----------|
 | `project/environments/develop/ap-northeast-2/shared/vpc/` | `project/develop/ap-northeast-2/shared/vpc/terraform.tfstate` |
 | `project/environments/develop/ap-northeast-2/shared/eks/` | `project/develop/ap-northeast-2/shared/eks/terraform.tfstate` |
+| `project/environments/develop/ap-northeast-2/shared/eks-addons/` | `project/develop/ap-northeast-2/shared/eks-addons/terraform.tfstate` |
+| `project/environments/develop/ap-northeast-2/msa/ecr/` | `project/develop/ap-northeast-2/msa/ecr/terraform.tfstate` |
 | `project/environments/develop/ap-northeast-2/api/eks/` | `project/develop/ap-northeast-2/api/eks/terraform.tfstate` |
 | `project/environments/production/ap-northeast-2/shared/vpc/` | `project/production/ap-northeast-2/shared/vpc/terraform.tfstate` |
 | `project-b/environments/develop/ap-northeast-2/shared/vpc/` | `project-b/develop/ap-northeast-2/shared/vpc/terraform.tfstate` |
