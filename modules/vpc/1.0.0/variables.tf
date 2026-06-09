@@ -64,3 +64,15 @@ variable "additional_tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "cluster_name" {
+  description = "Karpenter 서브넷 자동 탐색 태그(karpenter.sh/discovery)에 사용. null이면 태그를 추가하지 않는다. VPC가 EKS 클러스터와 연결되는 경우에만 지정한다."
+  type        = string
+  default     = null
+
+  validation {
+    # EKS 클러스터 이름 규칙: 1~100자, 영문·숫자·하이픈만 허용
+    condition     = var.cluster_name == null || can(regex("^[a-zA-Z0-9-]{1,100}$", var.cluster_name))
+    error_message = "cluster_name은 영문, 숫자, 하이픈(-)만 허용하며 1~100자여야 합니다."
+  }
+}
