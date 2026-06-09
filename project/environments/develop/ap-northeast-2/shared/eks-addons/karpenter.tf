@@ -224,5 +224,11 @@ resource "null_resource" "karpenter_nodeclass_finalizer_remover" {
     command = "kubectl patch ec2nodeclass ${self.triggers.nodeclass_name} --type=merge -p '{\"metadata\":{\"finalizers\":[]}}' || true"
   }
 
-  depends_on = [kubernetes_manifest.karpenter_ec2_node_class]
+  depends_on = [
+    kubernetes_manifest.karpenter_ec2_node_class,
+    # module.eks_addons를 포함해야 destroy 시 null_resource가 module.eks_addons보다 먼저 삭제된다.
+    # 미포함 시 Terraform이 null_resource와 module.eks_addons를 병렬로 삭제하고,
+    # IRSA Role이 먼저 사라지면 kubectl patch가 성공하더라도 Karpenter가 finalizer를 재추가할 수 있다.
+    module.eks_addons,
+  ]
 }
