@@ -28,18 +28,89 @@ locals {
   }
 
   eks_addons = {
-    # 2026-06-05 기준 최신 stable 버전
+    # 2026-06-09 기준 최신 stable 버전
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
-    lbc_chart_version          = "3.4.0"
-    external_dns_chart_version = "1.14.5"
+    lbc_chart_version            = "3.4.0"
+    external_dns_chart_version   = "1.14.5"
     metrics_server_chart_version = "3.12.2"
-    karpenter_chart_version    = "1.3.3"
+    karpenter_chart_version      = "1.12.1"
 
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
     # develop 환경: 빈 리스트 허용 (전체 zone 접근). production은 특정 ARN 명시 필수
-    external_dns_route53_zone_arns      = []
-    enable_metrics_server               = true
-    enable_karpenter                    = true
+    external_dns_route53_zone_arns = []
+    enable_metrics_server          = true
+    enable_karpenter               = true
+  }
+
+  # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────
+  # 분리 기준: 인스턴스 요건이 아니라 워크로드 격리 요건
+  #   - 아키텍처(amd64/arm64): 이미지 호환성 보장을 위해 분리
+  #   - GPU: Taint로 일반 Pod 차단 필수 → 별도 NodePool
+  #   - Spot-only: 중단 감수 워크로드를 Taint로 강제 격리
+  #   - CPU/메모리 집약: 분리 불필요. Pod의 resources.requests를 보고 Karpenter가 자동 선택
+  #
+  # weight: 동일 Pod가 여러 NodePool에 스케줄 가능할 때 우선순위 (높을수록 우선)
+  # taints: 빈 리스트면 Taint 없음 (일반 Pod도 스케줄 가능)
+  karpenter_node_pools = {
+    # 범용 워크로드 — amd64 기본 진입점
+    # spot+on-demand 혼합 허용: 일반 워크로드는 비용 절감을 위해 spot도 허용한다.
+    # spot 중단에 취약한 워크로드(Stateful, 긴 배치 작업 등)는 PDB 또는
+    # nodeSelector/affinity로 on-demand를 명시적으로 요청해야 한다.
+    general = {
+      capacity_types    = ["spot", "on-demand"]
+      instance_families = ["c", "m", "r"]
+      architectures     = ["amd64"]
+      instance_gen_min  = "2"
+      weight            = 10
+      taints            = []
+      limits            = { cpu = "100", memory = "400Gi" }
+    }
+
+    # Graviton 워크로드 — arm64 이미지를 사용하는 워크로드 전용
+    # Pod에서 nodeSelector: kubernetes.io/arch=arm64 로 명시적 지정
+    arm64 = {
+      capacity_types    = ["spot", "on-demand"]
+      instance_families = ["c", "m", "r"]
+      architectures     = ["arm64"]
+      instance_gen_min  = "2"
+      weight            = 10
+      taints            = []
+      limits            = { cpu = "50", memory = "200Gi" }
+    }
+
+    # GPU 워크로드 — ML/AI 전용. 현재 미사용이나 설계상 포함
+    # Taint: nvidia.com/gpu=true:NoSchedule → Toleration 없는 Pod는 배치 불가
+    # OD 전용: GPU Spot은 가용성이 불안정하고 체크포인트 없는 학습 작업에서 복구 비용이 크다
+    gpu = {
+      capacity_types    = ["on-demand"]
+      instance_families = ["p", "g"]
+      architectures     = ["amd64"]
+      instance_gen_min  = "3"
+      weight            = 5
+      taints = [{
+        key    = "nvidia.com/gpu"
+        value  = "true"
+        effect = "NoSchedule"
+      }]
+      limits = { cpu = "20", memory = "100Gi" }
+    }
+
+    # Spot 전용 — 중단을 감수하는 워크로드 강제 격리
+    # Taint: spot-only=true:NoSchedule → Toleration 없는 Pod는 배치 불가
+    # 사용 대상: 비용 절감이 최우선이고 중단 복구 로직을 갖춘 워크로드
+    spot = {
+      capacity_types    = ["spot"]
+      instance_families = ["c", "m", "r"]
+      architectures     = ["amd64"]
+      instance_gen_min  = "2"
+      weight            = 10
+      taints = [{
+        key    = "spot-only"
+        value  = "true"
+        effect = "NoSchedule"
+      }]
+      limits = { cpu = "100", memory = "400Gi" }
+    }
   }
 }
