@@ -29,7 +29,9 @@ module "eks_blueprints_addons" {
   # EKS 관리형 addon이 없는 Helm-only 컴포넌트. blueprints가 IRSA 자동 처리.
   enable_aws_load_balancer_controller = var.enable_aws_load_balancer_controller
   aws_load_balancer_controller = {
-    chart_version = var.lbc_chart_version
+    chart_version        = var.lbc_chart_version
+    role_name            = "${var.cluster_name}-lbc-irsa"
+    role_name_use_prefix = false
     set = [
       # LBC v3.x는 vpcId 미지정 시 IMDS에서 VPC ID를 조회한다.
       # Pod에서 IMDSv2 hop limit(기본 1) 초과로 IMDS 접근이 불가하므로 직접 주입한다.
@@ -46,10 +48,14 @@ module "eks_blueprints_addons" {
   # ── ExternalDNS ───────────────────────────────────────────────────────────────
   # Route53 zone 설정 등 Helm values 커스터마이징이 필요하여 Helm으로 관리한다.
   # blueprints가 IRSA 자동 처리.
+  # IRSA Role은 external_dns_route53_zone_arns 가 비어있으면 blueprints가 생성하지 않는다.
+  # zone ARNs 설정 시 고정 이름으로 생성되도록 role_name을 미리 선언한다.
   enable_external_dns            = var.enable_external_dns
   external_dns_route53_zone_arns = var.external_dns_route53_zone_arns
   external_dns = {
-    chart_version = var.external_dns_chart_version
+    chart_version        = var.external_dns_chart_version
+    role_name            = "${var.cluster_name}-external-dns-irsa"
+    role_name_use_prefix = false
     set = [
       # 기본값 1이나 명시적으로 관리
       { name = "replicaCount", value = tostring(var.replica_counts.external_dns) },
@@ -80,7 +86,12 @@ module "eks_blueprints_addons" {
   # NodeClass / NodePool은 Kubernetes 리소스이므로 별도 관리한다.
   enable_karpenter = var.enable_karpenter
   karpenter = {
-    chart_version = var.karpenter_chart_version
+    chart_version          = var.karpenter_chart_version
+    role_name              = "${var.cluster_name}-karpenter-controller-irsa"
+    role_name_use_prefix   = false
+    # Policy도 고정 이름 사용 — 미설정 시 Role 이름을 prefix로 random suffix가 붙는다
+    policy_name            = "${var.cluster_name}-karpenter-controller-irsa"
+    policy_name_use_prefix = false
     set = [
       # 기본값 2 — dev는 replica_counts.karpenter=1로 낮춰 시스템 노드 Pending 해소
       { name = "replicas", value = tostring(var.replica_counts.karpenter) },
@@ -89,6 +100,21 @@ module "eks_blueprints_addons" {
       { name = "tolerations[0].operator", value = "Exists" },
       { name = "tolerations[0].effect",   value = "NoSchedule" },
     ]
+  }
+
+  # Karpenter 노드 IAM Role / Instance Profile
+  # blueprints 기본값은 "karpenter-{cluster_name}-{random}" 형태.
+  # 고정 이름으로 변경하여 멀티 클러스터 환경에서 식별이 쉽도록 한다.
+  karpenter_node = {
+    iam_role_name            = "${var.cluster_name}-karpenter-node"
+    iam_role_use_name_prefix = false
+  }
+
+  # Karpenter SQS 인터럽션 큐 고정 이름
+  # blueprints 기본값은 "karpenter-{cluster_name}" (prefix 역전).
+  # {cluster_name}-karpenter 로 통일하여 다른 리소스와 네이밍 패턴을 맞춘다.
+  karpenter_sqs = {
+    queue_name = "${var.cluster_name}-karpenter"
   }
 
   tags = var.additional_tags

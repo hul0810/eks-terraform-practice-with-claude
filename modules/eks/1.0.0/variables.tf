@@ -103,6 +103,12 @@ variable "node_security_group_additional_rules" {
   default     = {}
 }
 
+variable "node_security_group_tags" {
+  description = "node SG에 추가할 태그 맵. Karpenter SG 탐색 태그(karpenter.sh/discovery) 등 node SG 전용 태그에만 사용한다. additional_tags는 default_tags로 관리되므로 이 변수는 node SG에만 적용이 필요한 태그에 한정한다. karpenter.sh/discovery 값은 EC2NodeClass securityGroupSelectorTerms 및 cluster_name과 반드시 일치해야 한다."
+  type        = map(string)
+  default     = {}
+}
+
 variable "upgrade_policy" {
   description = "클러스터 지원 정책. EXTENDED = 표준 지원 종료 후 Extended Support 자동 진입($0.60/hr 추가), STANDARD = 표준 지원 종료 후 다음 버전으로 자동 업그레이드. null이면 AWS 기본값(EXTENDED) 사용"
   type = object({

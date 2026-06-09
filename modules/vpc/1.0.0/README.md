@@ -33,6 +33,7 @@ No requirements.
 |------|-------------|------|---------|:--------:|
 | <a name="input_additional_tags"></a> [additional\_tags](#input\_additional\_tags) | VPC 및 VPC Endpoint 리소스에 추가할 태그 맵. 서브넷·라우팅 테이블에는 전파되지 않는다. providers.tf의 default\_tags로 공통 태그(environment, managed\_by)를 관리하므로, 이 변수는 리소스 식별에 필요한 추가 태그에만 사용한다. | `map(string)` | `{}` | no |
 | <a name="input_azs"></a> [azs](#input\_azs) | 사용할 가용 영역 목록 | `list(string)` | n/a | yes |
+| <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Karpenter 서브넷 자동 탐색 태그(karpenter.sh/discovery)에 사용. null이면 태그를 추가하지 않는다. VPC가 EKS 클러스터와 연결되는 경우에만 지정한다. | `string` | `null` | no |
 | <a name="input_database_subnets"></a> [database\_subnets](#input\_database\_subnets) | 데이터베이스 서브넷 CIDR 목록 (RDS, ElastiCache용) | `list(string)` | `[]` | no |
 | <a name="input_enable_nat_gateway"></a> [enable\_nat\_gateway](#input\_enable\_nat\_gateway) | NAT Gateway 생성 여부 | `bool` | `true` | no |
 | <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | 프라이빗 서브넷 CIDR 목록 (EKS 노드, Pod IP용) | `list(string)` | `[]` | no |

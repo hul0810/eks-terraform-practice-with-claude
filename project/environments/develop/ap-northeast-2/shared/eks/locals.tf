@@ -49,6 +49,12 @@ locals {
     # STANDARD: 표준 지원 종료 시 다음 버전으로 자동 업그레이드 — Extended Support 비용($0.60/hr) 차단
     # EKS 1.33 표준 지원 종료: 2026-07-29. 이전에 1.34로 업그레이드하거나 자동 업그레이드 허용.
     upgrade_policy = { support_type = "STANDARD" }
+
+    # Karpenter EC2NodeClass가 karpenter.sh/discovery 태그로 node SG를 자동 탐색한다.
+    # 값은 EC2NodeClass의 securityGroupSelectorTerms와 일치해야 한다.
+    node_security_group_tags = {
+      "karpenter.sh/discovery" = "${local.project}-${local.environment}"
+    }
   }
 
   # EKS 클러스터 접근 주체 목록

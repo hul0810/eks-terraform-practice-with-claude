@@ -30,6 +30,24 @@
 `create_database_subnet_route_table = true` 를 항상 활성화한다.
 미설정 시 `database_route_table_ids`가 비어 있어 S3 Gateway Endpoint 연결 불가.
 
+## Karpenter 서브넷 자동 탐색 태그
+
+Karpenter는 `karpenter.sh/discovery = {cluster_name}` 태그가 붙은 서브넷에만 노드를 프로비저닝한다.
+이 태그는 `cluster_name` 변수가 제공된 경우에만 조건부로 추가한다.
+
+```hcl
+# null이면 태그 없음 — EKS와 무관한 VPC에서도 이 모듈을 재사용 가능하게 한다
+private_subnet_tags = merge(
+  { "kubernetes.io/role/internal-elb" = "1" },
+  var.cluster_name != null ? { "karpenter.sh/discovery" = var.cluster_name } : {}
+)
+```
+
+`karpenter.sh/discovery` 값은 EC2NodeClass의 `subnetSelectorTerms.tags` 값과 반드시 일치해야 한다.
+불일치 시 Karpenter가 서브넷을 탐색하지 못해 노드 프로비저닝이 실패한다.
+
+---
+
 ## S3 Gateway Endpoint 연결 대상
 
 | 서브넷 타입 | 포함 여부 | 이유 |
