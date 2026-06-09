@@ -45,6 +45,8 @@ No resources.
 
 | Name | Description |
 |------|-------------|
+| <a name="output_external_dns_role_arn"></a> [external\_dns\_role\_arn](#output\_external\_dns\_role\_arn) | ExternalDNS IRSA IAM Role ARN. blueprints가 생성한다. external\_dns\_route53\_zone\_arns가 비면 빈 문자열 반환 |
+| <a name="output_karpenter_node_iam_role_name"></a> [karpenter\_node\_iam\_role\_name](#output\_karpenter\_node\_iam\_role\_name) | Karpenter 노드 IAM Role 이름. EC2NodeClass의 role 필드에 사용한다 |
 | <a name="output_karpenter_role_arn"></a> [karpenter\_role\_arn](#output\_karpenter\_role\_arn) | Karpenter 컨트롤러 IRSA IAM Role ARN. blueprints가 생성한다 |
 | <a name="output_lbc_role_arn"></a> [lbc\_role\_arn](#output\_lbc\_role\_arn) | AWS Load Balancer Controller IRSA IAM Role ARN. blueprints가 생성한다 |
 <!-- END_TF_DOCS -->
