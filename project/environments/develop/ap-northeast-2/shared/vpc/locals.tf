@@ -19,6 +19,9 @@ locals {
     tgw_subnets        = ["10.10.8.0/28", "10.10.8.16/28", "10.10.8.32/28", "10.10.8.48/28"]
     enable_nat_gateway = false
     single_nat_gateway = true # NAT GW 활성화 시 단일 NGW 사용 (develop 비용 절감)
+    # Karpenter가 프라이빗 서브넷을 자동 탐색할 수 있도록 클러스터 이름 태그를 부여한다.
+    # eks/locals.tf의 cluster_name과 동일한 패턴으로 생성하여 하드코딩 불일치를 방지한다.
+    cluster_name = "${local.project}-${local.environment}"
     additional_tags = {
       Name = "${local.project}-${local.environment}"
     }

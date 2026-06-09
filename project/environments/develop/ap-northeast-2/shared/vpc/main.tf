@@ -30,5 +30,6 @@ module "vpc" {
   enable_nat_gateway = local.vpc.enable_nat_gateway
   single_nat_gateway = local.vpc.single_nat_gateway
 
+  cluster_name    = local.vpc.cluster_name
   additional_tags = local.vpc.additional_tags
 }
