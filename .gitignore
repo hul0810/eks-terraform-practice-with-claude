@@ -34,3 +34,6 @@ Thumbs.db
 
 # Claude Code 에이전트 메모리 (계정별 IAM 사용자명·권한 등 민감 정보 포함 가능 — 로컬 전용 캐시)
 .claude/agent-memory/
+
+# infracost 가격 캐시 (자동 생성 바이너리 — 커밋 불필요)
+.infracost/
