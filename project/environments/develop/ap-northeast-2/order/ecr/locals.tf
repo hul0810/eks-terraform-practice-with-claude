@@ -10,9 +10,10 @@ locals {
   }
 
   # 리포지토리 이름 패턴: {project}-{service}-{environment}
-  # 서비스 추가 시 이 맵에만 항목을 추가한다
+  # 이 root module은 order 서비스 전용이다. 다른 서비스의 ECR은
+  # project/environments/develop/ap-northeast-2/{service}/ecr/ 에 별도 root module로 관리한다.
   repositories = {
-    "${local.project}-msa-${local.environment}" = {
+    "${local.project}-order-${local.environment}" = {
       # dev 환경: 이미지 10개 초과분 자동 삭제로 저장소 비용 통제
       lifecycle_tagged_count = 10
       # 나머지 설정은 모듈 기본값 사용:

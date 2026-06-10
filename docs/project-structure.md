@@ -44,7 +44,11 @@ terraform-eks-practice/
 │       │       │   ├── eks/                # ← root module
 │       │       │   ├── eks-addons/         # ← root module
 │       │       │   └── tgw/                # (예정)
-│       │       ├── msa/                    # MSA 서비스 전용 인프라
+│       │       ├── api-gateway/            # MSA 서비스별 인프라 (서비스명 디렉토리)
+│       │       │   └── ecr/                # ← root module (이미지 저장소)
+│       │       ├── order/                  # MSA 서비스별 인프라
+│       │       │   └── ecr/                # ← root module (이미지 저장소)
+│       │       ├── catalog/                # MSA 서비스별 인프라
 │       │       │   └── ecr/                # ← root module (이미지 저장소)
 │       │       ├── api/                    # 워크로드별 인프라 (예정)
 │       │       │   ├── eks/
@@ -89,7 +93,8 @@ terraform-eks-practice/
 | `project/environments/develop/ap-northeast-2/shared/vpc/` | `project/develop/ap-northeast-2/shared/vpc/terraform.tfstate` |
 | `project/environments/develop/ap-northeast-2/shared/eks/` | `project/develop/ap-northeast-2/shared/eks/terraform.tfstate` |
 | `project/environments/develop/ap-northeast-2/shared/eks-addons/` | `project/develop/ap-northeast-2/shared/eks-addons/terraform.tfstate` |
-| `project/environments/develop/ap-northeast-2/msa/ecr/` | `project/develop/ap-northeast-2/msa/ecr/terraform.tfstate` |
+| `project/environments/develop/ap-northeast-2/api-gateway/ecr/` | `project/develop/ap-northeast-2/api-gateway/ecr/terraform.tfstate` |
+| (동일 패턴) `order/ecr/`, `catalog/ecr/` 등 MSA 서비스별 ECR | `project/develop/ap-northeast-2/{service}/ecr/terraform.tfstate` |
 | `project/environments/develop/ap-northeast-2/api/eks/` | `project/develop/ap-northeast-2/api/eks/terraform.tfstate` |
 | `project/environments/production/ap-northeast-2/shared/vpc/` | `project/production/ap-northeast-2/shared/vpc/terraform.tfstate` |
 | `project-b/environments/develop/ap-northeast-2/shared/vpc/` | `project-b/develop/ap-northeast-2/shared/vpc/terraform.tfstate` |
