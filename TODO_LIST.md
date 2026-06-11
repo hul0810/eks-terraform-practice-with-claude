@@ -137,8 +137,9 @@
 ### 2-5. modules/ecr + environments/dev ecr 추가
 
 > **목적**: EKS 위에 애플리케이션 배포를 위한 컨테이너 이미지 저장소 구성
-> 리포지토리 이름 패턴: `{project}-{service}-{environment}` (예: `eks-practice-msa-develop`)
+> 리포지토리 이름 패턴: `{project}-{service}-{environment}` (예: `eks-practice-api-gateway-develop`)
 > State 분리: ECR은 EKS와 독립적 lifecycle이므로 별도 root module로 관리
+> MSA 서비스별로 root module을 분리한다 (`{service}/ecr/`) — 단일 `msa/ecr`(1개 리포지토리 통합 관리)는 폐기
 
 - [x] `modules/ecr/1.0.0/variables.tf` 작성 — `repositories` map(object) 입력 변수
 - [x] `modules/ecr/1.0.0/main.tf` 작성 — `terraform-aws-modules/ecr ~> 3.2.0` for_each 호출
@@ -148,15 +149,17 @@
   - [x] encryption_type: AES256 (dev 비용 절감, prd는 KMS로 변경)
 - [x] `modules/ecr/1.0.0/outputs.tf` 작성 (repository_urls, repository_arns 맵)
 - [x] `modules/ecr/1.0.0/CLAUDE.md` 작성
-- [x] `environments/develop/ap-northeast-2/msa/ecr/` 신규 root module 생성 (서비스별 ECR — shared 아님)
-  - [x] `backend.tf` — key: `project/develop/ap-northeast-2/msa/ecr/terraform.tfstate`
-  - [x] `providers.tf` — aws provider
-  - [x] `locals.tf` — repositories 맵 (`eks-practice-msa-develop`)
+- [x] `environments/develop/ap-northeast-2/api-gateway/ecr/` 신규 root module 생성
+  - [x] `backend.tf` — key: `project/develop/ap-northeast-2/api-gateway/ecr/terraform.tfstate`
+  - [x] `providers.tf`, `data.tf`
+  - [x] `locals.tf` — repositories 맵 (`eks-practice-api-gateway-develop`)
   - [x] `main.tf` — `module "ecr"` 호출
   - [x] `outputs.tf`
-- [x] `terraform plan` 검토 — ECR 리포지토리 1개 + lifecycle policy 1개 생성 예정 확인
-- [ ] `terraform apply` 실행
-- [ ] `aws ecr describe-repositories --region ap-northeast-2` — 리포지토리 생성 확인
+- [x] `environments/develop/ap-northeast-2/order/ecr/` 신규 root module 생성 (`eks-practice-order-develop`)
+- [x] `environments/develop/ap-northeast-2/catalog/ecr/` 신규 root module 생성 (`eks-practice-catalog-develop`)
+- [x] `terraform plan` 검토 — 3개 root module 각각 ECR 리포지토리 1개 + lifecycle policy 1개 생성 예정 확인
+- [x] `terraform apply` 실행 — 3개 리포지토리 생성 완료
+- [x] `terraform plan` 재실행 — 코드와 실제 인프라 일치(변경 없음) 확인
 
 ---
 
