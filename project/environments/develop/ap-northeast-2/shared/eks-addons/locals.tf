@@ -14,7 +14,7 @@ locals {
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
   # aws_eks_cluster data source로 VPC ID 조회 — remote_state에 vpc_id output이 없어 data source 활용
-  vpc_id            = data.aws_eks_cluster.this.vpc_config[0].vpc_id
+  vpc_id = data.aws_eks_cluster.this.vpc_config[0].vpc_id
 
   # eks/locals.tf의 kubernetes_version과 동기화 — EKS 버전 업그레이드 시 함께 변경한다
   cluster_version = "1.33"
