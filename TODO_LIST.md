@@ -116,23 +116,23 @@
 > EC2NodeClass / NodePool은 Kubernetes 리소스이므로 eks-addons state 내 별도 파일로 관리한다.
 > (`modules/eks-addons/1.0.0/CLAUDE.md` — "NodeClass / NodePool" 섹션 참조)
 
-- [ ] `modules/vpc/variables.tf`에 `cluster_name` variable 추가
-- [ ] `modules/vpc/main.tf`에 Private 서브넷 Karpenter 탐색 태그 추가
-  - [ ] `"karpenter.sh/discovery" = var.cluster_name`
-- [ ] `environments/develop/ap-northeast-2/shared/eks-addons/karpenter.tf` 작성
-  - [ ] `EC2NodeClass` 정의
-    - [ ] AMI Family: AL2023
-    - [ ] subnetSelectorTerms: `karpenter.sh/discovery = cluster_name` 태그 탐색
-    - [ ] securityGroupSelectorTerms: `karpenter.sh/discovery = cluster_name` 태그 탐색
-  - [ ] `NodePool` 정의
-    - [ ] instanceCategory: c / m / r 계열
-    - [ ] dev: Spot 우선 + On-Demand 혼합 (`capacity_type: [spot, on-demand]`)
-    - [ ] disruption: consolidationPolicy=WhenEmptyOrUnderutilized, consolidateAfter=30s
-- [ ] `terraform plan` 검토
-- [ ] `terraform apply` 실행
-- [ ] `kubectl get ec2nodeclass` — NodeClass 등록 확인
-- [ ] `kubectl get nodepool` — NodePool 등록 확인
-- [ ] 테스트 Deployment 배포 후 Karpenter 앱 노드 프로비저닝 확인
+- [x] `modules/vpc/variables.tf`에 `cluster_name` variable 추가
+- [x] `modules/vpc/main.tf`에 Private 서브넷 Karpenter 탐색 태그 추가
+  - [x] `"karpenter.sh/discovery" = var.cluster_name`
+- [x] `environments/develop/ap-northeast-2/shared/eks-addons/karpenter.tf` 작성
+  - [x] `EC2NodeClass` 정의
+    - [x] AMI Family: AL2023
+    - [x] subnetSelectorTerms: `karpenter.sh/discovery = cluster_name` 태그 탐색
+    - [x] securityGroupSelectorTerms: `karpenter.sh/discovery = cluster_name` 태그 탐색
+  - [x] `NodePool` 정의
+    - [x] instanceCategory: c / m / r 계열
+    - [x] dev: Spot 우선 + On-Demand 혼합 (`capacity_type: [spot, on-demand]`)
+    - [x] disruption: consolidationPolicy=WhenEmptyOrUnderutilized, consolidateAfter=30s
+- [x] `terraform plan` 검토
+- [x] `terraform apply` 실행
+- [x] `kubectl get ec2nodeclass` — NodeClass 등록 확인
+- [x] `kubectl get nodepool` — NodePool 등록 확인
+- [x] 테스트 Deployment 배포 후 Karpenter 앱 노드 프로비저닝 확인
 
 ### 2-5. modules/ecr + environments/dev ecr 추가
 
@@ -165,28 +165,85 @@
 
 ## Phase 3. 환경 구성 (prd)
 
-> dev 검증 완료 후 동일 패턴으로 구성
+> dev와 동일한 모듈(`modules/vpc/1.0.0`, `modules/eks/1.0.0`, `modules/eks-addons/1.0.0`)을 재사용하여
+> `environments/production/ap-northeast-2/shared/`에 동일 패턴의 root module 3종을 구성한다.
 
-- [ ] `environments/production/ap-northeast-2/shared/vpc/` 구성 파일 작성
-  - [ ] VPC CIDR: `10.11.0.0/16` (dev와 동일한 서브넷 타입별 그룹화 패턴 적용)
-  - [ ] `azs = data.aws_availability_zones.available.names` (동적 조회)
-  - [ ] `single_nat_gateway = false` (prd는 AZ당 1개 NAT GW)
-  - [ ] `enable_nat_gateway = true`
-- [ ] `environments/production/ap-northeast-2/shared/eks/` 구성 파일 작성
-  - [ ] EKS endpoint: Private only
-- [ ] `terraform plan` 검토
-- [ ] `terraform apply` 실행
+### 3-1. modules/vpc 재사용 + environments/production vpc 구성
 
----
+- [x] `environments/production/ap-northeast-2/shared/vpc/` 신규 root module 생성
+  - [x] `backend.tf` — key: `project/production/ap-northeast-2/shared/vpc/terraform.tfstate`
+  - [x] `providers.tf`, `data.tf`, `outputs.tf`, `main.tf` (dev와 동일 패턴)
+  - [x] `locals.tf`
+    - [x] VPC CIDR: `10.11.0.0/16` (dev와 동일한 서브넷 타입별 그룹화 패턴 적용)
+    - [x] `azs = data.aws_availability_zones.available.names` (동적 조회)
+    - [x] `enable_nat_gateway = true`, `single_nat_gateway = false` (prd는 AZ당 1개 NAT GW)
+    - [x] `cluster_name = "eks-practice-production"` (Karpenter 탐색 태그)
+- [x] `terraform fmt` + `terraform validate`
+- [x] `terraform plan` 검토
 
-## Phase 4. 검증
+### 3-2. modules/eks 재사용 + environments/production eks 구성
 
-- [ ] `aws eks update-kubeconfig --name eks-practice-dev --region ap-northeast-2`
-- [ ] `kubectl get nodes` - 시스템 노드 확인
-- [ ] `kubectl get pods -A` - 전체 파드 상태 확인
-- [ ] `kubectl get pods -n kube-system` - 관리형 애드온 확인
-- [ ] `kubectl get pods -n karpenter` - Karpenter 동작 확인
-- [ ] 테스트 Deployment 배포 후 Karpenter 노드 프로비저닝 확인
+- [x] `environments/production/ap-northeast-2/shared/eks/` 신규 root module 생성
+  - [x] `backend.tf` — key: `project/production/ap-northeast-2/shared/eks/terraform.tfstate`
+  - [x] `providers.tf`, `outputs.tf`, `main.tf` (dev와 동일)
+  - [x] `data.tf` — `terraform_remote_state.vpc` key를 production vpc state로 변경
+  - [x] `locals.tf`
+    - [x] `cluster_name = "eks-practice-production"`, `kubernetes_version = "1.33"`
+    - [x] `endpoint_public_access = false` (Private only)
+    - [x] 시스템 노드: `t3.medium`(x86, 전체 인스턴스 유형 통틀어 최저가), `min=2/desired=2/max=4` (HA)
+    - [x] `node_security_group_tags = { "karpenter.sh/discovery" = "eks-practice-production" }`
+    - [x] `upgrade_policy = { support_type = "STANDARD" }`
+    - [x] `access_entries`: dev와 동일 (`study` 사용자 + `terraform_execution` Role)
+- [x] `terraform fmt` + `terraform validate`
+- [x] `terraform plan` 검토
+
+### 3-3. modules/eks-addons 재사용 + environments/production eks-addons 구성 (Karpenter 포함)
+
+- [x] `environments/production/ap-northeast-2/shared/eks-addons/` 신규 root module 생성
+  - [x] `backend.tf` — key: `project/production/ap-northeast-2/shared/eks-addons/terraform.tfstate`
+  - [x] `providers.tf`, `main.tf`, `outputs.tf` (dev와 동일)
+  - [x] `data.tf` — `terraform_remote_state.eks` key를 production eks state로 변경
+  - [x] `locals.tf`
+    - [x] `replica_counts = {}` (모듈 기본값 사용 — prd는 시스템 노드 2개(HA)이므로 기본 HA replica 적용)
+    - [x] `enable_aws_load_balancer_controller = true`, `enable_metrics_server = true`, `enable_karpenter = true`
+    - [x] `enable_external_dns = false` (Route53 Hosted Zone 미구성 — 도메인 준비 후 활성화)
+    - [x] `karpenter_node_pools`: dev와 동일 4종(general/arm64/gpu/spot), `disruption.consolidateAfter = "300s"`
+  - [x] `karpenter.tf` 작성 (dev와 동일 구조: EC2NodeClass + NodePool for_each + finalizer 강제 제거 null_resource)
+- [x] `terraform fmt` + `terraform validate`
+- [x] `terraform plan` 검토
+- [x] Karpenter 노드 IAM Role용 EKS Access Entry 추가 (`modules/eks-addons/1.0.0/main.tf`,
+      `aws_eks_access_entry.karpenter_node`, type=`EC2_LINUX`)
+  - 원인: eks-blueprints-addons의 karpenter 서브모듈은 노드 IAM Role/Instance Profile만 생성하고
+    access entry는 생성하지 않음. EKS managed node group은 access entry가 자동 생성되지만
+    Karpenter 노드 Role은 수동 등록이 필요. 미등록 시 kubelet이 `Unauthorized`로 노드 등록 실패.
+  - dev에도 동일 모듈을 공유하므로 dev eks-addons apply 시에도 동일 리소스가 추가됨
+- [x] EC2NodeClass에 `Name` 태그 추가 (`karpenter.tf`, `spec.tags.Name = "${local.cluster_name}-karpenter"`)
+  - 웹 콘솔에서 Karpenter가 생성한 EC2 인스턴스를 시스템 노드그룹과 구분하기 위함
+  - production: `eks-practice-production-karpenter`, dev: `eks-practice-develop-karpenter`
+  - production apply 후 신규 NodeClaim(`general-7d582`)의 EC2 인스턴스에 태그 적용 확인 완료
+- [x] `terraform destroy` 시 Karpenter NodeClaim(EC2 인스턴스) 정리를 보장하는
+      `null_resource.karpenter_nodeclaims_drainer` 추가 (`karpenter.tf`)
+  - 원인: NodePool에는 `karpenter.sh/termination` finalizer가 있어 Karpenter 컨트롤러가
+    연관 NodeClaim(EC2 인스턴스)을 모두 정리해야 destroy가 완료됨. 컨트롤러 응답 불가나
+    Spot 종료 지연 시 `kubernetes_manifest.karpenter_node_pool` destroy가 무한 대기할 위험이 있음
+  - 해결: NodePool/module.eks_addons보다 먼저 destroy되는 null_resource에서
+    `kubectl delete nodeclaims --all --timeout=180s || true` 실행 — 기존
+    `karpenter_nodeclass_finalizer_remover`와 동일한 depends_on 패턴 적용
+  - production: `terraform validate` + `terraform plan` 검증 완료 (1 to add, 0 to change, 0 to destroy)
+  - dev: 동일 코드 적용 (별개의 remote state 이슈로 plan 검증은 보류)
+
+### 3-4. 검증
+
+- [x] `aws eks update-kubeconfig --name eks-practice-production --region ap-northeast-2`
+- [x] `kubectl get nodes` - 시스템 노드 2개 확인 (HA)
+- [x] `kubectl get pods -A` - 전체 파드 상태 확인
+- [x] `kubectl get pods -n kube-system` - 관리형 애드온 확인
+- [x] `kubectl get pods -n karpenter` - Karpenter 동작 확인
+- [x] `kubectl get ec2nodeclass` / `kubectl get nodepool` — NodeClass/NodePool 등록 확인
+- [x] 테스트 Deployment 배포 후 Karpenter 앱 노드 프로비저닝 확인
+  - `karpenter-test-inflate` 배포 → NodeClaim `general-rhqch`(m8i-flex.large spot, ap-northeast-2d)
+    생성 → access entry 추가 후 노드 `Ready` 전환, 파드 `Running` 확인 → 테스트 Deployment 삭제 완료
+    (Karpenter consolidation으로 노드 자동 회수 예정)
 
 ---
 
