@@ -1,0 +1,15 @@
+terraform {
+  backend "s3" {
+    bucket       = "eks-practice-tfstate-891396992584"
+    key          = "project/production/ap-northeast-2/shared/vpc/terraform.tfstate"
+    region       = "ap-northeast-2"
+    use_lockfile = true
+    encrypt      = true
+
+    profile = "terraform"
+
+    assume_role = {
+      role_arn = "arn:aws:iam::891396992584:role/TerraformExecutionRole"
+    }
+  }
+}
