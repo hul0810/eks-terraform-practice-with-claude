@@ -39,9 +39,9 @@ module "eks_blueprints_addons" {
       # 기본값 2 — dev는 replica_counts.lbc=1로 낮춰 시스템 노드 리소스를 확보한다
       { name = "replicaCount", value = tostring(var.replica_counts.lbc) },
       # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect",   value = "NoSchedule" },
+      { name = "tolerations[0].effect", value = "NoSchedule" },
     ]
   }
 
@@ -60,9 +60,9 @@ module "eks_blueprints_addons" {
       # 기본값 1이나 명시적으로 관리
       { name = "replicaCount", value = tostring(var.replica_counts.external_dns) },
       # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect",   value = "NoSchedule" },
+      { name = "tolerations[0].effect", value = "NoSchedule" },
     ]
   }
 
@@ -75,9 +75,9 @@ module "eks_blueprints_addons" {
       # 기본값 1이나 명시적으로 관리
       { name = "replicas", value = tostring(var.replica_counts.metrics_server) },
       # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect",   value = "NoSchedule" },
+      { name = "tolerations[0].effect", value = "NoSchedule" },
     ]
   }
 
@@ -86,9 +86,9 @@ module "eks_blueprints_addons" {
   # NodeClass / NodePool은 Kubernetes 리소스이므로 별도 관리한다.
   enable_karpenter = var.enable_karpenter
   karpenter = {
-    chart_version          = var.karpenter_chart_version
-    role_name              = "${var.cluster_name}-karpenter-controller-irsa"
-    role_name_use_prefix   = false
+    chart_version        = var.karpenter_chart_version
+    role_name            = "${var.cluster_name}-karpenter-controller-irsa"
+    role_name_use_prefix = false
     # Policy도 고정 이름 사용 — 미설정 시 Role 이름을 prefix로 random suffix가 붙는다
     policy_name            = "${var.cluster_name}-karpenter-controller-irsa"
     policy_name_use_prefix = false
@@ -96,9 +96,9 @@ module "eks_blueprints_addons" {
       # 기본값 2 — dev는 replica_counts.karpenter=1로 낮춰 시스템 노드 Pending 해소
       { name = "replicas", value = tostring(var.replica_counts.karpenter) },
       # 시스템 노드에 스케줄 — Karpenter 자체가 앱 노드에서 실행되면 부트스트랩 문제 발생
-      { name = "tolerations[0].key",      value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect",   value = "NoSchedule" },
+      { name = "tolerations[0].effect", value = "NoSchedule" },
     ]
   }
 
@@ -116,6 +116,26 @@ module "eks_blueprints_addons" {
   karpenter_sqs = {
     queue_name = "${var.cluster_name}-karpenter"
   }
+
+  tags = var.additional_tags
+}
+
+# Karpenter 노드 IAM Role을 위한 EKS Access Entry
+#
+# 문제: eks-blueprints-addons의 karpenter 서브모듈은 노드 IAM Role/Instance Profile만 생성하고
+# EKS Access Entry는 생성하지 않는다. authentication_mode가 API 또는 API_AND_CONFIG_MAP인
+# 클러스터에서는 access entry가 없는 IAM Role의 EC2 인스턴스는 kubelet이
+# "Unauthorized" 오류로 노드 등록에 실패한다 (EKS managed node group은 노드그룹 생성 시
+# access entry가 자동 생성되지만, Karpenter 노드 Role은 수동 등록이 필요하다).
+#
+# 해결: EC2_LINUX 타입 access entry를 생성한다. 이 타입은 system:nodes / system:bootstrappers
+# 그룹 매핑이 내장되어 있어 별도 access policy association이 필요 없다.
+resource "aws_eks_access_entry" "karpenter_node" {
+  count = var.enable_karpenter ? 1 : 0
+
+  cluster_name  = var.cluster_name
+  principal_arn = module.eks_blueprints_addons.karpenter.node_iam_role_arn
+  type          = "EC2_LINUX"
 
   tags = var.additional_tags
 }

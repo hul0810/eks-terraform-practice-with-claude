@@ -83,6 +83,21 @@ blueprints는 Karpenter 컨트롤러 IAM Role, SQS 인터럽션 큐, EventBridge
 
 ---
 
+## Karpenter 노드 IAM Role의 EKS Access Entry
+
+blueprints의 karpenter 서브모듈은 노드 IAM Role/Instance Profile(`{cluster_name}-karpenter-node`)만
+생성하고 **EKS Access Entry는 생성하지 않는다**. `authentication_mode`가 `API` 또는
+`API_AND_CONFIG_MAP`인 클러스터에서는 access entry가 없는 IAM Role의 EC2 인스턴스는 kubelet이
+`Unauthorized` 오류로 노드 등록에 실패한다 (managed node group은 access entry가 자동 생성되지만
+Karpenter 노드 Role은 수동 등록이 필요).
+
+이 모듈은 `enable_karpenter = true`일 때 `aws_eks_access_entry.karpenter_node`
+(type=`EC2_LINUX`)를 함께 생성해 이 문제를 방지한다. `EC2_LINUX` 타입은
+`system:nodes` / `system:bootstrappers` 그룹 매핑이 내장되어 있어 별도 access policy
+association이 필요 없다.
+
+---
+
 ## External DNS 조건부 설치 패턴
 
 ```hcl

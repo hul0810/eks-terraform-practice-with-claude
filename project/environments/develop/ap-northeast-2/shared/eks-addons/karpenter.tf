@@ -69,6 +69,12 @@ resource "kubernetes_manifest" "karpenter_ec2_node_class" {
           }
         }
       ]
+
+      # Karpenter가 생성하는 모든 리소스(EC2, EBS, ENI)에 적용되는 태그.
+      # Name 태그로 웹 콘솔에서 Karpenter 노드를 다른 인스턴스와 구분한다.
+      tags = {
+        Name = "${local.cluster_name}-karpenter"
+      }
     }
   }
 
@@ -130,7 +136,7 @@ resource "kubernetes_manifest" "karpenter_node_pool" {
                 key      = "karpenter.k8s.aws/instance-generation"
                 operator = "Gt"
                 # Gt operator는 단일 숫자 문자열을 요구한다 — tostring으로 타입을 명시적으로 보장
-                values   = [tostring(each.value.instance_gen_min)]
+                values = [tostring(each.value.instance_gen_min)]
               },
               {
                 key      = "kubernetes.io/arch"
@@ -229,6 +235,39 @@ resource "null_resource" "karpenter_nodeclass_finalizer_remover" {
     # module.eks_addons를 포함해야 destroy 시 null_resource가 module.eks_addons보다 먼저 삭제된다.
     # 미포함 시 Terraform이 null_resource와 module.eks_addons를 병렬로 삭제하고,
     # IRSA Role이 먼저 사라지면 kubectl patch가 성공하더라도 Karpenter가 finalizer를 재추가할 수 있다.
+    module.eks_addons,
+  ]
+}
+
+# ── Karpenter NodeClaim 정리 (destroy 시 EC2 인스턴스 고아 방지) ──────────────
+#
+# 문제: NodePool에는 "karpenter.sh/termination" finalizer가 있다.
+# Karpenter 컨트롤러가 그 NodePool로 생성된 NodeClaim(EC2 인스턴스)을 모두
+# drain·terminate해야만 finalizer가 제거되고 NodePool 오브젝트가 삭제된다.
+#
+# 정상적으로는 동작하지만, Karpenter 컨트롤러가 응답 불가 상태이거나
+# Spot 인스턴스 종료가 지연되는 등의 이유로 NodeClaim 정리가 멈추면
+# kubernetes_manifest.karpenter_node_pool destroy가 무한 대기할 수 있다.
+#
+# 해결: NodePool/module.eks_addons보다 먼저 destroy되는 null_resource에서
+# `kubectl delete nodeclaims --all`을 실행해, Karpenter 컨트롤러가 아직
+# 살아있는 시점에 모든 NodeClaim(EC2 인스턴스) 정리를 명시적으로 트리거한다.
+# timeout + `|| true`로 최악의 경우에도 destroy 자체는 멈추지 않도록 한다.
+#
+# destroy 순서:
+#   1. null_resource destroy → kubectl delete nodeclaims --all (EC2 인스턴스 정리)
+#   2. kubernetes_manifest.karpenter_node_pool destroy → NodeClaim 없으므로 finalizer 즉시 제거
+#   3. karpenter_nodeclass_finalizer_remover → karpenter_ec2_node_class → module.eks_addons
+resource "null_resource" "karpenter_nodeclaims_drainer" {
+  provisioner "local-exec" {
+    when    = destroy
+    command = "kubectl delete nodeclaims --all --timeout=180s || true"
+  }
+
+  depends_on = [
+    kubernetes_manifest.karpenter_node_pool,
+    # module.eks_addons가 아직 살아있는 상태에서 drain을 트리거해야 한다.
+    # 미포함 시 Terraform이 병렬로 삭제하여 Karpenter 컨트롤러가 먼저 사라질 수 있다.
     module.eks_addons,
   ]
 }
