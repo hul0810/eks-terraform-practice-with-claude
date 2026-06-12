@@ -1,6 +1,6 @@
 #!/bin/bash
 # PreToolUse 훅: project/environments/production/ 에서 terraform apply 강제 차단
-# stdin: {"tool_name": "Bash", "tool_input": {"command": "..."}, ...}
+# stdin: {"tool_name": "Bash", "cwd": "...", "tool_input": {"command": "..."}, ...}
 
 input_json=$(cat)
 
@@ -17,11 +17,16 @@ if ! echo "$command" | grep -qE '\bterraform\b.*\bapply\b'; then
   exit 0
 fi
 
+cwd=$(echo "$input_json" | jq -r '.cwd // empty')
+
 # 백슬래시를 슬래시로 정규화 (Windows 경로 대응)
-normalized="${command//\\//}"
+normalized_command="${command//\\//}"
+normalized_cwd="${cwd//\\//}"
 
 # environments/production/ 경로 감지
-if echo "$normalized" | grep -q "environments/production"; then
+# command 문자열뿐 아니라 cwd도 검사한다: 이미 production 디렉토리로 cd한 상태에서
+# 경로 없이 "terraform apply"만 실행하면 command 문자열만으로는 탐지되지 않기 때문이다.
+if echo "$normalized_command" | grep -q "environments/production" || echo "$normalized_cwd" | grep -q "environments/production"; then
   cat >&2 <<'EOF'
 ╔═══════════════════════════════════════════════════════════╗
 ║      [BLOCKED] production terraform apply 차단됨           ║
@@ -31,7 +36,7 @@ environments/production/ 에서 terraform apply는
 Claude가 직접 실행할 수 없습니다.
 
 올바른 배포 절차:
-  1. /review-terraform 스킬로 코드 리뷰 완료
+  1. /git-commit 실행 (Step 4에서 /review-terraform 자동 실행)
   2. PR 생성 및 팀 검토·승인
   3. 터미널에서 사용자가 직접 실행:
        cd project/environments/production/<region>/<project>/<resource>/

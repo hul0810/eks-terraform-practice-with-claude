@@ -6,31 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [".claude/hooks/block-production-apply.sh"]
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash",
-            "args": [".claude/hooks/mark-prd-change.sh"]
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash",
-            "args": [".claude/hooks/gate-prd-review.sh"]
+            "command": "bash .claude/hooks/block-production-apply.sh"
           }
         ]
       }

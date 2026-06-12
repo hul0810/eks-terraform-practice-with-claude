@@ -2,14 +2,12 @@
 name: review-terraform
 description: >
   변경된 Terraform 코드를 terraform-reviewer, security-engineer, aws-architect, cost-engineer 에이전트가 순차 리뷰한다.
-  project/environments/production/ 변경 시 자동 호출된다. develop 환경에서는 /review-terraform으로 수동 호출한다.
+  /git-commit 실행 시 production .tf 변경이 있으면 Step 4에서 자동 호출된다. develop 환경에서는 /review-terraform으로 수동 호출한다.
 disable-model-invocation: false
 allowed-tools:
   - Agent
   - Read
   - Glob
-  - Bash(rm .claude/.prd-changed)
-  - Bash(test -f .claude/.prd-changed*)
   - Bash(git diff HEAD --name-only*)
   - Bash(infracost*)
 ---
@@ -33,9 +31,6 @@ allowed-tools:
 
 ### Step 0: 리뷰 대상 파악
 
-마커 파일 `.claude/.prd-changed`가 존재하면 그 내용에서 변경된 production .tf 파일 목록을 읽는다.
-
-그렇지 않은 경우(수동 호출):
 1. `$ARGUMENTS`가 있는 경우 → `$ARGUMENTS`를 리뷰 대상 파일 경로로 사용한다.
 2. `$ARGUMENTS`가 없는 경우 → 아래 명령으로 커밋되지 않은 .tf 파일 목록을 추출한다:
    ```
@@ -81,12 +76,11 @@ allowed-tools:
 
 ### Step 5: 결과 종합
 
-- **네 리뷰 모두 PASSED/OK**: `.claude/.prd-changed` 마커 파일 삭제 후 완료 보고
-- **하나라도 BLOCKED 또는 COST_STATUS: REVIEW_REQUIRED**: 마커 파일 유지, 이슈 목록과 수정 방향 안내.
+- **네 리뷰 모두 PASSED/OK**: 완료 보고 후 `/git-commit` Step 5로 진행
+- **하나라도 BLOCKED 또는 COST_STATUS: REVIEW_REQUIRED**: 이슈 목록과 수정 방향 안내.
   수정 후 `/review-terraform`을 다시 호출해야 함
 
 ### 긴급 우회 (비권장)
 
 사용자가 명시적으로 "리뷰 스킵" 또는 "리뷰 없이 완료"를 요청한 경우에만:
-1. `.claude/.prd-changed` 마커 파일 삭제
-2. 스킵 이유와 파일 목록을 `.claude/.prd-review-skipped.log`에 기록
+1. 스킵 이유와 파일 목록을 `.claude/.prd-review-skipped.log`에 기록
