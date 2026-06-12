@@ -14,7 +14,7 @@
 **핵심 원칙: 실무 중심 인프라를 구축하되 비용을 최우선으로 고려한다.**
 
 - Terraform 코드 변경 후 `/cost-check` 실행 권장 (배포 전 예상 비용 delta 확인)
-- production 변경은 `/review-terraform`에 비용 체크 포함 (4단계에서 자동 실행)
+- production 변경은 `/git-commit` 시 `/review-terraform`이 자동 실행되어 비용 체크 포함 4단계 리뷰 진행
 - EKS 버전 지원 일정 필수 확인: Extended Support 진입 시 $0.50/hr 추가 발생
 - 실제 비용 이상 감지 또는 원인 분석 필요 시: `cost-engineer` 에이전트에게 요청
 
@@ -27,6 +27,8 @@
 비용 예외 항목 (단일 작업 환경으로 인해 의도적으로 단순화):
 - develop 환경 NAT Gateway 단일 AZ
 - develop 환경 t-계열 인스턴스 사용
+- production 환경 시스템 노드 그룹 min/desired=1 (HA 비활성화, `eks/locals.tf`에 복원 방법 주석)
+- production 환경 NAT Gateway 단일 구성 (`single_nat_gateway = true`, `vpc/locals.tf`에 복원 방법 주석)
 
 위 항목을 제외한 모든 영역의 기준:
 
@@ -35,7 +37,7 @@
 | 코드 가독성 | 미래 작업자가 코드만으로 의도 파악 가능 (`description` 필수, WHY 주석) |
 | 버전 고정 | `.terraform.lock.hcl` Git 추적, 모듈·provider 버전 명시 |
 | 변경 추적 | 모든 변경은 PR 경유 (`main` 직접 push 금지) |
-| 리뷰 프로세스 | production 변경 시 `/review-terraform` 필수 |
+| 리뷰 프로세스 | production 변경 커밋 시 `/review-terraform` 필수 (`/git-commit` Step 4에서 자동 실행) |
 | State 충돌 방지 | 동일 root module 동시 편집 금지, `plan` 확인 후 `apply` |
 | 모듈 인터페이스 | `variable` `description` 필수, `sensitive` output 명시 |
 
@@ -56,7 +58,7 @@
 
 이 지시는 실수로 인한 운영 환경 변경을 방지하기 위한 것이다. 아래 절차를 따른다:
 
-1. 코드 작성 → `/review-terraform` 리뷰 완료
+1. 코드 작성 → `/git-commit` 실행 (Step 4에서 `/review-terraform` 자동 실행)
 2. PR 생성 → 팀 검토 및 승인
 3. 사용자가 터미널에서 직접 `terraform apply` 실행
 
@@ -140,7 +142,7 @@
   → 비용 리뷰 (cost-engineer) → cost-check 스킬 활용
 ```
 
-prd 변경 시 `/review-terraform` Skill이 위 4단계 리뷰(terraform-reviewer → security-engineer → aws-architect → cost-engineer)를 자동 진행한다.
+`/git-commit` 실행 시 prd `.tf` 변경이 있으면 `/review-terraform` Skill이 자동 호출되어 위 4단계 리뷰(terraform-reviewer → security-engineer → aws-architect → cost-engineer)를 진행한다.
 
 ---
 

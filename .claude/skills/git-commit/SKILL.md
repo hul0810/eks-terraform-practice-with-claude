@@ -322,7 +322,6 @@ Terraform 변경:
 - `*.tfstate`, `*.tfstate.backup`
 - `.terraform/` 내 파일
 - `*.tfvars` (`.tfvars.example` 제외)
-- `.claude/.prd-changed`
 
 **분리 커밋 선택 시** (Step 2에서 그룹 1 선택): 해당 그룹 파일만 `git add <파일>` 개별 스테이징
 

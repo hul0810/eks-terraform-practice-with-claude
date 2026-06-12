@@ -155,7 +155,7 @@ feat(vpc): ELB 서브넷 태그 추가
 plan 확인 → 리뷰 (prd) → apply
 ```
 
-plan 없이 apply 금지. prd 환경 변경 시 반드시 `/review-terraform` 실행.
+plan 없이 apply 금지. prd 환경 `.tf` 변경은 `/git-commit` 실행 시 `/review-terraform`이 자동 실행된다.
 
 ### 단독 PR 원칙
 
