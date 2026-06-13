@@ -14,8 +14,8 @@
 - [x] `global/tfstate-backend/providers.tf` 작성 (AWS provider 설정)
 - [x] `global/tfstate-backend/main.tf` 작성
   - [x] S3 버킷 생성 (버전 관리 + SSE-S3 암호화 + public access 차단)
-  - [x] DynamoDB 테이블 생성 (PAY_PER_REQUEST, LockID 해시키)
-- [x] `global/tfstate-backend/outputs.tf` 작성 (버킷명, 테이블명 출력)
+  - [x] State Lock: S3 네이티브 락(`use_lockfile = true`, Terraform 1.10+) 적용 — DynamoDB 락 테이블 불필요
+- [x] `global/tfstate-backend/outputs.tf` 작성 (버킷명, 버킷 ARN 출력)
 
 ---
 
@@ -253,14 +253,22 @@
 > Helm 애드온 관리를 Terraform에서 ArgoCD로 이관한다.
 >
 > **전환 전제**: Phase 2-4 완료 후 진행. ArgoCD가 시스템 노드에 배포된 상태 기준.
+>
+> **저장소 구성** (Phase 5용 별도 repo 신규 생성):
+> - 이 repo(`eks-terraform-practice-with-claude`): Terraform 인프라(IAM Role, SQS, EventBridge 등 AWS 리소스) + ArgoCD 설치만 관리
+> - [`eks-practice-devops-manifest`](https://github.com/hul0810/eks-practice-devops-manifest): ArgoCD가 Git 소스로 참조하는 EKS 애드온 ApplicationSet/Helm values 매니페스트
+> - [`eks-practice-application-with-claude`](https://github.com/hul0810/eks-practice-application-with-claude): EKS에 배포할 애플리케이션 코드 (Docker 이미지 빌드 소스, 5-3/5-4와 별개로 ArgoCD Application 대상이 될 예정)
 
 ### 5-1. ArgoCD 설치
 
-- [ ] `modules/eks-addons/main.tf`에 ArgoCD Helm 설치 추가
-  - [ ] `enable_argocd = true` (aws-ia/eks-blueprints-addons)
-  - [ ] HA 구성 values 설정 (redis-ha, server replicas)
-  - [ ] `CriticalAddonsOnly` toleration 추가 (시스템 노드에 스케줄)
-- [ ] ArgoCD UI 접속 확인 (`kubectl port-forward svc/argocd-server -n argocd 8080:443`)
+- [x] `modules/eks-addons/main.tf`에 ArgoCD Helm 설치 추가
+  - [x] `enable_argocd = true` (aws-ia/eks-blueprints-addons)
+  - [x] HA 구성 values 설정 (redis-ha, server/repoServer/applicationSet replicas) —
+    `argocd_ha_enabled` 토글 (dev=false, production=true)
+  - [x] `CriticalAddonsOnly` toleration 추가 (시스템 노드에 스케줄, redis-ha는 별도 명시)
+- [x] dev: `terraform apply` 완료 — argo-cd v9.5.21(app v3.4.3) `helm_release` status=deployed 확인
+- [ ] production: `terraform apply` (사용자 직접 실행 필요 — `argocd_ha_enabled=true`)
+- [ ] ArgoCD UI 접속 확인 (`kubectl port-forward service/argo-cd-argocd-server -n argocd 8080:443`)
 
 ### 5-2. IAM/AWS 리소스와 Helm 리소스 분리
 
@@ -276,13 +284,14 @@
 ### 5-3. ArgoCD ApplicationSet 작성
 
 > 하나의 ApplicationSet 선언으로 모든 환경에 동일 Chart 배포.
+> **저장소**: `eks-practice-devops-manifest` (이 repo가 아님 — ArgoCD가 Git 소스로 참조하는 별도 매니페스트 repo)
 
-- [ ] `argocd/applicationsets/` 디렉토리 생성
-- [ ] `argocd/applicationsets/eks-addons.yaml` 작성
+- [ ] `eks-practice-devops-manifest` repo에 `applicationsets/` 디렉토리 생성
+- [ ] `applicationsets/eks-addons.yaml` 작성
   - [ ] Generator: 환경 목록 (`develop`, `production`)
   - [ ] 공통 Chart 버전 선언 (LBC, kube-prometheus-stack)
   - [ ] 환경별 values 파일 경로 연결 (`values-{{env}}.yaml`)
-- [ ] `argocd/values/` 디렉토리 생성
+- [ ] `values/` 디렉토리 생성
   - [ ] `values-develop.yaml` — dev 환경 오버라이드 (replica 수, resource limits 등)
   - [ ] `values-production.yaml` — prd 환경 오버라이드
 
@@ -291,7 +300,7 @@
 - [ ] `modules/karpenter/main.tf`에 `create_kubernetes_resources = false` 추가
   - Terraform: IAM Role + SQS + EventBridge만 유지
   - ArgoCD: Karpenter Helm Chart + EC2NodeClass + NodePool 관리
-- [ ] `argocd/applicationsets/karpenter.yaml` 작성
+- [ ] `eks-practice-devops-manifest` repo에 `applicationsets/karpenter.yaml` 작성
 
 ### 5-5. 검증
 

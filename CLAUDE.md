@@ -155,9 +155,13 @@
 - **모듈 CLAUDE.md 작성 기준**: `@docs/module-claude-template.md` 참조
 - **EKS 애드온 전략**: `@docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴)
 - **Git 저장소**: https://github.com/hul0810/eks-terraform-practice-with-claude
+- **GitOps 매니페스트 저장소**: https://github.com/hul0810/eks-practice-devops-manifest
+  (Phase 5 — ArgoCD가 참조할 EKS 애드온 Helm values/ApplicationSet 매니페스트 관리)
+- **애플리케이션 저장소**: https://github.com/hul0810/eks-practice-application-with-claude
+  (EKS에 배포할 애플리케이션 코드 — Docker 이미지 빌드 대상)
 - **목적**: 실무 기반 EKS + Terraform 인프라 구축 실습 (협업 가능한 구조를 기본값으로)
 - **환경**: `develop` / `production` 2개
 - **리전**: `ap-northeast-2` (서울)
 - **오토스케일링**: Karpenter
 - **모니터링**: Prometheus + Grafana (kube-prometheus-stack)
-- **상태 관리**: S3 + DynamoDB 원격 백엔드
+- **상태 관리**: S3 원격 백엔드 + 네이티브 락 (`use_lockfile = true`, Terraform 1.10+, DynamoDB 락 테이블 미사용)
