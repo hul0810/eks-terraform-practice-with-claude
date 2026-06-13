@@ -99,6 +99,64 @@ variable "karpenter_chart_version" {
   type        = string
 }
 
+variable "enable_argocd" {
+  description = "ArgoCD 설치 여부 (GitOps 전환 Phase 5)"
+  type        = bool
+  default     = true
+}
+
+variable "argocd_chart_version" {
+  description = "ArgoCD Helm chart 버전 (예: \"9.5.21\")"
+  type        = string
+}
+
+variable "argocd_ha_enabled" {
+  description = "ArgoCD HA 모드. true면 redis-ha 활성화 + server/repoServer/applicationSet replica를 replica_counts.argocd_server로 증설. false면 모든 컴포넌트 단일 replica, redis-ha 비활성"
+  type        = bool
+  default     = false
+}
+
+variable "argocd_ingress_enabled" {
+  description = "ArgoCD server에 ALB Ingress(외부 접근)를 구성할지 여부. true면 server.insecure=true로 전환되어 ALB가 TLS를 종료한다"
+  type        = bool
+  default     = false
+}
+
+variable "argocd_ingress_hostname" {
+  description = "ArgoCD server Ingress의 호스트명 (예: \"argo-develop.pyhtest.com\"). argocd_ingress_enabled=true일 때 필수"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.argocd_ingress_enabled || length(var.argocd_ingress_hostname) > 0
+    error_message = "argocd_ingress_enabled=true일 때 argocd_ingress_hostname은 빈 문자열일 수 없습니다."
+  }
+}
+
+variable "argocd_ingress_acm_certificate_arn" {
+  description = "ArgoCD ALB Ingress가 사용할 ACM 인증서 ARN. argocd_ingress_enabled=true일 때 필수"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.argocd_ingress_enabled || can(regex("^arn:aws:acm:", var.argocd_ingress_acm_certificate_arn))
+    error_message = "argocd_ingress_enabled=true일 때 argocd_ingress_acm_certificate_arn은 유효한 ACM 인증서 ARN이어야 합니다."
+  }
+}
+
+variable "argocd_ingress_allowed_cidrs" {
+  description = "ArgoCD ALB Ingress 접근을 허용할 CIDR 목록 (ALB Security Group inbound 규칙). argocd_ingress_enabled=true일 때 필수 — dex 비활성화 상태에서 기본 admin 계정만으로 인증하므로 접근 IP를 제한한다"
+  type        = list(string)
+  default     = []
+
+  validation {
+    # 빈 리스트면 join(",", [])="" → ALB inbound-cidrs 어노테이션이 무효화되어 0.0.0.0/0(전체 허용)으로
+    # fail-open될 수 있다. argocd_ingress_enabled=true일 때는 반드시 1개 이상의 CIDR을 강제한다.
+    condition     = !var.argocd_ingress_enabled || length(var.argocd_ingress_allowed_cidrs) > 0
+    error_message = "argocd_ingress_enabled=true일 때 argocd_ingress_allowed_cidrs는 최소 1개 이상의 CIDR을 포함해야 합니다 (비워두면 ALB가 모든 IP를 허용할 수 있습니다)."
+  }
+}
+
 variable "replica_counts" {
   description = "애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값"
   type = object({
@@ -106,6 +164,7 @@ variable "replica_counts" {
     karpenter      = optional(number, 2) # Karpenter: replicas 기본 2
     external_dns   = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)
     metrics_server = optional(number, 1) # MetricsServer: replicas 기본 1
+    argocd_server  = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수
   })
   default = {}
 

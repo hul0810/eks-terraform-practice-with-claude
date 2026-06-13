@@ -16,6 +16,57 @@
 # Helm values serviceAccount.annotations 주입을 자동 처리한다.
 ################################################################################
 
+locals {
+  argocd_values = {
+    global = {
+      tolerations = [{
+        key      = "CriticalAddonsOnly"
+        operator = "Exists"
+        effect   = "NoSchedule"
+      }]
+    }
+    dex           = { enabled = false }
+    notifications = { enabled = false }
+    "redis-ha" = {
+      enabled = var.argocd_ha_enabled
+      tolerations = [{
+        key      = "CriticalAddonsOnly"
+        operator = "Exists"
+        effect   = "NoSchedule"
+      }]
+    }
+    server = merge(
+      { replicas = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 },
+      # ALB Ingress: ACM 인증서로 TLS 종료, 백엔드는 server.insecure=true로 평문 HTTP.
+      # ExternalDNS가 external-dns 어노테이션을 보고 argo-develop.pyhtest.com 레코드를 자동 생성한다
+      # (external_dns_route53_zone_arns에 pyhtest.com zone ARN이 포함되어 있어야 함).
+      var.argocd_ingress_enabled ? {
+        ingress = {
+          enabled          = true
+          ingressClassName = "alb"
+          hostname         = var.argocd_ingress_hostname
+          annotations = {
+            "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
+            "alb.ingress.kubernetes.io/target-type"     = "ip"
+            "alb.ingress.kubernetes.io/certificate-arn" = var.argocd_ingress_acm_certificate_arn
+            "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTPS\": 443}]"
+            "alb.ingress.kubernetes.io/inbound-cidrs"   = join(",", var.argocd_ingress_allowed_cidrs)
+            "external-dns.alpha.kubernetes.io/hostname" = var.argocd_ingress_hostname
+          }
+        }
+      } : {}
+    )
+    repoServer     = { replicas = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 }
+    applicationSet = { replicaCount = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 }
+    # ALB가 TLS를 종료하므로 ArgoCD server는 평문 HTTP로 서빙 (argocd-cmd-params-cm: server.insecure)
+    configs = var.argocd_ingress_enabled ? {
+      params = {
+        "server.insecure" = true
+      }
+    } : {}
+  }
+}
+
 module "eks_blueprints_addons" {
   source  = "aws-ia/eks-blueprints-addons/aws"
   version = "~> 1.23.0"
@@ -115,6 +166,16 @@ module "eks_blueprints_addons" {
   # {cluster_name}-karpenter 로 통일하여 다른 리소스와 네이밍 패턴을 맞춘다.
   karpenter_sqs = {
     queue_name = "${var.cluster_name}-karpenter"
+  }
+
+  # ── ArgoCD ────────────────────────────────────────────────────────────────────
+  # GitOps 전환(Phase 5)의 시작점. AWS API를 호출하지 않으므로 IAM 불필요(metrics-server와 동일).
+  # dex(SSO)·notifications는 미구성 상태이므로 비활성화 — 필요 시 이후 단계에서 활성화.
+  # app-controller(controller.replicas)는 sharding 설정이 추가로 필요해 이 단계에서는 1로 유지.
+  enable_argocd = var.enable_argocd
+  argocd = {
+    chart_version = var.argocd_chart_version
+    values        = [yamlencode(local.argocd_values)]
   }
 
   tags = var.additional_tags
