@@ -2,6 +2,12 @@ locals {
   environment = "develop"
   project     = "eks-practice"
 
+  # 리소스 이름 생성 전용 축약값. environment(태그용)와 분리하여
+  # "{cluster_name}-karpenter-controller-irsa" 등 긴 접미사가 붙는 IAM 리소스 이름,
+  # ALB 이름 32자 제한 등에서 여유를 확보한다. 상세: docs/terraform-principles.md → 리소스 네이밍 규칙
+  environment_short = "dev"
+  name_suffix       = local.environment_short != "" ? "-${local.environment_short}" : ""
+
   # providers.tf default_tags의 단일 정의 지점. data source 참조 금지 (providers.tf 순환 의존 방지).
   common_tags = {
     environment = local.environment
@@ -46,7 +52,7 @@ locals {
     argocd_ha_enabled              = false # dev: 단일 시스템 노드, 비용 절감 (redis-ha 등 추가 pod 회피)
     argocd_ingress_enabled         = true
     argocd_ingress_hostname        = "argo-develop.pyhtest.com"
-    argocd_ingress_alb_name        = "${local.project}-argocd-${local.environment}-alb"
+    argocd_ingress_alb_name        = "${local.project}-argocd${local.name_suffix}-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 내 IP로 제한
     argocd_ingress_allowed_cidrs = ["1.226.228.52/32"]
   }

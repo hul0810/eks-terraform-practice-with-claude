@@ -26,9 +26,9 @@ module "eks" {
   vpc_id     = local.vpc_id
   subnet_ids = local.private_subnet_ids
 
-  endpoint_public_access = local.eks.endpoint_public_access
+  endpoint_public_access       = local.eks.endpoint_public_access
   endpoint_public_access_cidrs = local.eks.public_access_cidrs
-  enabled_log_types      = local.eks.enabled_log_types
+  enabled_log_types            = local.eks.enabled_log_types
 
   project     = local.project
   environment = local.environment
