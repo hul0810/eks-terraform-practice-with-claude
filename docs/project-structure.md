@@ -23,7 +23,7 @@ terraform-eks-practice/
 │   └── project-structure.md
 │
 ├── global/                                 # 환경·프로젝트 무관 글로벌 인프라
-│   └── tfstate-backend/                    # S3 버킷 + DynamoDB (state 저장소)
+│   └── tfstate-backend/                    # S3 버킷 (state 저장소, 네이티브 락)
 │
 ├── modules/                                # 전체 프로젝트 공용 재사용 Terraform 모듈 (중앙 집중식)
 │   ├── vpc/

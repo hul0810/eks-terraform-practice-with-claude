@@ -147,7 +147,7 @@ feat(vpc): ELB 서브넷 태그 추가
 
 ### State Lock
 
-동일한 root module 디렉토리에서 두 명 이상이 동시에 작업하면 DynamoDB state lock 충돌이 발생한다. 작업 시작 전 같은 `project/environments/{env}/{region}/{service}/{resource}` 경로를 편집 중인 사람이 있는지 반드시 확인한다. 충돌 시 state 손상으로 이어질 수 있다.
+동일한 root module 디렉토리에서 두 명 이상이 동시에 작업하면 S3 네이티브 락(`use_lockfile = true`) 충돌이 발생한다. 작업 시작 전 같은 `project/environments/{env}/{region}/{service}/{resource}` 경로를 편집 중인 사람이 있는지 반드시 확인한다. 충돌 시 state 손상으로 이어질 수 있다.
 
 ### 작업 순서
 
