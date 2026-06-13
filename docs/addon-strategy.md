@@ -93,6 +93,7 @@ Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한
 | ExternalDNS | IRSA (blueprints 자동 처리) | `enable_external_dns = false`로 비활성화 가능 |
 | Metrics Server | 없음 | |
 | Karpenter | IRSA (blueprints 자동 처리) | `enable_karpenter = false`로 비활성화 가능 |
+| ArgoCD | 없음 | GitOps 전환(Phase 5) 시작점. AWS API 미호출로 IAM 불필요 |
 
 ---
 
