@@ -34,13 +34,20 @@ locals {
     external_dns_chart_version   = "1.14.5"
     metrics_server_chart_version = "3.12.2"
     karpenter_chart_version      = "1.12.1"
+    argocd_chart_version         = "9.5.21"
 
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
-    # develop 환경: 빈 리스트 허용 (전체 zone 접근). production은 특정 ARN 명시 필수
-    external_dns_route53_zone_arns = []
+    # pyhtest.com zone ARN 추가 → ExternalDNS IRSA Role 신규 생성 (이전엔 zone_arns=[]로 미생성 상태였음)
+    external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/${data.aws_route53_zone.pyhtest.zone_id}"]
     enable_metrics_server          = true
     enable_karpenter               = true
+    enable_argocd                  = true
+    argocd_ha_enabled              = false # dev: 단일 시스템 노드, 비용 절감 (redis-ha 등 추가 pod 회피)
+    argocd_ingress_enabled         = true
+    argocd_ingress_hostname        = "argo-develop.pyhtest.com"
+    # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 내 IP로 제한
+    argocd_ingress_allowed_cidrs = ["1.226.228.52/32"]
   }
 
   # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────

@@ -16,6 +16,13 @@ module "eks_addons" {
   metrics_server_chart_version        = local.eks_addons.metrics_server_chart_version
   enable_karpenter                    = local.eks_addons.enable_karpenter
   karpenter_chart_version             = local.eks_addons.karpenter_chart_version
+  enable_argocd                       = local.eks_addons.enable_argocd
+  argocd_chart_version                = local.eks_addons.argocd_chart_version
+  argocd_ha_enabled                   = local.eks_addons.argocd_ha_enabled
+  argocd_ingress_enabled              = local.eks_addons.argocd_ingress_enabled
+  argocd_ingress_hostname             = local.eks_addons.argocd_ingress_hostname
+  argocd_ingress_acm_certificate_arn  = data.aws_acm_certificate.pyhtest_wildcard.arn
+  argocd_ingress_allowed_cidrs        = local.eks_addons.argocd_ingress_allowed_cidrs
 
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags
