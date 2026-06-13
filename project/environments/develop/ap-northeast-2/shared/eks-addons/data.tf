@@ -19,3 +19,21 @@ data "terraform_remote_state" "eks" {
 data "aws_eks_cluster" "this" {
   name = local.cluster_name
 }
+
+# ArgoCD 외부 접근(argo-develop.pyhtest.com)용 — 기존 pyhtest.com Hosted Zone(Terraform 미관리) 참조
+data "aws_route53_zone" "pyhtest" {
+  name         = "pyhtest.com"
+  private_zone = false
+}
+
+# argo-develop.pyhtest.com 커버하는 기존 인증서 재사용 (신규 발급 불필요)
+# ACM의 domain 필터는 인증서의 기본 도메인(DomainName="pyhtest.com")을 기준으로 매칭한다.
+# SAN에 포함된 "*.pyhtest.com"으로는 조회되지 않으므로 "pyhtest.com"으로 조회한다.
+# key_types 미지정 시 RSA/ECDSA 인증서가 동시에 존재하면 most_recent의 선택 결과가
+# 예측 불가능해진다. ACM 기본 발급 키 타입(RSA_2048)으로 명시해 모호성을 제거한다.
+data "aws_acm_certificate" "pyhtest_wildcard" {
+  domain      = "pyhtest.com"
+  statuses    = ["ISSUED"]
+  key_types   = ["RSA_2048"]
+  most_recent = true
+}
