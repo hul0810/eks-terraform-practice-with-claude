@@ -135,6 +135,17 @@ module "eks_blueprints_addons" {
   # ── Karpenter ─────────────────────────────────────────────────────────────────
   # blueprints가 컨트롤러 IAM Role, SQS 인터럽션 큐, EventBridge Rule, Helm chart를 통합 처리.
   # NodeClass / NodePool은 Kubernetes 리소스이므로 별도 관리한다.
+  #
+  # [배포 주의] 클러스터를 새로 생성한 직후 이 모듈을 처음 apply하면, karpenter
+  # helm_release가 아래 오류로 실패할 수 있다:
+  #   "failed calling webhook \"mservice.elbv2.k8s.aws\": ... no endpoints
+  #    available for service \"aws-load-balancer-webhook-service\""
+  # 원인: helm_release 리소스 간 명시적 순서가 없어 LBC와 karpenter가 동시에
+  # 배포되는데, karpenter 차트가 생성하는 Service를 LBC의 mutating webhook이
+  # 가로채려 하지만 LBC pod가 아직 Ready 상태가 아니다 (webhook Service에
+  # endpoint 없음).
+  # 해결: LBC pod가 Running이 될 때까지 대기 후 `terraform apply`를 재실행하면
+  # 실패한 karpenter release만 tainted 상태로 재생성되며 정상 완료된다.
   enable_karpenter = var.enable_karpenter
   karpenter = {
     chart_version        = var.karpenter_chart_version
