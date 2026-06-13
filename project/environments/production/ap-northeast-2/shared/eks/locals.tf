@@ -2,6 +2,13 @@ locals {
   environment = "production"
   project     = "eks-practice"
 
+  # 리소스 이름 생성 전용 축약값. environment(태그용)와 분리하여
+  # "{cluster_name}-karpenter-controller-irsa" 등 긴 접미사가 붙는 IAM 리소스 이름,
+  # ALB 이름 32자 제한 등에서 여유를 확보한다. 상세: docs/terraform-principles.md → 리소스 네이밍 규칙
+  # production은 environment_short를 빈 문자열로 두어 구분자까지 완전히 제거한다.
+  environment_short = ""
+  name_suffix       = local.environment_short != "" ? "-${local.environment_short}" : ""
+
   # providers.tf default_tags의 단일 정의 지점. data source 참조 금지 (providers.tf 순환 의존 방지).
   common_tags = {
     environment = local.environment
@@ -13,7 +20,7 @@ locals {
   private_subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnet_ids
 
   eks = {
-    cluster_name       = "${local.project}-${local.environment}"
+    cluster_name       = "${local.project}${local.name_suffix}"
     kubernetes_version = "1.33"
 
     addon_versions = {
@@ -55,7 +62,7 @@ locals {
     # Karpenter EC2NodeClass가 karpenter.sh/discovery 태그로 node SG를 자동 탐색한다.
     # 값은 EC2NodeClass의 securityGroupSelectorTerms와 일치해야 한다.
     node_security_group_tags = {
-      "karpenter.sh/discovery" = "${local.project}-${local.environment}"
+      "karpenter.sh/discovery" = "${local.project}${local.name_suffix}"
     }
   }
 

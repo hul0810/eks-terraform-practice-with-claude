@@ -154,6 +154,7 @@
 - **태그 거버넌스**: `@docs/tag-governance.md` 참조
 - **모듈 CLAUDE.md 작성 기준**: `@docs/module-claude-template.md` 참조
 - **EKS 애드온 전략**: `@docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴)
+- **환경 전체 삭제 절차**: `@docs/environment-teardown.md` 참조 (LBC ALB orphan 방지 순서, 수동 정리)
 - **Git 저장소**: https://github.com/hul0810/eks-terraform-practice-with-claude
 - **GitOps 매니페스트 저장소**: https://github.com/hul0810/eks-practice-devops-manifest
   (Phase 5 — ArgoCD가 참조할 EKS 애드온 Helm values/ApplicationSet 매니페스트 관리)

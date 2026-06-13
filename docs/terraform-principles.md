@@ -51,6 +51,34 @@
 
 ---
 
+## 리소스 네이밍 규칙
+
+리소스 이름 생성에는 `environment`가 아닌 `environment_short`/`name_suffix`를 사용한다.
+
+| local | 용도 | develop | production |
+|-------|------|---------|------------|
+| `environment` | 태그 값 (`environment` 태그 키). tag-policy 허용값과 묶여 있어 변경 금지 | `"develop"` | `"production"` |
+| `environment_short` | 리소스 이름 생성 전용 축약값 | `"dev"` | `""` (빈 문자열 — 구분자까지 완전 제거) |
+| `name_suffix` | `environment_short`로부터 파생되는 접미사 | `"-dev"` | `""` |
+
+```hcl
+environment_short = "dev" # production은 ""
+name_suffix       = local.environment_short != "" ? "-${local.environment_short}" : ""
+
+cluster_name = "${local.project}${local.name_suffix}"
+# develop:    eks-practice-dev
+# production: eks-practice
+```
+
+**도입 이유**: `environment` 풀네임("develop"/"production")을 그대로 리소스 이름에 사용하면,
+여기에 추가 접미사가 붙는 리소스에서 길이 한도를 초과할 위험이 있다. 예를 들어
+`{cluster_name}-karpenter-controller-irsa`(접미사만 26자)나 ALB 이름(최대 32자) 등에서
+여유가 부족해진다. `environment_short`/`name_suffix`는 **리소스 이름 생성에만** 사용하고,
+태그 값(`environment`)에는 영향을 주지 않는다. 실제로 네이밍에 사용하는 파일에만 추가하며,
+사용처가 없는 파일에는 죽은 local을 추가하지 않는다.
+
+---
+
 ## 코드 품질
 
 - **동적 메타데이터 활용**: 리전, AZ, 계정 ID 등 AWS가 제공하는 메타데이터는 data source로 조회하며 하드코딩하지 않는다.
