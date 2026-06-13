@@ -157,6 +157,23 @@ variable "argocd_ingress_allowed_cidrs" {
   }
 }
 
+variable "argocd_ingress_alb_name" {
+  description = "ArgoCD server ALB Ingress의 ALB 이름 (alb.ingress.kubernetes.io/load-balancer-name). argocd_ingress_enabled=true일 때 필수. AWS ALB 이름 제한(최대 32자, 영문/숫자/하이픈)을 따라야 한다"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.argocd_ingress_enabled || length(var.argocd_ingress_alb_name) > 0
+    error_message = "argocd_ingress_enabled=true일 때 argocd_ingress_alb_name은 빈 문자열일 수 없습니다."
+  }
+
+  validation {
+    # AWS ALB 이름 제한: 최대 32자, 영문/숫자/하이픈만 허용, 하이픈으로 시작/종료 불가
+    condition     = var.argocd_ingress_alb_name == "" || can(regex("^[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9]$", var.argocd_ingress_alb_name))
+    error_message = "argocd_ingress_alb_name은 1~32자의 영문/숫자/하이픈만 허용하며 하이픈으로 시작하거나 끝날 수 없습니다."
+  }
+}
+
 variable "replica_counts" {
   description = "애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값"
   type = object({

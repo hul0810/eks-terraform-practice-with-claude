@@ -46,12 +46,13 @@ locals {
           ingressClassName = "alb"
           hostname         = var.argocd_ingress_hostname
           annotations = {
-            "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
-            "alb.ingress.kubernetes.io/target-type"     = "ip"
-            "alb.ingress.kubernetes.io/certificate-arn" = var.argocd_ingress_acm_certificate_arn
-            "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTPS\": 443}]"
-            "alb.ingress.kubernetes.io/inbound-cidrs"   = join(",", var.argocd_ingress_allowed_cidrs)
-            "external-dns.alpha.kubernetes.io/hostname" = var.argocd_ingress_hostname
+            "alb.ingress.kubernetes.io/scheme"             = "internet-facing"
+            "alb.ingress.kubernetes.io/target-type"        = "ip"
+            "alb.ingress.kubernetes.io/certificate-arn"    = var.argocd_ingress_acm_certificate_arn
+            "alb.ingress.kubernetes.io/listen-ports"       = "[{\"HTTPS\": 443}]"
+            "alb.ingress.kubernetes.io/inbound-cidrs"      = join(",", var.argocd_ingress_allowed_cidrs)
+            "alb.ingress.kubernetes.io/load-balancer-name" = var.argocd_ingress_alb_name
+            "external-dns.alpha.kubernetes.io/hostname"    = var.argocd_ingress_hostname
           }
         }
       } : {}

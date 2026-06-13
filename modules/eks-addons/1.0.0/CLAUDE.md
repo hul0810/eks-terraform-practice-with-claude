@@ -154,6 +154,20 @@ global 값 전파가 보장되지 않는다. 따라서 `redis-ha.tolerations`를
 CIDR(예: 작업자 공인 IP `/32`)을 반드시 지정한다. SSO 등 별도 인증 체계가
 구성되면 이 제한을 완화할 수 있다.
 
+### ALB 이름 커스터마이징 (argocd_ingress_alb_name)
+
+`alb.ingress.kubernetes.io/load-balancer-name` 어노테이션으로 ALB 이름을
+`{project}-argocd-{env}-alb` 패턴(예: `eks-practice-argocd-develop-alb`)으로
+고정한다. AWS ALB 이름 제한(최대 32자, 영문/숫자/하이픈)을 따라야 한다.
+
+**주의(불변 속성)**: 이 어노테이션은 ALB **최초 생성 시점에만** 적용된다.
+이미 생성된 ALB에 대해 값을 변경해도 AWS ALB API에는 이름 변경 기능이 없어
+LBC는 기존 ALB를 그대로 유지한 채 "successfully reconciled"로만 기록한다.
+기존 ALB의 이름을 바꾸려면 `argocd_ingress_enabled`를 `false`로 설정해
+`terraform apply`(ALB 삭제) 후 다시 `true`로 설정해 `terraform apply`
+(새 이름으로 ALB 재생성)하는 2단계 토글이 필요하다. 이 과정에서 다운타임과
+ExternalDNS의 Route53 레코드 재연결이 발생한다.
+
 ### app-controller replica를 늘리지 않는 이유
 
 ArgoCD의 `application-controller`(StatefulSet)는 replica를 늘리면 자동으로
