@@ -30,6 +30,7 @@ locals {
     external_dns_chart_version   = "1.14.5"
     metrics_server_chart_version = "3.12.2"
     karpenter_chart_version      = "1.12.1"
+    argocd_chart_version         = "9.5.21"
 
     enable_aws_load_balancer_controller = true
     # 운영 도메인/Route53 Hosted Zone 미구성으로 비활성화.
@@ -39,6 +40,11 @@ locals {
     external_dns_route53_zone_arns = []
     enable_metrics_server          = true
     enable_karpenter               = true
+    enable_argocd                  = true
+    # 시스템 노드 min/desired=1(비용 예외, eks/locals.tf 참조)인 상태에서 HA를 켜면
+    # redis-ha quorum이 spot 노드에 분산되어 단일 노드 장애 시 ArgoCD 전체가 다운될 수 있다.
+    # 시스템 노드 HA 복원(min/desired=2) 시 true로 함께 전환할 것 (redis-ha + replica=2).
+    argocd_ha_enabled = false
   }
 
   # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────
