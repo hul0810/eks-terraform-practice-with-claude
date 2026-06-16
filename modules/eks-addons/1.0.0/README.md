@@ -29,6 +29,8 @@ No requirements.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_additional_tags"></a> [additional\_tags](#input\_additional\_tags) | 모든 리소스에 추가할 태그 맵. providers.tf의 default\_tags로 공통 태그를 관리하므로, 이 변수는 호출자가 추가로 전달할 태그에만 사용한다 | `map(string)` | `{}` | no |
+| <a name="input_argocd_admin_password_bcrypt"></a> [argocd\_admin\_password\_bcrypt](#input\_argocd\_admin\_password\_bcrypt) | ArgoCD admin 초기 패스워드의 bcrypt 해시. 설정하면 Helm 배포 시 argocd-secret에 주입된다. 비워두면 ArgoCD가 자동 생성한 시크릿을 사용하고 'argocd-initial-admin-secret'에서 확인해야 한다. 해시 생성: python3 -c "import bcrypt; print(bcrypt.hashpw(b'PASSWORD', bcrypt.gensalt()).decode())". 반드시 argocd\_admin\_password\_mtime과 함께 설정한다 | `string` | `""` | no |
+| <a name="input_argocd_admin_password_mtime"></a> [argocd\_admin\_password\_mtime](#input\_argocd\_admin\_password\_mtime) | argocd\_admin\_password\_bcrypt와 짝을 이루는 타임스탬프 (RFC3339). ArgoCD가 이 값으로 패스워드 변경 여부를 판단하므로 패스워드 변경 시 반드시 함께 갱신해야 한다. 예: "2026-06-16T00:00:00Z" | `string` | `""` | no |
 | <a name="input_argocd_chart_version"></a> [argocd\_chart\_version](#input\_argocd\_chart\_version) | ArgoCD Helm chart 버전 (예: "9.5.21") | `string` | n/a | yes |
 | <a name="input_argocd_ha_enabled"></a> [argocd\_ha\_enabled](#input\_argocd\_ha\_enabled) | ArgoCD HA 모드. true면 redis-ha 활성화 + server/repoServer/applicationSet replica를 replica\_counts.argocd\_server로 증설. false면 모든 컴포넌트 단일 replica, redis-ha 비활성 | `bool` | `false` | no |
 | <a name="input_argocd_ingress_acm_certificate_arn"></a> [argocd\_ingress\_acm\_certificate\_arn](#input\_argocd\_ingress\_acm\_certificate\_arn) | ArgoCD ALB Ingress가 사용할 ACM 인증서 ARN. argocd\_ingress\_enabled=true일 때 필수 | `string` | `""` | no |

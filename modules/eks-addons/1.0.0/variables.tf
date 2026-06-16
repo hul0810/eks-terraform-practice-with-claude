@@ -174,6 +174,24 @@ variable "argocd_ingress_alb_name" {
   }
 }
 
+variable "argocd_admin_password_bcrypt" {
+  description = "ArgoCD admin 초기 패스워드의 bcrypt 해시. 설정하면 Helm 배포 시 argocd-secret에 주입된다. 비워두면 ArgoCD가 자동 생성한 시크릿을 사용하고 'argocd-initial-admin-secret'에서 확인해야 한다. 해시 생성: python3 -c \"import bcrypt; print(bcrypt.hashpw(b'PASSWORD', bcrypt.gensalt()).decode())\". 반드시 argocd_admin_password_mtime과 함께 설정한다"
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = var.argocd_admin_password_bcrypt == "" || can(regex("^\\$2[aby]\\$", var.argocd_admin_password_bcrypt))
+    error_message = "argocd_admin_password_bcrypt는 bcrypt 해시 형식($2a$, $2b$, $2y$ 접두사)이어야 합니다. Terraform bcrypt() 함수가 아닌 사전 계산된 해시를 사용하세요."
+  }
+}
+
+variable "argocd_admin_password_mtime" {
+  description = "argocd_admin_password_bcrypt와 짝을 이루는 타임스탬프 (RFC3339). ArgoCD가 이 값으로 패스워드 변경 여부를 판단하므로 패스워드 변경 시 반드시 함께 갱신해야 한다. 예: \"2026-06-16T00:00:00Z\""
+  type        = string
+  default     = ""
+}
+
 variable "replica_counts" {
   description = "애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값"
   type = object({
