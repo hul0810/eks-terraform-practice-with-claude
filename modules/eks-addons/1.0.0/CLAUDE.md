@@ -169,6 +169,24 @@ LBC는 기존 ALB를 그대로 유지한 채 "successfully reconciled"로만 기
 (새 이름으로 ALB 재생성)하는 2단계 토글이 필요하다. 이 과정에서 다운타임과
 ExternalDNS의 Route53 레코드 재연결이 발생한다.
 
+### admin 초기 패스워드 설정 (argocd_admin_password_bcrypt)
+
+`argocd_admin_password_bcrypt` 변수에 bcrypt 해시를 전달하면 Helm values
+`configs.secret.argocdServerAdminPassword`로 주입되어 ArgoCD 배포 시 admin 패스워드가 고정된다.
+비워두면 ArgoCD가 자동 생성한 시크릿을 사용하고 `argocd-initial-admin-secret`에서 확인해야 한다.
+
+**반드시 사전 계산된 고정 해시를 사용해야 한다.**
+Terraform `bcrypt()` 함수는 호출마다 다른 salt를 생성하여 매 apply마다 `argocd-secret`이
+업데이트되고 ArgoCD server pod가 재시작된다.
+
+해시 생성:
+```bash
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'PASSWORD', bcrypt.gensalt()).decode())"
+```
+
+패스워드 변경 시 새 해시와 함께 `main.tf`의 `argocdServerAdminPasswordMtime` 타임스탬프도
+반드시 갱신해야 ArgoCD가 변경을 감지하고 반영한다.
+
 ### app-controller replica를 늘리지 않는 이유
 
 ArgoCD의 `application-controller`(StatefulSet)는 replica를 늘리면 자동으로

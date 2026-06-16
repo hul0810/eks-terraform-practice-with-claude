@@ -60,11 +60,23 @@ locals {
     repoServer     = { replicas = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 }
     applicationSet = { replicaCount = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 }
     # ALB가 TLS를 종료하므로 ArgoCD server는 평문 HTTP로 서빙 (argocd-cmd-params-cm: server.insecure)
-    configs = var.argocd_ingress_enabled ? {
-      params = {
-        "server.insecure" = true
-      }
-    } : {}
+    configs = merge(
+      var.argocd_ingress_enabled ? {
+        params = { "server.insecure" = true }
+      } : {},
+      # argocd_admin_password_bcrypt가 설정된 경우에만 secret 블록을 주입한다.
+      # bcrypt 해시는 반드시 사전 계산된 고정값을 사용해야 한다. Terraform bcrypt() 함수를
+      # 직접 사용하면 apply할 때마다 새 salt가 생성되어 argocd-secret이 매번 업데이트되고
+      # ArgoCD server pod가 재시작된다.
+      # argocdServerAdminPasswordMtime: ArgoCD가 패스워드 변경 여부를 판단하는 타임스탬프.
+      # 패스워드를 재설정하려면 이 값도 함께 변경해야 ArgoCD가 새 해시를 반영한다.
+      var.argocd_admin_password_bcrypt != "" ? {
+        secret = {
+          argocdServerAdminPassword      = var.argocd_admin_password_bcrypt
+          argocdServerAdminPasswordMtime = var.argocd_admin_password_mtime
+        }
+      } : {}
+    )
   }
 }
 
