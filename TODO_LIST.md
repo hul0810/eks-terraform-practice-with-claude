@@ -7,6 +7,26 @@
 
 ---
 
+## Git 태그 전략
+
+이 프로젝트는 단계별 완성본을 Git 태그로 기록한다.
+각 태그는 "무엇을 달성한 구성인가"를 이름만으로 파악할 수 있도록 명명한다.
+
+| 태그 | 달성 단계 | 설명 |
+|------|----------|------|
+| `foundation/single-account-eks` | 1단계(Phase 1~6) 완료 시 | 단일 계정, dev/prd 2클러스터, GitOps·Observability 포함 기초 구성 |
+| `enterprise/hub-spoke-eks` | 2단계(Phase 7~11) 완료 시 | 2계정(intra/workload), TGW, Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
+
+---
+
+## 1단계: 기초 구성 (단일 계정, 비용 최소화)
+
+> **목표**: dev + production 2환경에 EKS 클러스터, GitOps(ArgoCD), Observability(Prometheus + Grafana)를 구축한다.
+> 실무 기준에서 의도적으로 단순화한 항목은 `CLAUDE.md` 비용 예외 항목 참조.
+> 이 단계 완료 시 태그: `foundation/single-account-eks`
+
+---
+
 ## Phase 1. 원격 상태 저장소 구성
 
 > `global/tfstate-backend/` 디렉토리
@@ -331,3 +351,196 @@
 
 - [x] `.gitignore` 작성 (`.terraform/`, `*.tfstate`, `*.tfvars` 등)
 - [ ] `README.md` 작성 (구조 설명, 사용 방법)
+
+---
+
+## 2단계: 엔터프라이즈 전환 (멀티 계정, 중앙 집중, 고가용성)
+
+> **목표**: 1단계 기초 구성을 실무 엔터프라이즈 수준으로 개선한다.
+> 2계정(Intra/Workload) 격리, Hub-Spoke GitOps·Observability, 보안·정책 거버넌스를 단계적으로 적용한다.
+>
+> **의존성 순서** (반드시 이 순서로 진행):
+> ```
+> Phase 7 (Organizations 2계정) → Phase 8 (TGW) → Phase 9 (ArgoCD Hub) → Phase 10 (중앙 Observability)
+>                                                ↘ Phase 11 (보안·거버넌스, Phase 7 직후 병렬 가능)
+> ```
+>
+> **비용 경고**: Phase 8(TGW)부터 고정 비용이 크게 증가한다.
+> TGW 어태치먼트는 VPC당 ~$36/월, Intra EKS 클러스터는 컨트롤 플레인 $73/월 + 노드 추가.
+> **학습 세션 중에만 `terraform apply` 하고 종료 시 `terraform destroy`하는 운영 패턴을 기본으로 한다.**
+
+---
+
+### Phase 7. AWS Organizations + 2계정 구조 (Intra / Workload)
+
+> **목표**: 단일 계정을 Intra(공유 서비스) + Workload(dev/prd) 2계정으로 분리하고,
+> SCP 기본 가드레일, IAM Identity Center(SSO), 중앙 로깅의 토대를 마련한다.
+>
+> **계정 구조**:
+> - **Intra 계정** (신규): ArgoCD Hub, 중앙 Observability, TGW 소유자. 공유 서비스 전담.
+> - **Workload 계정** (현재 계정 유지): dev + prd EKS 클러스터. 애플리케이션 워크로드 전담.
+>
+> *(실무 표준은 dev/prd를 별도 계정으로 추가 분리하지만, 비용·복잡도 절감을 위해 2계정으로 단순화)*
+>
+> **왜 계정을 분리하는가**:
+> - **격리(Blast Radius)**: Intra 서비스(ArgoCD, Grafana)와 워크로드 EKS를 계정 경계로 격리.
+>   Intra 계정의 장애·오염이 워크로드 계정에 전파되지 않는다.
+> - **권한 경계 명확화**: cross-account assume을 명시적으로 허용한 주체만 각 계정에 접근 가능.
+> - **비용 가시성**: 공유 서비스 비용 vs 워크로드 비용을 계정별로 즉시 구분.
+>
+> **비용 영향**: Organizations·SCP·IAM Identity Center 자체는 무료. 추가 비용은 Org Trail S3 등 월 $5~15 수준.
+>
+> **전제 조건**: 없음. 단, `TerraformExecutionRole`의 trust principal(`account:root`) 재설계 필요.
+> Phase 7 착수 전 security-engineer와 IAM 체인 재설계 별도 진행 권장.
+
+- [ ] **멀티 계정 전략 설계** (`docs/multi-account-strategy.md` 신규 작성)
+  - [ ] OU 구조: `Infrastructure`(Intra), `Workloads`(dev/prd 공용) 2 OU
+  - [ ] State backend 전략: 현재 Workload 계정 S3 버킷 유지 + Intra 계정은 동일 버킷에 cross-account 접근
+  - [ ] `TerraformExecutionRole` 재설계: Intra/Workload 계정 각각에 배포 + trust를 Workload 계정 실행 주체로 한정 (`account:root` trust 제거)
+- [ ] `global/organizations/` 신규 root module 생성 — Workload(현재) 계정에서 실행
+  - [ ] `aws_organizations_account` 2개 발급 (Intra 신규, Workload는 현재 계정 import)
+  - [ ] OU 구조 코드화
+- [ ] IAM Identity Center(SSO) 활성화 — 계정별 IAM User 난립 대신 중앙 인증 전환
+- [ ] SCP 기본 가드레일: 루트 리전 강제(`ap-northeast-2` 외 차단), 루트 사용자 사용 차단, CloudTrail 비활성화 차단
+- [ ] Org Trail(중앙 CloudTrail) → Workload 계정 또는 별도 S3 집계
+- [ ] `TerraformExecutionRole` Intra 계정에 배포 (bootstrap 절차 문서화)
+- [ ] GitHub Actions OIDC → cross-account assume 체인 구성 (IAM User 장기 키 제거)
+- [ ] FinOps 자동화: 계정별 AWS Budget + Cost Anomaly Detection 코드화
+
+---
+
+### Phase 8. 네트워크 토폴로지 — Transit Gateway + 중앙 Egress
+
+> **목표**: 예약해둔 TGW 서브넷을 실제로 활용해 Intra/Dev/Prd VPC를 Transit Gateway로 연결하고,
+> dev↔prd 직접 통신을 격리한다.
+>
+> **왜 TGW인가 (VPC Peering 대비)**:
+> - **Hub-Spoke 구조 필수**: ArgoCD Hub(intra)가 dev/prd API에 도달하고, 중앙 Grafana가 양쪽 메트릭을 수집하려면
+>   transitive 라우팅이 필요하다. Peering은 A↔B, B↔C여도 A↔C 통신 불가 — TGW만 이 요구를 충족.
+> - **격리 보장**: TGW route table 분리로 "dev↔prd 직접 통신 차단, 각각 intra하고만 통신" 정책 명시적 강제.
+> - **확장성**: VPC 3~4개에선 Peering도 가능하나 10개 이상에서 풀메시 관리가 붕괴한다.
+>
+> **비용 영향**: TGW 어태치먼트 VPC당 ~$36/월 × VPC 수. 3 VPC 기준 어태치먼트만 ~$108/월.
+> 이 로드맵에서 **가장 큰 고정 비용 증가 항목** — 학습 세션에서만 apply/destroy 운영 강력 권장.
+>
+> **전제 조건**: Phase 7 완료 (멀티 계정 + RAM으로 TGW 공유 필요).
+
+- [ ] CIDR 충돌 사전 검증: dev `10.10.0.0/16`, prd `10.11.0.0/16`, **intra `10.12.0.0/16` 신규 할당**
+- [ ] `modules/tgw/1.0.0/` 신규 모듈 생성 (`terraform-aws-modules/transit-gateway` 사용 검토)
+  - [ ] TGW route table 2개: `shared`(intra↔all), `isolated`(dev/prd 상호 격리)
+- [ ] Intra 계정에 TGW 생성 → RAM으로 Dev/Prd 계정에 공유
+- [ ] 각 VPC의 예약된 TGW 서브넷에 `aws_ec2_transit_gateway_vpc_attachment` 생성
+  - 현재 VPC 설계에 이미 TGW 서브넷을 예약해둔 이유가 여기서 실현됨
+- [ ] `modules/vpc`에 `transit_gateway_routes` 변수 추가 → 모듈 버전 `2.0.0`으로 범프, `moved` 블록으로 state 이전
+- [ ] (선택) 중앙 Egress VPC + NAT 통합 → dev/prd의 0.0.0.0/0을 TGW 경유 Egress 계정 NAT로
+- [ ] EKS Private 엔드포인트 도달성 검증: intra Hub → dev/prd EKS API (`kubectl` via TGW)
+- [ ] Git 태그: `enterprise/hub-spoke-network`
+
+---
+
+### Phase 9. Hub-and-Spoke ArgoCD (중앙 GitOps)
+
+> **목표**: dev/prd에 개별 설치된 ArgoCD를 제거하고, Intra 계정 클러스터에 단일 ArgoCD Hub를 두어
+> dev/prd를 spoke로 원격 관리한다.
+>
+> **왜 중앙 집중인가 (인프라 관리 효율성)**:
+> - **운영 표면 1/N 감소**: ArgoCD를 n개 클러스터에 개별 운영 vs Hub 1개 운영. 업그레이드·RBAC·백업이 Hub 한 곳으로 집약.
+> - **환경 일관성 보장**: 동일 ApplicationSet이 cluster generator로 dev/prd에 동일 Chart 배포 → 버전 드리프트 구조적 차단.
+> - **승격(Promotion) 워크플로**: Hub에서 dev→prd 배포를 한 곳에서 가시화·게이팅.
+> - **보안 표면 축소**: spoke에 ArgoCD 없음 → 공격 표면 감소, Hub만 강하게 보호.
+>
+> **SPOF 검토**: ArgoCD Hub 장애 시 이미 배포된 워크로드는 정상 동작 (ArgoCD는 reconciler이지 데이터 플레인이 아님).
+> "신규 배포/드리프트 복구 지연" 리스크만 발생. Hub는 HA 구성으로 보완.
+>
+> **비용 영향**: Intra EKS 컨트롤 플레인 $73/월 + 소형 노드 ~$30/월 (신규). dev/prd ArgoCD 워크로드 제거로 일부 상쇄.
+> Phase 10과 Intra 클러스터를 공유하므로 추가 컨트롤 플레인 비용은 Phase 10에서 분담.
+>
+> **전제 조건**: Phase 8 완료 (Hub가 TGW 경유로 spoke EKS Private 엔드포인트에 도달 가능해야 함).
+
+- [ ] Intra 계정에 Hub 클러스터 구성 (`environments/intra/ap-northeast-2/shared/eks/`) — 기존 `modules/eks/1.0.0` 재사용
+- [ ] Hub ArgoCD 설치 (`argocd_ha_enabled = true`) — `modules/eks-addons/1.0.0` 재사용
+- [ ] spoke 클러스터 등록: ArgoCD cluster secret + cross-account IAM
+  - [ ] Workload 계정의 dev/prd EKS access entry에 Hub의 ArgoCD IAM Role cross-account 등록
+  - [ ] `aws_eks_access_entry` 패턴 확장 (기존 dev/prd의 `access_entries` 블록 참조)
+- [ ] Workload 계정 dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 5 개별 설치 롤백) + `terraform apply`
+- [ ] Hub ArgoCD에 ApplicationSet `cluster generator` 구성 — spoke 라벨로 dev/prd 자동 타겟팅
+- [ ] `eks-practice-devops-manifest` repo ApplicationSet을 Hub 기준으로 재작성 (Phase 5-3 계획 통합)
+  - 저장소: https://github.com/hul0810/eks-practice-devops-manifest
+  - 역할: 애드온 Helm values + MSA 애플리케이션(`eks-practice-application-with-claude`) 배포 매니페스트 관리
+- [ ] App-of-Apps 또는 ApplicationSet으로 LBC/Karpenter/kube-prometheus-stack을 spoke에 원격 배포
+- [ ] MSA 애플리케이션(`eks-practice-application-with-claude`) ArgoCD Application 등록
+  - 저장소: https://github.com/hul0810/eks-practice-application-with-claude
+  - dev 클러스터 배포 → 정상 동작 확인
+- [ ] Hub 장애 시 spoke 워크로드 정상 동작 검증 (SPOF 아님 확인)
+- [ ] GitHub Actions CI/CD 자동화: 이미지 빌드 → ECR push → ArgoCD Image Updater 또는 Argo Rollouts 배포 루프 완성
+  - [ ] OIDC 기반 cross-account ECR 접근 (IAM User 장기 키 제거, `eks-practice-application-with-claude` repo GitHub Actions 적용)
+
+---
+
+### Phase 10. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
+
+> **목표**: 각 클러스터의 메트릭·로그를 Intra 계정의 중앙 백엔드로 집계하고,
+> 단일 Grafana에서 전 환경을 관측한다.
+>
+> **왜 중앙화인가**:
+> - **단일 관측 창**: dev/prd를 한 Grafana에서 환경 라벨로 필터링. 장애 시 Grafana를 오가지 않는다.
+> - **장기 보존 분리**: 클러스터 노드의 Prometheus는 단기 버퍼(2~6h)만, 장기는 중앙 S3 기반에 보존.
+>   클러스터가 종료되어도 메트릭이 남아 사후 분석 가능.
+> - **비용 효율**: 환경마다 풀 Grafana + 장기 스토리지 대신 중앙 1세트.
+>
+> **중앙 백엔드 선택 (Thanos vs VictoriaMetrics)**:
+> - **VictoriaMetrics 권장** (개인 실습 + 비용 최우선): 단일 바이너리, 메모리/CPU 훨씬 적게 사용, 운영 단순.
+> - Thanos: CNCF 표준, 면접 단골이나 컴포넌트 多·무거움. "CNCF 표준 학습" 목표면 선택 가능.
+> - 절충안: Phase 10a VictoriaMetrics 먼저 → 여유 시 Phase 10b Thanos 비교 실습.
+>
+> **비용 영향**: S3 스토리지(소액) + Intra 클러스터 관측 노드(Karpenter Spot으로 절감). Phase 9와 클러스터 공유.
+>
+> **전제 조건**: Phase 9 완료 (Intra 클러스터 존재) + Phase 8 (spoke→hub remote_write 경로).
+> Phase 6의 kube-prometheus-stack을 **로컬 수집기 역할로 재배치** (중앙 전송으로 변경).
+
+- [ ] 각 spoke의 kube-prometheus-stack `remoteWrite` 설정 → Intra 중앙 백엔드 전송 (로컬 장기 보존 비활성)
+- [ ] Intra 클러스터에 VictoriaMetrics 배포 (ArgoCD Hub로 배포)
+  - [ ] S3 백엔드 설정 (장기 메트릭 보존)
+  - [ ] remote_write 인증·암호화: TGW 사설 경로 + TLS
+- [ ] Intra 클러스터에 중앙 Grafana 배포
+  - [ ] 데이터소스 멀티테넌시: 환경 라벨(`cluster=dev/prd`)로 구분
+  - [ ] 핵심 대시보드: 클러스터 오버뷰, Karpenter 노드 현황, 서비스별 SLI
+- [ ] Loki 중앙 배포 + 각 클러스터 Alloy(또는 Promtail) → 중앙 Loki
+  - [ ] S3 백엔드 설정
+- [ ] Alertmanager 중앙화 — 환경별 라우팅 규칙 정의
+- [ ] (Phase 10b, 선택) Thanos 비교 실습
+- [ ] Git 태그: `enterprise/central-observability`
+
+---
+
+### Phase 11. 보안·정책 거버넌스 (Phase 7 직후 병렬 진행 가능)
+
+> **목표**: 시크릿 외부화, 정책 강제(Policy-as-Code), 런타임·이미지 보안을 전 클러스터에 일관 적용한다.
+>
+> **왜 필요한가**:
+> 멀티 계정·멀티 클러스터 환경에서는 "사람이 일일이 검토"가 불가능하다.
+> **정책을 코드로 강제(admission control)** 하지 않으면 환경 간 보안 표준이 드리프트한다.
+>
+> **가장 시급한 단일 항목**: External Secrets — 현재 ArgoCD admin password 등 시크릿이 state/코드에 노출될 위험.
+> security-engineer에게 현재 시크릿 관리 방식 점검 위임 권장.
+>
+> **비용 영향**: 대부분 오픈소스 (Kyverno, External Secrets 컴퓨트 비용만). Secrets Manager 시크릿당 $0.40/월.
+>
+> **전제 조건**: Phase 7 (Secrets Manager 계정 경계 확립). Phase 8~10과 병렬 진행 가능.
+
+- [ ] **External Secrets Operator** 배포 (ArgoCD Hub로 전 클러스터 배포)
+  - [ ] AWS Secrets Manager/SSM Parameter Store → K8s Secret 동기화
+  - [ ] Pod Identity로 인증 (현재 Pod Identity 전략과 일관, IRSA 불필요)
+  - [ ] ArgoCD admin password, Helm values 내 시크릿을 Secrets Manager로 이전
+- [ ] **Kyverno** admission policy 배포 (YAML 정책, Rego 학습 곡선 없음)
+  - [ ] 리소스 limit 필수 강제
+  - [ ] `latest` 이미지 태그 금지
+  - [ ] ECR(특정 레지스트리)만 허용
+  - [ ] `hostPath` 마운트 금지
+  - [ ] Pod Security Standards(`restricted`) 네임스페이스 적용
+- [ ] Org SCP/Tag Policy로 태그 거버넌스를 계정 레벨까지 확장
+  - 현재 `docs/tag-governance.md`의 Terraform 태그 강제를 AWS 정책으로 보완
+- [ ] ECR Enhanced Scanning (Amazon Inspector) 활성화 — CVE 자동 스캔 (기존 basic scan 업그레이드)
+- [ ] EKS Audit Log 활성화 (prd만) → CloudWatch 집계
+- [ ] (선택) Falco 런타임 위협 탐지 배포
+- [ ] Git 태그: `enterprise/hub-spoke-eks` (2단계 완료)
