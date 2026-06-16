@@ -24,6 +24,8 @@ module "eks_addons" {
   argocd_ingress_alb_name             = local.eks_addons.argocd_ingress_alb_name
   argocd_ingress_acm_certificate_arn  = data.aws_acm_certificate.pyhtest_wildcard.arn
   argocd_ingress_allowed_cidrs        = local.eks_addons.argocd_ingress_allowed_cidrs
+  argocd_admin_password_bcrypt        = local.eks_addons.argocd_admin_password_bcrypt
+  argocd_admin_password_mtime         = local.eks_addons.argocd_admin_password_mtime
 
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags

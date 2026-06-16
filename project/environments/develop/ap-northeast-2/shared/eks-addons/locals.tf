@@ -55,6 +55,13 @@ locals {
     argocd_ingress_alb_name        = "${local.project}-argocd${local.name_suffix}-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 내 IP로 제한
     argocd_ingress_allowed_cidrs = ["OPERATOR_IP/32"]
+
+    # ArgoCD admin 초기 패스워드 (bcrypt 해시). 해시 생성일: 2026-06-16
+    # 패스워드 변경 시: 새 해시와 argocd_admin_password_mtime을 함께 갱신해야 ArgoCD가 변경을 감지한다.
+    # 해시 재생성: python3 -c "import bcrypt; print(bcrypt.hashpw(b'NEW_PASSWORD', bcrypt.gensalt()).decode())"
+    # 주의: Terraform bcrypt() 함수를 직접 사용하지 말 것 — apply마다 ArgoCD pod 재시작 유발
+    argocd_admin_password_bcrypt = "ARGOCD_HASH_REDACTED"
+    argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
   }
 
   # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────
