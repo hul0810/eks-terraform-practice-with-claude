@@ -43,7 +43,6 @@
         "--allow-sensitive-data-access"
       ],
       "env": {
-        "AWS_PROFILE": "terraform",
         "AWS_REGION": "ap-northeast-2",
         "FASTMCP_LOG_LEVEL": "ERROR"
       }
