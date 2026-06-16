@@ -35,6 +35,12 @@ module "vpc" {
   enable_nat_gateway     = var.enable_nat_gateway
   single_nat_gateway     = var.enable_nat_gateway ? var.single_nat_gateway : true
   one_nat_gateway_per_az = var.enable_nat_gateway ? !var.single_nat_gateway : false
+  # terraform-aws-modules/vpc는 NAT GW 이름을 "{name}-{az}" 형식으로 생성해 리전 전체 이름이 포함된다.
+  # HA 전환 시 nat_gateway_tags는 단일 map이라 per-AZ 이름 구분이 불가능하므로
+  # AZ 접미사 없이 VPC 이름만 사용한다.
+  nat_gateway_tags = {
+    Name = var.vpc_name
+  }
 
   # AWS Load Balancer Controller가 서비스 어노테이션으로 서브넷을 자동 탐색하는 데 필요.
   # 이 태그가 없으면 Ingress 생성 시 "no matching subnets" 오류가 발생한다.
