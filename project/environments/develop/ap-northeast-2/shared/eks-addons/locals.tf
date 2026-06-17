@@ -54,7 +54,7 @@ locals {
     enable_argocd                  = true
     argocd_ha_enabled              = false # dev: 단일 시스템 노드, 비용 절감 (redis-ha 등 추가 pod 회피)
     argocd_ingress_enabled         = true
-    argocd_ingress_hostname        = "argo-develop.pyhtest.com"
+    argocd_ingress_hostname        = "argocd-develop.pyhtest.com"
     argocd_ingress_alb_name        = "${local.project}-argocd${local.name_suffix}-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 내 IP로 제한
     argocd_ingress_allowed_cidrs = ["OPERATOR_IP/32"]
