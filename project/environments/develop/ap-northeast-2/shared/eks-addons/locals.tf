@@ -31,18 +31,21 @@ locals {
     karpenter      = 1
     external_dns   = 1
     metrics_server = 1
+    argo_rollouts  = 1
   }
 
   eks_addons = {
     # 2026-06-09 기준 최신 stable 버전
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
-    lbc_chart_version            = "3.4.0"
-    external_dns_chart_version   = "1.14.5"
-    metrics_server_chart_version = "3.12.2"
-    karpenter_chart_version      = "1.12.1"
-    argocd_chart_version         = "9.5.21"
+    lbc_chart_version             = "3.4.0"
+    external_dns_chart_version    = "1.14.5"
+    metrics_server_chart_version  = "3.12.2"
+    karpenter_chart_version       = "1.12.1"
+    argocd_chart_version          = "9.5.21"
+    argo_rollouts_chart_version   = "2.38.1"
 
     enable_aws_load_balancer_controller = true
+    enable_argo_rollouts                = true
     enable_external_dns                 = true
     # pyhtest.com zone ARN 추가 → ExternalDNS IRSA Role 신규 생성 (이전엔 zone_arns=[]로 미생성 상태였음)
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/${data.aws_route53_zone.pyhtest.zone_id}"]
