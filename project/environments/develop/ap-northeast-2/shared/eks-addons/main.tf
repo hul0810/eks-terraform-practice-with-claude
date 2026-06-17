@@ -9,6 +9,8 @@ module "eks_addons" {
 
   enable_aws_load_balancer_controller = local.eks_addons.enable_aws_load_balancer_controller
   lbc_chart_version                   = local.eks_addons.lbc_chart_version
+  enable_argo_rollouts                = local.eks_addons.enable_argo_rollouts
+  argo_rollouts_chart_version         = local.eks_addons.argo_rollouts_chart_version
   enable_external_dns                 = local.eks_addons.enable_external_dns
   external_dns_route53_zone_arns      = local.eks_addons.external_dns_route53_zone_arns
   external_dns_chart_version          = local.eks_addons.external_dns_chart_version
