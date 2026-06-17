@@ -105,6 +105,19 @@ variable "enable_argocd" {
   default     = true
 }
 
+variable "enable_argo_rollouts" {
+  description = "Argo Rollouts 설치 여부. Canary·Blue-Green 배포 전략을 Kubernetes에서 구현한다"
+  type        = bool
+  default     = false
+}
+
+variable "argo_rollouts_chart_version" {
+  description = "Argo Rollouts Helm chart 버전 (예: \"2.38.1\"). enable_argo_rollouts=false이면 미사용 — null 허용"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
 variable "argocd_chart_version" {
   description = "ArgoCD Helm chart 버전 (예: \"9.5.21\")"
   type        = string
@@ -200,6 +213,7 @@ variable "replica_counts" {
     external_dns   = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)
     metrics_server = optional(number, 1) # MetricsServer: replicas 기본 1
     argocd_server  = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수
+    argo_rollouts  = optional(number, 1) # Argo Rollouts controller: 기본 1. 시스템 노드 HA(min>=2) 확보 후 2로 증설
   })
   default = {}
 

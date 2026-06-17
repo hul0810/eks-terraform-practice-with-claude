@@ -1,7 +1,7 @@
 ################################################################################
 # EKS Addons 모듈 — Helm (blueprints) 전용
 #
-# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, Karpenter
+# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, Karpenter, ArgoCD, Argo Rollouts
 #
 # 이 모듈은 EKS 관리형 addon API(aws_eks_addon)가 없거나 Helm values 커스터마이징이
 # 필요한 애드온을 aws-ia/eks-blueprints-addons 모듈로 관리한다.
@@ -190,6 +190,23 @@ module "eks_blueprints_addons" {
   # {cluster_name}-karpenter 로 통일하여 다른 리소스와 네이밍 패턴을 맞춘다.
   karpenter_sqs = {
     queue_name = "${var.cluster_name}-karpenter"
+  }
+
+  # ── Argo Rollouts ─────────────────────────────────────────────────────────────
+  # Canary·Blue-Green 배포 전략을 Kubernetes에서 구현한다.
+  # AWS API를 직접 호출하지 않으므로 IAM 불필요 (metrics-server·ArgoCD와 동일).
+  # ALB Ingress와 연동하는 경우 LBC 의존성이 생기므로 LBC보다 나중에 배포된다.
+  enable_argo_rollouts = var.enable_argo_rollouts
+  argo_rollouts = {
+    chart_version = var.argo_rollouts_chart_version
+    set = [
+      # 기본값 2 — dev는 replica_counts.argo_rollouts=1로 낮춰 시스템 노드 리소스 확보
+      { name = "controller.replicas", value = tostring(var.replica_counts.argo_rollouts) },
+      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
+      { name = "controller.tolerations[0].key", value = "CriticalAddonsOnly" },
+      { name = "controller.tolerations[0].operator", value = "Exists" },
+      { name = "controller.tolerations[0].effect", value = "NoSchedule" },
+    ]
   }
 
   # ── ArgoCD ────────────────────────────────────────────────────────────────────
