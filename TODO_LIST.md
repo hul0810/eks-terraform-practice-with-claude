@@ -14,8 +14,8 @@
 
 | 태그 | 달성 단계 | 설명 |
 |------|----------|------|
-| `foundation/single-account-eks` | 1단계(Phase 1~6) 완료 시 | 단일 계정, dev/prd 2클러스터, GitOps·Observability 포함 기초 구성 |
-| `enterprise/hub-spoke-eks` | 2단계(Phase 7~11) 완료 시 | 2계정(intra/workload), TGW, Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
+| `foundation/single-account-eks` | 1단계(Phase 1~5) 완료 시 | 단일 계정, dev/prd 2클러스터, GitOps·Observability 포함 기초 구성 |
+| `enterprise/hub-spoke-eks` | 2단계(Phase 6~10) 완료 시 | 2계정(intra/workload), TGW, Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
 
 ---
 
@@ -128,7 +128,6 @@
   - [x] `main.tf` — `module "eks_addons"` 호출
   - [x] `outputs.tf`
 - [x] `terraform plan` 검토
-- [x] `terraform apply` 실행 — EBS CSI, Metrics Server, External DNS, LBC 배포 완료
 
 ### 2-4. Karpenter NodePool & EC2NodeClass 구성
 
@@ -149,7 +148,6 @@
     - [x] dev: Spot 우선 + On-Demand 혼합 (`capacity_type: [spot, on-demand]`)
     - [x] disruption: consolidationPolicy=WhenEmptyOrUnderutilized, consolidateAfter=30s
 - [x] `terraform plan` 검토
-- [x] `terraform apply` 실행
 - [x] `kubectl get ec2nodeclass` — NodeClass 등록 확인
 - [x] `kubectl get nodepool` — NodePool 등록 확인
 - [x] 테스트 Deployment 배포 후 Karpenter 앱 노드 프로비저닝 확인
@@ -178,7 +176,6 @@
 - [x] `environments/develop/ap-northeast-2/order/ecr/` 신규 root module 생성 (`eks-practice-order-develop`)
 - [x] `environments/develop/ap-northeast-2/catalog/ecr/` 신규 root module 생성 (`eks-practice-catalog-develop`)
 - [x] `terraform plan` 검토 — 3개 root module 각각 ECR 리포지토리 1개 + lifecycle policy 1개 생성 예정 확인
-- [x] `terraform apply` 실행 — 3개 리포지토리 생성 완료
 - [x] `terraform plan` 재실행 — 코드와 실제 인프라 일치(변경 없음) 확인
 
 ---
@@ -196,8 +193,8 @@
   - [x] `locals.tf`
     - [x] VPC CIDR: `10.11.0.0/16` (dev와 동일한 서브넷 타입별 그룹화 패턴 적용)
     - [x] `azs = data.aws_availability_zones.available.names` (동적 조회)
-    - [x] `enable_nat_gateway = true`, `single_nat_gateway = false` (prd는 AZ당 1개 NAT GW)
-    - [x] `cluster_name = "eks-practice-production"` (Karpenter 탐색 태그)
+    - [x] `enable_nat_gateway = true`, `single_nat_gateway = true` (비용 예외 — CLAUDE.md 참조. HA 복원: `single_nat_gateway = false`)
+    - [x] `cluster_name = "eks-practice"` (Karpenter 탐색 태그)
 - [x] `terraform fmt` + `terraform validate`
 - [x] `terraform plan` 검토
 
@@ -226,7 +223,9 @@
   - [x] `locals.tf`
     - [x] `replica_counts = {}` (모듈 기본값 사용 — prd는 시스템 노드 2개(HA)이므로 기본 HA replica 적용)
     - [x] `enable_aws_load_balancer_controller = true`, `enable_metrics_server = true`, `enable_karpenter = true`
-    - [x] `enable_external_dns = false` (Route53 Hosted Zone 미구성 — 도메인 준비 후 활성화)
+    - [x] `enable_external_dns = true`, `external_dns_route53_zone_arns` 설정 (pyhtest.com zone ARN — data source 참조)
+    - [x] `enable_argo_rollouts = true` (Canary·Blue-Green 배포 전략 지원)
+    - [x] ArgoCD Ingress 설정 — hostname: `argocd.pyhtest.com`, ALB + ACM + ExternalDNS + admin bcrypt 패스워드
     - [x] `karpenter_node_pools`: dev와 동일 4종(general/arm64/gpu/spot), `disruption.consolidateAfter = "300s"`
   - [x] `karpenter.tf` 작성 (dev와 동일 구조: EC2NodeClass + NodePool for_each + finalizer 강제 제거 null_resource)
 - [x] `terraform fmt` + `terraform validate`
@@ -252,7 +251,15 @@
   - production: `terraform validate` + `terraform plan` 검증 완료 (1 to add, 0 to change, 0 to destroy)
   - dev: 동일 코드 적용 (별개의 remote state 이슈로 plan 검증은 보류)
 
-### 3-4. 검증
+### 3-4. modules/ecr 재사용 + environments/production ecr 추가
+
+> dev Phase 2-5와 동일 패턴. production은 `name_suffix=""` (서비스명 suffix 없음), `lifecycle_tagged_count = 30`
+
+- [x] `environments/production/ap-northeast-2/api-gateway/ecr/` 신규 root module 생성 (`eks-practice-api-gateway`)
+- [x] `environments/production/ap-northeast-2/catalog/ecr/` 신규 root module 생성 (`eks-practice-catalog`)
+- [x] `environments/production/ap-northeast-2/order/ecr/` 신규 root module 생성 (`eks-practice-order`)
+
+### 3-5. 검증
 
 - [x] `aws eks update-kubeconfig --name eks-practice-production --region ap-northeast-2`
 - [x] `kubectl get nodes` - 시스템 노드 2개 확인 (HA)
@@ -267,70 +274,28 @@
 
 ---
 
-## Phase 5. GitOps 전환 (Terraform → ArgoCD)
+## Phase 4. ArgoCD 설치 (dev/prd)
 
-> **목적**: 여러 환경·클러스터로 확장 시 반복 작업을 최소화하기 위해
-> Helm 애드온 관리를 Terraform에서 ArgoCD로 이관한다.
+> **목적**: dev/prd 클러스터에 ArgoCD를 설치하고 외부 접근 가능한 상태로 구성한다.
+> Helm 애드온 GitOps 전환(blueprints → ArgoCD 위임)과 Hub-Spoke 중앙 GitOps는 Phase 6(2단계)에서 진행한다.
 >
-> **전환 전제**: Phase 2-4 완료 후 진행. ArgoCD가 시스템 노드에 배포된 상태 기준.
->
-> **저장소 구성** (Phase 5용 별도 repo 신규 생성):
-> - 이 repo(`eks-terraform-practice-with-claude`): Terraform 인프라(IAM Role, SQS, EventBridge 등 AWS 리소스) + ArgoCD 설치만 관리
-> - [`eks-practice-devops-manifest`](https://github.com/hul0810/eks-practice-devops-manifest): ArgoCD가 Git 소스로 참조하는 EKS 애드온 ApplicationSet/Helm values 매니페스트
-> - [`eks-practice-application-with-claude`](https://github.com/hul0810/eks-practice-application-with-claude): EKS에 배포할 애플리케이션 코드 (Docker 이미지 빌드 소스, 5-3/5-4와 별개로 ArgoCD Application 대상이 될 예정)
-
-### 5-1. ArgoCD 설치
+> **전제**: Phase 2-4 완료 후 진행 (Karpenter 시스템 노드 Ready 상태 기준).
 
 - [x] `modules/eks-addons/main.tf`에 ArgoCD Helm 설치 추가
   - [x] `enable_argocd = true` (aws-ia/eks-blueprints-addons)
   - [x] HA 구성 values 설정 (redis-ha, server/repoServer/applicationSet replicas) —
     `argocd_ha_enabled` 토글 (dev=false, production=true)
   - [x] `CriticalAddonsOnly` toleration 추가 (시스템 노드에 스케줄, redis-ha는 별도 명시)
-- [x] dev: `terraform apply` 완료 — argo-cd v9.5.21(app v3.4.3) `helm_release` status=deployed 확인
-- [ ] production: `terraform apply` (사용자 직접 실행 필요 — `argocd_ha_enabled=true`)
-- [ ] ArgoCD UI 접속 확인 (`kubectl port-forward service/argo-cd-argocd-server -n argocd 8080:443`)
-
-### 5-2. IAM/AWS 리소스와 Helm 리소스 분리
-
-> 이 단계의 핵심: Terraform은 AWS 리소스(IAM Role, SQS, EventBridge)만 관리하고
-> Helm Chart 설치는 ArgoCD에 위임한다.
-
-- [ ] `modules/eks-addons/main.tf` 수정
-  - [ ] `aws-ia/eks-blueprints-addons` 블록에 `create_kubernetes_resources = false` 추가
-    - Terraform이 생성하던 `helm_release` 리소스 제거됨
-    - IAM Role, SQS, EventBridge Rule은 계속 Terraform이 관리
-- [ ] `terraform plan`으로 `helm_release` 리소스 삭제 확인 후 `terraform apply`
-
-### 5-3. ArgoCD ApplicationSet 작성
-
-> 하나의 ApplicationSet 선언으로 모든 환경에 동일 Chart 배포.
-> **저장소**: `eks-practice-devops-manifest` (이 repo가 아님 — ArgoCD가 Git 소스로 참조하는 별도 매니페스트 repo)
-
-- [ ] `eks-practice-devops-manifest` repo에 `applicationsets/` 디렉토리 생성
-- [ ] `applicationsets/eks-addons.yaml` 작성
-  - [ ] Generator: 환경 목록 (`develop`, `production`)
-  - [ ] 공통 Chart 버전 선언 (LBC, kube-prometheus-stack)
-  - [ ] 환경별 values 파일 경로 연결 (`values-{{env}}.yaml`)
-- [ ] `values/` 디렉토리 생성
-  - [ ] `values-develop.yaml` — dev 환경 오버라이드 (replica 수, resource limits 등)
-  - [ ] `values-production.yaml` — prd 환경 오버라이드
-
-### 5-4. Karpenter GitOps 전환
-
-- [ ] `modules/karpenter/main.tf`에 `create_kubernetes_resources = false` 추가
-  - Terraform: IAM Role + SQS + EventBridge만 유지
-  - ArgoCD: Karpenter Helm Chart + EC2NodeClass + NodePool 관리
-- [ ] `eks-practice-devops-manifest` repo에 `applicationsets/karpenter.yaml` 작성
-
-### 5-5. 검증
-
-- [ ] ArgoCD UI에서 전체 애드온 Synced 상태 확인
-- [ ] `kubectl edit` 으로 임의 변경 후 ArgoCD 자동 복구 확인 (드리프트 감지)
-- [ ] 새 환경 추가 시나리오 테스트: ApplicationSet 목록에 환경 1개 추가 → 자동 배포 확인
+- [x] ArgoCD admin 패스워드 bcrypt 해시 주입 (`argocd_admin_password_bcrypt` — Terraform `bcrypt()` 미사용, apply마다 재시작 방지)
+- [x] ArgoCD Ingress 설정 추가
+  - [x] dev: `argocd-develop.pyhtest.com` (수정 전: `argo-develop.pyhtest.com` → ExternalDNS로 자동 전환)
+  - [x] production: `argocd.pyhtest.com` (ALB + ACM + ExternalDNS 자동 Route53 레코드 생성)
+- [x] dev: argo-cd v9.5.21(app v3.4.3) helm_release status=deployed 확인
+- [ ] ArgoCD UI 접속 확인 (dev: `https://argocd-develop.pyhtest.com` / prd: `https://argocd.pyhtest.com`)
 
 ---
 
-## Phase 6. Observability 구축 (Prometheus + Grafana)
+## Phase 5. Observability 구축 (Prometheus + Grafana)
 
 > **전제**: Phase 2-4 완료 후 진행 (Karpenter 앱 노드 프로비저닝 완료 상태)
 > kube-prometheus-stack pre-install hook이 앱 노드를 필요로 하므로 Karpenter 이후에 설치한다.
@@ -341,16 +306,8 @@
   - [ ] Grafana, Prometheus, Alertmanager values 정의
 - [ ] `modules/eks-addons/1.0.0/variables.tf`에 `kube_prometheus_stack_chart_version` 변수 추가
 - [ ] `environments/develop/ap-northeast-2/shared/eks-addons/locals.tf`에 버전 추가
-- [ ] `terraform apply` 실행
 - [ ] `kubectl get pods -n kube-prometheus-stack` — 파드 상태 확인
 - [ ] Grafana 대시보드 접속 확인
-
----
-
-## 기타
-
-- [x] `.gitignore` 작성 (`.terraform/`, `*.tfstate`, `*.tfvars` 등)
-- [ ] `README.md` 작성 (구조 설명, 사용 방법)
 
 ---
 
@@ -361,13 +318,53 @@
 >
 > **의존성 순서** (반드시 이 순서로 진행):
 > ```
-> Phase 7 (Organizations 2계정) → Phase 8 (TGW) → Phase 9 (ArgoCD Hub) → Phase 10 (중앙 Observability)
->                                                ↘ Phase 11 (보안·거버넌스, Phase 7 직후 병렬 가능)
+> Phase 6 (ArgoCD Hub GitOps) → Phase 7 (Organizations 2계정) → Phase 8 (TGW) → Phase 9 (중앙 Observability)
+>                                                              ↘ Phase 10 (보안·거버넌스, Phase 7 직후 병렬 가능)
 > ```
 >
 > **비용 경고**: Phase 8(TGW)부터 고정 비용이 크게 증가한다.
 > TGW 어태치먼트는 VPC당 ~$36/월, Intra EKS 클러스터는 컨트롤 플레인 $73/월 + 노드 추가.
 > **학습 세션 중에만 `terraform apply` 하고 종료 시 `terraform destroy`하는 운영 패턴을 기본으로 한다.**
+
+---
+
+### Phase 6. Hub-and-Spoke ArgoCD (중앙 GitOps)
+
+> **목표**: dev/prd에 개별 설치된 ArgoCD를 제거하고 단일 ArgoCD Hub를 두어 spoke로 원격 관리한다.
+> **단일 계정에서 먼저 패턴을 검증**하고 Phase 7~8 완료 후 Intra 계정 클러스터로 이전한다.
+>
+> **왜 중앙 집중인가**:
+> - **운영 표면 1/N 감소**: ArgoCD를 n개 클러스터에 개별 운영 vs Hub 1개 운영. 업그레이드·RBAC·백업이 Hub 한 곳으로 집약.
+> - **환경 일관성 보장**: 동일 ApplicationSet이 cluster generator로 dev/prd에 동일 Chart 배포 → 버전 드리프트 구조적 차단.
+> - **승격(Promotion) 워크플로**: Hub에서 dev→prd 배포를 한 곳에서 가시화·게이팅.
+> - **보안 표면 축소**: spoke에 ArgoCD 없음 → 공격 표면 감소, Hub만 강하게 보호.
+>
+> **SPOF 검토**: ArgoCD Hub 장애 시 이미 배포된 워크로드는 정상 동작 (ArgoCD는 reconciler이지 데이터 플레인이 아님).
+>
+> **비용 영향**: Hub 클러스터 컨트롤 플레인 $73/월 + 소형 노드 ~$30/월 (신규). dev/prd ArgoCD 워크로드 제거로 일부 상쇄.
+> Phase 9과 Intra 클러스터를 공유하므로 추가 컨트롤 플레인 비용은 Phase 9에서 분담.
+>
+> **전제 조건**: Phase 4-1 완료 (ArgoCD 설치됨). 단일 계정 구성 가능 — Phase 7~8 완료 후 Intra 계정 클러스터로 이전.
+
+- [ ] Hub 클러스터 구성 (`environments/hub/ap-northeast-2/shared/eks/`) — 기존 `modules/eks/1.0.0` 재사용
+- [ ] Hub ArgoCD 설치 (`argocd_ha_enabled = true`) — `modules/eks-addons/1.0.0` 재사용
+- [ ] blueprints 애드온 GitOps 전환: `aws-ia/eks-blueprints-addons` 블록에 `create_kubernetes_resources = false` 추가
+  - Terraform: IAM Role, SQS, EventBridge만 유지 / Helm 설치는 ArgoCD 위임
+- [ ] spoke 클러스터 등록: ArgoCD cluster secret + IAM
+  - [ ] dev/prd EKS access entry에 Hub의 ArgoCD IAM Role 등록
+  - [ ] `aws_eks_access_entry` 패턴 확장 (기존 dev/prd의 `access_entries` 블록 참조)
+- [ ] dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 4-1 개별 설치 롤백)
+- [ ] Hub ArgoCD에 ApplicationSet `cluster generator` 구성 — spoke 라벨로 dev/prd 자동 타겟팅
+- [ ] `eks-practice-devops-manifest` repo ApplicationSet 작성
+  - 저장소: https://github.com/hul0810/eks-practice-devops-manifest
+  - 역할: 애드온 Helm values + MSA 애플리케이션 배포 매니페스트 관리
+- [ ] App-of-Apps 또는 ApplicationSet으로 LBC/Karpenter/kube-prometheus-stack을 spoke에 원격 배포
+- [ ] MSA 애플리케이션(`eks-practice-application-with-claude`) ArgoCD Application 등록
+  - 저장소: https://github.com/hul0810/eks-practice-application-with-claude
+  - dev 클러스터 배포 → 정상 동작 확인
+- [ ] Hub 장애 시 spoke 워크로드 정상 동작 검증 (SPOF 아님 확인)
+- [ ] GitHub Actions CI/CD 자동화: 이미지 빌드 → ECR push → ArgoCD Image Updater 또는 Argo Rollouts 배포 루프 완성
+  - [ ] OIDC 기반 ECR 접근 (IAM User 장기 키 제거, `eks-practice-application-with-claude` repo GitHub Actions 적용)
 
 ---
 
@@ -384,14 +381,13 @@
 >
 > **왜 계정을 분리하는가**:
 > - **격리(Blast Radius)**: Intra 서비스(ArgoCD, Grafana)와 워크로드 EKS를 계정 경계로 격리.
->   Intra 계정의 장애·오염이 워크로드 계정에 전파되지 않는다.
 > - **권한 경계 명확화**: cross-account assume을 명시적으로 허용한 주체만 각 계정에 접근 가능.
 > - **비용 가시성**: 공유 서비스 비용 vs 워크로드 비용을 계정별로 즉시 구분.
 >
 > **비용 영향**: Organizations·SCP·IAM Identity Center 자체는 무료. 추가 비용은 Org Trail S3 등 월 $5~15 수준.
 >
-> **전제 조건**: 없음. 단, `TerraformExecutionRole`의 trust principal(`account:root`) 재설계 필요.
-> Phase 7 착수 전 security-engineer와 IAM 체인 재설계 별도 진행 권장.
+> **전제 조건**: Phase 6 완료 권장 (Hub-Spoke 패턴 검증 후 멀티계정 전환).
+> `TerraformExecutionRole`의 trust principal(`account:root`) 재설계 필요 — security-engineer 사전 검토 권장.
 
 - [ ] **멀티 계정 전략 설계** (`docs/multi-account-strategy.md` 신규 작성)
   - [ ] OU 구조: `Infrastructure`(Intra), `Workloads`(dev/prd 공용) 2 OU
@@ -406,6 +402,7 @@
 - [ ] `TerraformExecutionRole` Intra 계정에 배포 (bootstrap 절차 문서화)
 - [ ] GitHub Actions OIDC → cross-account assume 체인 구성 (IAM User 장기 키 제거)
 - [ ] FinOps 자동화: 계정별 AWS Budget + Cost Anomaly Detection 코드화
+- [ ] Hub 클러스터를 Intra 계정으로 이전 (Phase 6 Hub → Intra 계정 재구성)
 
 ---
 
@@ -438,46 +435,7 @@
 
 ---
 
-### Phase 9. Hub-and-Spoke ArgoCD (중앙 GitOps)
-
-> **목표**: dev/prd에 개별 설치된 ArgoCD를 제거하고, Intra 계정 클러스터에 단일 ArgoCD Hub를 두어
-> dev/prd를 spoke로 원격 관리한다.
->
-> **왜 중앙 집중인가 (인프라 관리 효율성)**:
-> - **운영 표면 1/N 감소**: ArgoCD를 n개 클러스터에 개별 운영 vs Hub 1개 운영. 업그레이드·RBAC·백업이 Hub 한 곳으로 집약.
-> - **환경 일관성 보장**: 동일 ApplicationSet이 cluster generator로 dev/prd에 동일 Chart 배포 → 버전 드리프트 구조적 차단.
-> - **승격(Promotion) 워크플로**: Hub에서 dev→prd 배포를 한 곳에서 가시화·게이팅.
-> - **보안 표면 축소**: spoke에 ArgoCD 없음 → 공격 표면 감소, Hub만 강하게 보호.
->
-> **SPOF 검토**: ArgoCD Hub 장애 시 이미 배포된 워크로드는 정상 동작 (ArgoCD는 reconciler이지 데이터 플레인이 아님).
-> "신규 배포/드리프트 복구 지연" 리스크만 발생. Hub는 HA 구성으로 보완.
->
-> **비용 영향**: Intra EKS 컨트롤 플레인 $73/월 + 소형 노드 ~$30/월 (신규). dev/prd ArgoCD 워크로드 제거로 일부 상쇄.
-> Phase 10과 Intra 클러스터를 공유하므로 추가 컨트롤 플레인 비용은 Phase 10에서 분담.
->
-> **전제 조건**: Phase 8 완료 (Hub가 TGW 경유로 spoke EKS Private 엔드포인트에 도달 가능해야 함).
-
-- [ ] Intra 계정에 Hub 클러스터 구성 (`environments/intra/ap-northeast-2/shared/eks/`) — 기존 `modules/eks/1.0.0` 재사용
-- [ ] Hub ArgoCD 설치 (`argocd_ha_enabled = true`) — `modules/eks-addons/1.0.0` 재사용
-- [ ] spoke 클러스터 등록: ArgoCD cluster secret + cross-account IAM
-  - [ ] Workload 계정의 dev/prd EKS access entry에 Hub의 ArgoCD IAM Role cross-account 등록
-  - [ ] `aws_eks_access_entry` 패턴 확장 (기존 dev/prd의 `access_entries` 블록 참조)
-- [ ] Workload 계정 dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 5 개별 설치 롤백) + `terraform apply`
-- [ ] Hub ArgoCD에 ApplicationSet `cluster generator` 구성 — spoke 라벨로 dev/prd 자동 타겟팅
-- [ ] `eks-practice-devops-manifest` repo ApplicationSet을 Hub 기준으로 재작성 (Phase 5-3 계획 통합)
-  - 저장소: https://github.com/hul0810/eks-practice-devops-manifest
-  - 역할: 애드온 Helm values + MSA 애플리케이션(`eks-practice-application-with-claude`) 배포 매니페스트 관리
-- [ ] App-of-Apps 또는 ApplicationSet으로 LBC/Karpenter/kube-prometheus-stack을 spoke에 원격 배포
-- [ ] MSA 애플리케이션(`eks-practice-application-with-claude`) ArgoCD Application 등록
-  - 저장소: https://github.com/hul0810/eks-practice-application-with-claude
-  - dev 클러스터 배포 → 정상 동작 확인
-- [ ] Hub 장애 시 spoke 워크로드 정상 동작 검증 (SPOF 아님 확인)
-- [ ] GitHub Actions CI/CD 자동화: 이미지 빌드 → ECR push → ArgoCD Image Updater 또는 Argo Rollouts 배포 루프 완성
-  - [ ] OIDC 기반 cross-account ECR 접근 (IAM User 장기 키 제거, `eks-practice-application-with-claude` repo GitHub Actions 적용)
-
----
-
-### Phase 10. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
+### Phase 9. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
 
 > **목표**: 각 클러스터의 메트릭·로그를 Intra 계정의 중앙 백엔드로 집계하고,
 > 단일 Grafana에서 전 환경을 관측한다.
@@ -491,12 +449,12 @@
 > **중앙 백엔드 선택 (Thanos vs VictoriaMetrics)**:
 > - **VictoriaMetrics 권장** (개인 실습 + 비용 최우선): 단일 바이너리, 메모리/CPU 훨씬 적게 사용, 운영 단순.
 > - Thanos: CNCF 표준, 면접 단골이나 컴포넌트 多·무거움. "CNCF 표준 학습" 목표면 선택 가능.
-> - 절충안: Phase 10a VictoriaMetrics 먼저 → 여유 시 Phase 10b Thanos 비교 실습.
+> - 절충안: Phase 9a VictoriaMetrics 먼저 → 여유 시 Phase 9b Thanos 비교 실습.
 >
-> **비용 영향**: S3 스토리지(소액) + Intra 클러스터 관측 노드(Karpenter Spot으로 절감). Phase 9와 클러스터 공유.
+> **비용 영향**: S3 스토리지(소액) + Intra 클러스터 관측 노드(Karpenter Spot으로 절감). Phase 8과 클러스터 공유.
 >
-> **전제 조건**: Phase 9 완료 (Intra 클러스터 존재) + Phase 8 (spoke→hub remote_write 경로).
-> Phase 6의 kube-prometheus-stack을 **로컬 수집기 역할로 재배치** (중앙 전송으로 변경).
+> **전제 조건**: Phase 8 완료 (Intra 클러스터 존재) + Phase 7 (spoke→hub remote_write 경로).
+> Phase 5의 kube-prometheus-stack을 **로컬 수집기 역할로 재배치** (중앙 전송으로 변경).
 
 - [ ] 각 spoke의 kube-prometheus-stack `remoteWrite` 설정 → Intra 중앙 백엔드 전송 (로컬 장기 보존 비활성)
 - [ ] Intra 클러스터에 VictoriaMetrics 배포 (ArgoCD Hub로 배포)
@@ -508,12 +466,12 @@
 - [ ] Loki 중앙 배포 + 각 클러스터 Alloy(또는 Promtail) → 중앙 Loki
   - [ ] S3 백엔드 설정
 - [ ] Alertmanager 중앙화 — 환경별 라우팅 규칙 정의
-- [ ] (Phase 10b, 선택) Thanos 비교 실습
+- [ ] (Phase 9b, 선택) Thanos 비교 실습
 - [ ] Git 태그: `enterprise/central-observability`
 
 ---
 
-### Phase 11. 보안·정책 거버넌스 (Phase 7 직후 병렬 진행 가능)
+### Phase 10. 보안·정책 거버넌스 (Phase 7 직후 병렬 진행 가능)
 
 > **목표**: 시크릿 외부화, 정책 강제(Policy-as-Code), 런타임·이미지 보안을 전 클러스터에 일관 적용한다.
 >
@@ -526,7 +484,7 @@
 >
 > **비용 영향**: 대부분 오픈소스 (Kyverno, External Secrets 컴퓨트 비용만). Secrets Manager 시크릿당 $0.40/월.
 >
-> **전제 조건**: Phase 7 (Secrets Manager 계정 경계 확립). Phase 8~10과 병렬 진행 가능.
+> **전제 조건**: Phase 7 (Secrets Manager 계정 경계 확립). Phase 8~9과 병렬 진행 가능.
 
 - [ ] **External Secrets Operator** 배포 (ArgoCD Hub로 전 클러스터 배포)
   - [ ] AWS Secrets Manager/SSM Parameter Store → K8s Secret 동기화
