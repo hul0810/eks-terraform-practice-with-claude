@@ -1,6 +1,6 @@
 # modules/eks-addons 설계 원칙
 
-## 이 모듈이 관리하는 애드온 (5종)
+## 이 모듈이 관리하는 애드온 (6종)
 
 | 애드온 | 설치 방법 | IAM 방식 |
 |--------|-----------|---------|
@@ -9,13 +9,14 @@
 | metrics-server | Helm (eks-blueprints-addons) | 없음 |
 | karpenter | Helm (eks-blueprints-addons) | IRSA (blueprints 자동 처리) |
 | argocd | Helm (eks-blueprints-addons) | 없음 |
+| argo-rollouts | Helm (eks-blueprints-addons) | 없음 |
 
 > EBS CSI Driver는 Bootstrap 애드온으로 분류되어 `modules/eks`에서 관리한다.
 > kube-prometheus-stack은 Phase 6에서 별도 추가 예정.
 
 ---
 
-## 고정 버전 (2026-06-12 기준)
+## 고정 버전 (2026-06-17 기준)
 
 | 애드온 | 고정 버전 |
 |--------|-----------|
@@ -25,6 +26,7 @@
 | metrics-server (Helm chart) | `3.12.2` |
 | karpenter (Helm chart) | `1.12.1` |
 | argo-cd (Helm chart) | `9.5.21` |
+| argo-rollouts (Helm chart) | `2.38.1` |
 
 ---
 
