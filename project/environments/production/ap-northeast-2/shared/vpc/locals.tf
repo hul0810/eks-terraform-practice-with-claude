@@ -24,7 +24,7 @@ locals {
     private_subnets    = ["10.11.32.0/19", "10.11.64.0/19", "10.11.96.0/19", "10.11.128.0/19"]
     database_subnets   = ["10.11.4.0/24", "10.11.5.0/24", "10.11.6.0/24", "10.11.7.0/24"]
     tgw_subnets        = ["10.11.8.0/28", "10.11.8.16/28", "10.11.8.32/28", "10.11.8.48/28"]
-    enable_nat_gateway = false
+    enable_nat_gateway = true
     # 비용 우선: 단일 NAT GW 구성 (dev와 동일, HA 정책 예외 — CLAUDE.md 비용 예외 항목 참조)
     # HA 복원 시: single_nat_gateway = false 로 변경 → AZ당 NAT GW 1개 (AZ 장애 시 다른 AZ 아웃바운드 통신 영향 차단)
     single_nat_gateway = true
