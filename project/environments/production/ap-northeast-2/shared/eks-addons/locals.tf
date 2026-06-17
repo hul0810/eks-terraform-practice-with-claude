@@ -31,20 +31,33 @@ locals {
     metrics_server_chart_version = "3.12.2"
     karpenter_chart_version      = "1.12.1"
     argocd_chart_version         = "9.5.21"
+    argo_rollouts_chart_version  = "2.38.1"
 
     enable_aws_load_balancer_controller = true
-    # 운영 도메인/Route53 Hosted Zone 미구성으로 비활성화.
-    # 도메인 준비 후 enable_external_dns = true로 변경하고
-    # external_dns_route53_zone_arns에 해당 zone ARN을 명시할 것 (production은 zone ARN 필수).
-    enable_external_dns            = false
-    external_dns_route53_zone_arns = []
+    enable_argo_rollouts                = true
+    enable_external_dns                 = true
+    # pyhtest.com zone ARN 추가 → ExternalDNS IRSA Role 신규 생성 (이전엔 zone_arns=[]로 미생성 상태였음)
+    external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/${data.aws_route53_zone.pyhtest.zone_id}"]
     enable_metrics_server          = true
     enable_karpenter               = true
     enable_argocd                  = true
     # 시스템 노드 min/desired=1(비용 예외, eks/locals.tf 참조)인 상태에서 HA를 켜면
     # redis-ha quorum이 spot 노드에 분산되어 단일 노드 장애 시 ArgoCD 전체가 다운될 수 있다.
     # 시스템 노드 HA 복원(min/desired=2) 시 true로 함께 전환할 것 (redis-ha + replica=2).
-    argocd_ha_enabled = false
+    argocd_ha_enabled              = false
+    argocd_ingress_enabled         = true
+    argocd_ingress_hostname        = "argocd.pyhtest.com"
+    argocd_ingress_alb_name        = "eks-practice-argocd-alb"
+    # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 작업자 IP로 제한
+    argocd_ingress_allowed_cidrs = ["1.226.228.52/32"]
+
+    # ArgoCD admin 초기 패스워드 (bcrypt 해시). 해시 생성일: 2026-06-16
+    # dev 환경과 동일 패스워드 사용 (실습 환경 — 운영 환경에서는 별도 패스워드 설정 권장)
+    # 패스워드 변경 시: 새 해시와 argocd_admin_password_mtime을 함께 갱신해야 ArgoCD가 변경을 감지한다.
+    # 해시 재생성: python3 -c "import bcrypt; print(bcrypt.hashpw(b'NEW_PASSWORD', bcrypt.gensalt()).decode())"
+    # 주의: Terraform bcrypt() 함수를 직접 사용하지 말 것 — apply마다 ArgoCD pod 재시작 유발
+    argocd_admin_password_bcrypt = "$2b$10$FXo.mTr4eJdYS2cacXnFueMRNpPN.4zHbwu5g0tuHQxhp2a98ReHy"
+    argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
   }
 
   # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────

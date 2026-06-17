@@ -9,6 +9,8 @@ module "eks_addons" {
 
   enable_aws_load_balancer_controller = local.eks_addons.enable_aws_load_balancer_controller
   lbc_chart_version                   = local.eks_addons.lbc_chart_version
+  enable_argo_rollouts                = local.eks_addons.enable_argo_rollouts
+  argo_rollouts_chart_version         = local.eks_addons.argo_rollouts_chart_version
   enable_external_dns                 = local.eks_addons.enable_external_dns
   external_dns_route53_zone_arns      = local.eks_addons.external_dns_route53_zone_arns
   external_dns_chart_version          = local.eks_addons.external_dns_chart_version
@@ -19,6 +21,13 @@ module "eks_addons" {
   enable_argocd                       = local.eks_addons.enable_argocd
   argocd_chart_version                = local.eks_addons.argocd_chart_version
   argocd_ha_enabled                   = local.eks_addons.argocd_ha_enabled
+  argocd_ingress_enabled              = local.eks_addons.argocd_ingress_enabled
+  argocd_ingress_hostname             = local.eks_addons.argocd_ingress_hostname
+  argocd_ingress_alb_name             = local.eks_addons.argocd_ingress_alb_name
+  argocd_ingress_acm_certificate_arn  = data.aws_acm_certificate.pyhtest_wildcard.arn
+  argocd_ingress_allowed_cidrs        = local.eks_addons.argocd_ingress_allowed_cidrs
+  argocd_admin_password_bcrypt        = local.eks_addons.argocd_admin_password_bcrypt
+  argocd_admin_password_mtime         = local.eks_addons.argocd_admin_password_mtime
 
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags
