@@ -110,6 +110,10 @@
   - [x] **Helm 전용 (`aws-ia/eks-blueprints-addons ~> 1.23.0`)**
     - [x] `enable_aws_load_balancer_controller = true` — 관리형 addon 없어 blueprints IRSA 예외 사용
     - ~~`enable_kube_prometheus_stack`~~ — Observability는 Phase 6으로 이동
+  - [x] **EKS 관리형 추가 (`aws_eks_addon`)**
+    - [x] `aws-secrets-store-csi-driver-provider` v3.1.1-eksbuild.1 — Secrets Store CSI Driver + ASCP 번들
+      - IAM 불필요 (ASCP 자체 IAM 없음 — 앱 Pod ServiceAccount에 IAM 부여)
+      - dev 시스템 노드 pod 한계(17) 해소: CoreDNS 2→1, EBS CSI Controller 2→1 replica (비용 예외)
 - [x] `modules/eks-addons/1.0.0/outputs.tf` 작성
 - [x] `modules/eks-addons/1.0.0/CLAUDE.md` 작성
 - [x] `modules/eks-addons-pod-identity/1.0.0/` 작성 — **Pod Identity 전용 구현** (비교 참조용, 배포 X)
@@ -227,6 +231,7 @@
     - [x] `enable_argo_rollouts = true` (Canary·Blue-Green 배포 전략 지원)
     - [x] ArgoCD Ingress 설정 — hostname: `argocd.pyhtest.com`, ALB + ACM + ExternalDNS + admin bcrypt 패스워드
     - [x] `karpenter_node_pools`: dev와 동일 4종(general/arm64/gpu/spot), `disruption.consolidateAfter = "300s"`
+    - [x] `enable_secrets_store_csi_driver = true`, `secrets_store_csi_driver_addon_version = "v3.1.1-eksbuild.1"` — Secrets Store CSI Driver + ASCP 번들 (코드 완료, `terraform apply` 필요)
   - [x] `karpenter.tf` 작성 (dev와 동일 구조: EC2NodeClass + NodePool for_each + finalizer 강제 제거 null_resource)
 - [x] `terraform fmt` + `terraform validate`
 - [x] `terraform plan` 검토

@@ -223,24 +223,6 @@ variable "replica_counts" {
   }
 }
 
-variable "enable_secrets_store_csi_driver" {
-  description = "Secrets Store CSI Driver + ASCP EKS 관리형 애드온 설치 여부. SSM Parameter Store/Secrets Manager를 Pod에 마운트하거나 K8s Secret으로 동기화할 때 필요하다"
-  type        = bool
-  default     = false
-}
-
-variable "secrets_store_csi_driver_addon_version" {
-  description = "aws-secrets-store-csi-driver-provider EKS 관리형 애드온 버전. enable_secrets_store_csi_driver=false이면 미사용 — null 허용"
-  type        = string
-  nullable    = true
-  default     = null
-
-  validation {
-    condition     = !var.enable_secrets_store_csi_driver || var.secrets_store_csi_driver_addon_version != null
-    error_message = "enable_secrets_store_csi_driver=true일 때 secrets_store_csi_driver_addon_version을 반드시 지정해야 합니다."
-  }
-}
-
 variable "additional_tags" {
   description = "모든 리소스에 추가할 태그 맵. providers.tf의 default_tags로 공통 태그를 관리하므로, 이 변수는 호출자가 추가로 전달할 태그에만 사용한다"
   type        = map(string)

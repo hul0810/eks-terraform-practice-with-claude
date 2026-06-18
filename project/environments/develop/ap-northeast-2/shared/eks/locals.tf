@@ -25,11 +25,12 @@ locals {
     addon_versions = {
       # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.33 --region ap-northeast-2
       # 2026-06-05 기준 default 버전
-      vpc_cni                = "v1.20.5-eksbuild.1"
-      kube_proxy             = "v1.33.10-eksbuild.2"
-      coredns                = "v1.12.4-eksbuild.10"
-      eks_pod_identity_agent = "v1.3.10-eksbuild.3"
-      ebs_csi_driver         = "v1.60.1-eksbuild.1"
+      vpc_cni                  = "v1.20.5-eksbuild.1"
+      kube_proxy               = "v1.33.10-eksbuild.2"
+      coredns                  = "v1.12.4-eksbuild.10"
+      eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
+      ebs_csi_driver           = "v1.60.1-eksbuild.1"
+      secrets_store_csi_driver = "v3.1.1-eksbuild.1"
     }
 
     # develop: 로컬 PC에서 kubectl 직접 접근 편의를 위해 public 엔드포인트 허용

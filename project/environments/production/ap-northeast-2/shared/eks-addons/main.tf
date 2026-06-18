@@ -29,9 +29,6 @@ module "eks_addons" {
   argocd_admin_password_bcrypt        = local.eks_addons.argocd_admin_password_bcrypt
   argocd_admin_password_mtime         = local.eks_addons.argocd_admin_password_mtime
 
-  enable_secrets_store_csi_driver        = local.eks_addons.enable_secrets_store_csi_driver
-  secrets_store_csi_driver_addon_version = local.eks_addons.secrets_store_csi_driver_addon_version
-
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags
 }

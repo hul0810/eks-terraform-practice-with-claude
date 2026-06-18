@@ -14,17 +14,17 @@
 
 ### 이 모듈이 관리하는 범위
 
-**Bootstrap 애드온 5종** 이 모듈에서 관리한다. 나머지 애드온(LBC, ExternalDNS, Karpenter 등)은 `modules/eks-addons`에서 관리한다.
+**Bootstrap 애드온 6종** 이 모듈에서 관리한다. 나머지 애드온(LBC, ExternalDNS, Karpenter 등)은 `modules/eks-addons`에서 관리한다.
 
 - 분리 이유: bootstrap 애드온은 노드 조인 및 IAM 연동의 전제 조건이라 클러스터 lifecycle에 묶여야 한다.
   나머지는 클러스터 구축 후 독립적으로 설치·운영한다.
 
-Bootstrap 5종은 `before_compute` 파라미터로 배포 순서를 제어한다. 모두 `module "eks"` 내 `addons` 블록에 선언하며, 별도 서브모듈 호출이나 외부 `aws_eks_addon` 리소스가 불필요하다:
+Bootstrap 6종은 `before_compute` 파라미터로 배포 순서를 제어한다. 모두 `module "eks"` 내 `addons` 블록에 선언하며, 별도 서브모듈 호출이나 외부 `aws_eks_addon` 리소스가 불필요하다:
 
 | before_compute | 포함 애드온 | 이유 |
 |----------------|-------------|------|
 | `true` (노드 그룹 이전) | eks-pod-identity-agent, vpc-cni | aws-node Pod Identity 크레덴셜 획득 전제 조건; 노드 조인 전 CNI ACTIVE 보장 |
-| `false` (기본값, 노드 그룹 이후) | kube-proxy, coredns, aws-ebs-csi-driver | EKS가 즉시 ACTIVE 표시하거나(kube-proxy, ebs-csi), 노드 없이는 ACTIVE 불가(coredns) |
+| `false` (기본값, 노드 그룹 이후) | kube-proxy, coredns, aws-ebs-csi-driver, aws-secrets-store-csi-driver-provider | EKS가 즉시 ACTIVE 표시하거나(kube-proxy, ebs-csi), 노드 없이는 ACTIVE 불가(coredns, secrets-store) |
 
 **coredns를 before_compute = false로 처리하는 이유:**
 coredns는 Kubernetes Deployment이므로 실행 노드가 없으면 Pod가 스케줄되지 않아 ACTIVE 상태가 되지 않는다.
@@ -49,11 +49,12 @@ OIDC Provider(`oidc_provider_arn` output)는 modules/eks-addons의 blueprints가
 ```hcl
 # environments/.../eks/locals.tf
 addon_versions = {
-  vpc_cni                = "v1.20.5-eksbuild.1"
-  kube_proxy             = "v1.33.10-eksbuild.2"
-  coredns                = "v1.12.4-eksbuild.10"
-  eks_pod_identity_agent = "v1.3.10-eksbuild.3"
-  ebs_csi_driver         = "v1.60.1-eksbuild.1"
+  vpc_cni                  = "v1.20.5-eksbuild.1"
+  kube_proxy               = "v1.33.10-eksbuild.2"
+  coredns                  = "v1.12.4-eksbuild.10"
+  eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
+  ebs_csi_driver           = "v1.60.1-eksbuild.1"
+  secrets_store_csi_driver = "v3.1.1-eksbuild.1"
 }
 ```
 
