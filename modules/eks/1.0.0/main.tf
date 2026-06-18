@@ -117,6 +117,7 @@ module "eks" {
       addon_version               = var.addon_versions.coredns
       resolve_conflicts_on_create = "OVERWRITE"
       resolve_conflicts_on_update = "OVERWRITE"
+      configuration_values        = var.coredns_configuration_values
       # before_compute 기본값 false: Kubernetes Deployment이므로 노드 없이는 ACTIVE 불가.
       # 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가하여
       # 노드 그룹 완료 후 설치되도록 보장한다 — 외부 aws_eks_addon 분리 불필요.
@@ -124,6 +125,7 @@ module "eks" {
     aws-ebs-csi-driver = {
       addon_version               = var.addon_versions.ebs_csi_driver
       resolve_conflicts_on_update = "OVERWRITE"
+      configuration_values        = var.ebs_csi_configuration_values
       pod_identity_association = [{
         role_arn        = aws_iam_role.ebs_csi.arn
         service_account = "ebs-csi-controller-sa"
