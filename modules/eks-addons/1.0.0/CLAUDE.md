@@ -1,6 +1,6 @@
 # modules/eks-addons 설계 원칙
 
-## 이 모듈이 관리하는 애드온 (7종)
+## 이 모듈이 관리하는 애드온 (6종)
 
 | 애드온 | 설치 방법 | IAM 방식 |
 |--------|-----------|---------|
@@ -10,9 +10,8 @@
 | karpenter | Helm (eks-blueprints-addons) | IRSA (blueprints 자동 처리) |
 | argocd | Helm (eks-blueprints-addons) | 없음 |
 | argo-rollouts | Helm (eks-blueprints-addons) | 없음 |
-| aws-secrets-store-csi-driver-provider | EKS 관리형 (`aws_eks_addon`) | 없음 (ASCP 자체 IAM 불필요) |
 
-> EBS CSI Driver는 Bootstrap 애드온으로 분류되어 `modules/eks`에서 관리한다.
+> EBS CSI Driver와 Secrets Store CSI Driver + ASCP는 Bootstrap 애드온으로 분류되어 `modules/eks`에서 관리한다.
 > kube-prometheus-stack은 Phase 6에서 별도 추가 예정.
 
 ---
@@ -28,7 +27,6 @@
 | karpenter (Helm chart) | `1.12.1` |
 | argo-cd (Helm chart) | `9.5.21` |
 | argo-rollouts (Helm chart) | `2.38.1` |
-| aws-secrets-store-csi-driver-provider (EKS addon) | `v3.1.1-eksbuild.1` |
 
 ---
 

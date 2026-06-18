@@ -26,11 +26,12 @@ locals {
     addon_versions = {
       # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.33 --region ap-northeast-2
       # 2026-06-05 기준 default 버전
-      vpc_cni                = "v1.20.5-eksbuild.1"
-      kube_proxy             = "v1.33.10-eksbuild.2"
-      coredns                = "v1.12.4-eksbuild.10"
-      eks_pod_identity_agent = "v1.3.10-eksbuild.3"
-      ebs_csi_driver         = "v1.60.1-eksbuild.1"
+      vpc_cni                  = "v1.20.5-eksbuild.1"
+      kube_proxy               = "v1.33.10-eksbuild.2"
+      coredns                  = "v1.12.4-eksbuild.10"
+      eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
+      ebs_csi_driver           = "v1.60.1-eksbuild.1"
+      secrets_store_csi_driver = "v3.1.1-eksbuild.1"
     }
 
     # production: Bastion/VPN 미구축 결정(비용 부담)에 따라 특정 공인 IP만 허용하는 퍼블릭 엔드포인트로 전환.
