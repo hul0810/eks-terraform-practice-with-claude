@@ -141,6 +141,20 @@ variable "addon_versions" {
   })
 }
 
+variable "coredns_configuration_values" {
+  description = "CoreDNS EKS 관리형 애드온 configuration_values JSON 문자열. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
+variable "ebs_csi_configuration_values" {
+  description = "EBS CSI Driver EKS 관리형 애드온 configuration_values JSON 문자열. dev에서 controller.replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
 variable "access_entries" {
   description = "EKS Access Entry 목록. IAM 엔티티(User/Role)에 Kubernetes 권한을 부여한다. principal_arn별로 policy_associations를 중첩 map으로 선언한다. 클러스터가 재생성되어도 terraform apply 한 번으로 접근 권한이 자동 복원된다."
   type = map(object({
