@@ -52,6 +52,12 @@ locals {
       desired_size   = 1
     }
 
+    # dev: t3.medium 시스템 노드 pod 한계(17)에서 secrets-store DaemonSet 2개를 위한 슬롯 확보.
+    # CoreDNS·EBS CSI Controller를 1 replica로 축소하여 시스템 노드 슬롯 2개를 절약한다.
+    # 재시작 시 수초 DNS/EBS 단절 허용 — dev 환경 비용 예외 (production은 기본값 2 유지).
+    coredns_configuration_values   = jsonencode({ replicaCount = 1 })
+    ebs_csi_configuration_values   = jsonencode({ controller = { replicaCount = 1 } })
+
     # STANDARD: 표준 지원 종료 시 다음 버전으로 자동 업그레이드 — Extended Support 비용($0.60/hr) 차단
     # EKS 1.33 표준 지원 종료: 2026-07-29. 이전에 1.34로 업그레이드하거나 자동 업그레이드 허용.
     upgrade_policy = { support_type = "STANDARD" }
