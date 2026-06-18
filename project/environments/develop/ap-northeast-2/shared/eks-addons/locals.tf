@@ -65,6 +65,9 @@ locals {
     # 주의: Terraform bcrypt() 함수를 직접 사용하지 말 것 — apply마다 ArgoCD pod 재시작 유발
     argocd_admin_password_bcrypt = "$2b$10$FXo.mTr4eJdYS2cacXnFueMRNpPN.4zHbwu5g0tuHQxhp2a98ReHy"
     argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
+
+    secrets_store_csi_driver_addon_version = "v3.1.1-eksbuild.1"
+    enable_secrets_store_csi_driver        = true
   }
 
   # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────
