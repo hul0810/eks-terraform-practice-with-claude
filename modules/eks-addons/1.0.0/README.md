@@ -23,6 +23,7 @@ No requirements.
 | Name | Type |
 |------|------|
 | [aws_eks_access_entry.karpenter_node](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_access_entry) | resource |
+| [aws_eks_addon.secrets_store_csi_driver](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_addon) | resource |
 
 ## Inputs
 
@@ -48,6 +49,7 @@ No requirements.
 | <a name="input_enable_external_dns"></a> [enable\_external\_dns](#input\_enable\_external\_dns) | ExternalDNS 설치 여부. false이면 blueprints가 관련 IAM Role과 Helm release를 생성하지 않는다 | `bool` | `true` | no |
 | <a name="input_enable_karpenter"></a> [enable\_karpenter](#input\_enable\_karpenter) | Karpenter 설치 여부. false이면 blueprints가 관련 IAM Role, SQS, EventBridge Rule, Helm release를 생성하지 않는다 | `bool` | `true` | no |
 | <a name="input_enable_metrics_server"></a> [enable\_metrics\_server](#input\_enable\_metrics\_server) | Metrics Server 설치 여부 | `bool` | `true` | no |
+| <a name="input_enable_secrets_store_csi_driver"></a> [enable\_secrets\_store\_csi\_driver](#input\_enable\_secrets\_store\_csi\_driver) | Secrets Store CSI Driver + ASCP EKS 관리형 애드온 설치 여부. SSM Parameter Store/Secrets Manager를 Pod에 마운트하거나 K8s Secret으로 동기화할 때 필요하다 | `bool` | `false` | no |
 | <a name="input_external_dns_chart_version"></a> [external\_dns\_chart\_version](#input\_external\_dns\_chart\_version) | ExternalDNS Helm chart 버전 (예: "1.14.5") | `string` | n/a | yes |
 | <a name="input_external_dns_route53_zone_arns"></a> [external\_dns\_route53\_zone\_arns](#input\_external\_dns\_route53\_zone\_arns) | ExternalDNS가 레코드를 관리할 Route53 Hosted Zone ARN 목록. 빈 리스트이면 모든 Hosted Zone 접근 허용 (운영 환경에서는 반드시 명시할 것) | `list(string)` | `[]` | no |
 | <a name="input_karpenter_chart_version"></a> [karpenter\_chart\_version](#input\_karpenter\_chart\_version) | Karpenter Helm chart 버전 (예: "1.3.3") | `string` | n/a | yes |
@@ -55,6 +57,7 @@ No requirements.
 | <a name="input_metrics_server_chart_version"></a> [metrics\_server\_chart\_version](#input\_metrics\_server\_chart\_version) | Metrics Server Helm chart 버전 (예: "3.12.2") | `string` | n/a | yes |
 | <a name="input_oidc_provider_arn"></a> [oidc\_provider\_arn](#input\_oidc\_provider\_arn) | IRSA용 OIDC Provider ARN. blueprints 모듈이 LBC·ExternalDNS·Karpenter IAM Role 생성에 사용한다 | `string` | n/a | yes |
 | <a name="input_replica_counts"></a> [replica\_counts](#input\_replica\_counts) | 애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값 | <pre>object({<br/>    lbc            = optional(number, 2) # LBC: replicaCount 기본 2<br/>    karpenter      = optional(number, 2) # Karpenter: replicas 기본 2<br/>    external_dns   = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)<br/>    metrics_server = optional(number, 1) # MetricsServer: replicas 기본 1<br/>    argocd_server  = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수<br/>    argo_rollouts  = optional(number, 1) # Argo Rollouts controller: 기본 1. 시스템 노드 HA(min>=2) 확보 후 2로 증설<br/>  })</pre> | `{}` | no |
+| <a name="input_secrets_store_csi_driver_addon_version"></a> [secrets\_store\_csi\_driver\_addon\_version](#input\_secrets\_store\_csi\_driver\_addon\_version) | aws-secrets-store-csi-driver-provider EKS 관리형 애드온 버전. enable\_secrets\_store\_csi\_driver=false이면 미사용 — null 허용 | `string` | `null` | no |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | EKS 클러스터가 속한 VPC ID. LBC가 VPC ID를 IMDS에서 조회하지 않도록 직접 주입한다 | `string` | n/a | yes |
 
 ## Outputs

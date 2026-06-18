@@ -1,7 +1,7 @@
 ################################################################################
-# EKS Addons 모듈 — Helm (blueprints) 전용
+# EKS Addons 모듈 — Helm (blueprints) 전용 + EKS 관리형 선택 적용
 #
-# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, Karpenter, ArgoCD, Argo Rollouts
+# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, Karpenter, ArgoCD, Argo Rollouts, Secrets Store CSI Driver+ASCP
 #
 # 이 모듈은 EKS 관리형 addon API(aws_eks_addon)가 없거나 Helm values 커스터마이징이
 # 필요한 애드온을 aws-ia/eks-blueprints-addons 모듈로 관리한다.
@@ -238,6 +238,26 @@ resource "aws_eks_access_entry" "karpenter_node" {
   cluster_name  = var.cluster_name
   principal_arn = module.eks_blueprints_addons.karpenter.node_iam_role_arn
   type          = "EC2_LINUX"
+
+  tags = var.additional_tags
+}
+
+# ── Secrets Store CSI Driver + ASCP ──────────────────────────────────────────
+# EKS 관리형 애드온으로 설치. 단일 애드온이 CSI Driver와 ASCP를 함께 패키징한다.
+#
+# [IAM 없음] ASCP 자체는 IAM이 필요 없다. SSM Parameter Store/Secrets Manager 접근
+# IAM은 각 앱 Pod의 Service Account에 Pod Identity/IRSA로 별도 부여한다.
+#
+# [CSI Driver 포함] eks-blueprints-addons의 enable_secrets_store_csi_driver 플래그는
+# 사용하지 않는다. 이 관리형 애드온 하나가 CSI Driver DaemonSet을 의존성으로 포함한다.
+resource "aws_eks_addon" "secrets_store_csi_driver" {
+  for_each = var.enable_secrets_store_csi_driver ? toset(["this"]) : toset([])
+
+  cluster_name                = var.cluster_name
+  addon_name                  = "aws-secrets-store-csi-driver-provider"
+  addon_version               = var.secrets_store_csi_driver_addon_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
 
   tags = var.additional_tags
 }
