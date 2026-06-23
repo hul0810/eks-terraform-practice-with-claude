@@ -20,16 +20,16 @@ locals {
 
   eks = {
     cluster_name       = "${local.project}${local.name_suffix}"
-    kubernetes_version = "1.33"
+    kubernetes_version = "1.34"
 
     addon_versions = {
-      # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.33 --region ap-northeast-2
-      # 2026-06-05 기준 default 버전 (cert-manager: 2026-06-24 기준)
-      vpc_cni                  = "v1.20.5-eksbuild.1"
-      kube_proxy               = "v1.33.10-eksbuild.2"
-      coredns                  = "v1.12.4-eksbuild.10"
+      # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.34 --region ap-northeast-2
+      # 2026-06-24 기준 default 버전
+      vpc_cni                  = "v1.21.2-eksbuild.2"
+      kube_proxy               = "v1.34.6-eksbuild.11"
+      coredns                  = "v1.12.4-eksbuild.17"
       eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
-      ebs_csi_driver           = "v1.60.1-eksbuild.1"
+      ebs_csi_driver           = "v1.62.0-eksbuild.1"
       secrets_store_csi_driver = "v3.1.1-eksbuild.1"
       cert_manager             = "v1.20.2-eksbuild.3"
     }
@@ -75,7 +75,7 @@ locals {
     })
 
     # STANDARD: 표준 지원 종료 시 다음 버전으로 자동 업그레이드 — Extended Support 비용($0.60/hr) 차단
-    # EKS 1.33 표준 지원 종료: 2026-07-29. 이전에 1.34로 업그레이드하거나 자동 업그레이드 허용.
+    # EKS 1.34 표준 지원 종료: 2026-12-02. 이전에 1.35로 업그레이드하거나 자동 업그레이드 허용.
     upgrade_policy = { support_type = "STANDARD" }
 
     # Karpenter EC2NodeClass가 karpenter.sh/discovery 태그로 node SG를 자동 탐색한다.
