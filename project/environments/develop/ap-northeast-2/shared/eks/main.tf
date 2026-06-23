@@ -46,8 +46,9 @@ module "eks" {
 
   addon_versions = local.eks.addon_versions
 
-  coredns_configuration_values  = local.eks.coredns_configuration_values
-  ebs_csi_configuration_values  = local.eks.ebs_csi_configuration_values
+  coredns_configuration_values      = local.eks.coredns_configuration_values
+  ebs_csi_configuration_values      = local.eks.ebs_csi_configuration_values
+  cert_manager_configuration_values = local.eks.cert_manager_configuration_values
 
   access_entries = local.access_entries
 }
