@@ -46,5 +46,7 @@ module "eks" {
 
   addon_versions = local.eks.addon_versions
 
+  cert_manager_configuration_values = local.eks.cert_manager_configuration_values
+
   access_entries = local.access_entries
 }

@@ -139,6 +139,7 @@ variable "addon_versions" {
     eks_pod_identity_agent   = string
     ebs_csi_driver           = string
     secrets_store_csi_driver = string
+    cert_manager             = string
   })
 }
 
@@ -151,6 +152,13 @@ variable "coredns_configuration_values" {
 
 variable "ebs_csi_configuration_values" {
   description = "EBS CSI Driver EKS 관리형 애드온 configuration_values JSON 문자열. dev에서 controller.replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
+variable "cert_manager_configuration_values" {
+  description = "cert-manager EKS 커뮤니티 애드온 configuration_values JSON 문자열. installCRDs·toleration·replicaCount를 포함한다. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
   type        = string
   nullable    = true
   default     = null
