@@ -83,12 +83,12 @@ module "eks" {
   authentication_mode = "API_AND_CONFIG_MAP"
 
   # ── 클러스터 생성자 접근 권한 ────────────────────────────────────────────────
-  # 이 옵션을 true로 설정하면 terraform apply를 실행한 IAM 엔티티(현재: TerraformExecutionRole)에
+  # 이 옵션을 true로 설정하면 terraform apply를 실행한 IAM 엔티티에
   # AmazonEKSClusterAdminPolicy를 Access Entry로 자동 부여한다.
   #
   # false로 유지하는 이유:
-  #   - TerraformExecutionRole은 AWS API(EKS 생성/수정)만 호출하므로 K8s ClusterAdmin 불필요
   #   - 클러스터 접근 주체는 environments/.../eks/locals.tf의 access_entries에 명시적으로 선언한다
+  #     (data.aws_iam_session_context.current.issuer_arn으로 Terraform 실행 주체를 동적 참조)
   #     → 누가 어떤 권한으로 접근하는지 코드로 추적 가능
   enable_cluster_creator_admin_permissions = false
 
