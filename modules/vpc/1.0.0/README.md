@@ -52,6 +52,7 @@ No requirements.
 | <a name="output_nat_public_ips"></a> [nat\_public\_ips](#output\_nat\_public\_ips) | NAT Gateway 퍼블릭 IP 목록 |
 | <a name="output_private_route_table_ids"></a> [private\_route\_table\_ids](#output\_private\_route\_table\_ids) | 프라이빗 서브넷 라우팅 테이블 ID 목록 |
 | <a name="output_private_subnet_ids"></a> [private\_subnet\_ids](#output\_private\_subnet\_ids) | 프라이빗 서브넷 ID 목록 (EKS 노드, Pod IP) |
+| <a name="output_public_route_table_ids"></a> [public\_route\_table\_ids](#output\_public\_route\_table\_ids) | 퍼블릭 서브넷 라우팅 테이블 ID 목록 |
 | <a name="output_public_subnet_ids"></a> [public\_subnet\_ids](#output\_public\_subnet\_ids) | 퍼블릭 서브넷 ID 목록 |
 | <a name="output_tgw_route_table_ids"></a> [tgw\_route\_table\_ids](#output\_tgw\_route\_table\_ids) | TGW 서브넷 라우팅 테이블 ID 목록 (TGW 도입 시 경로 추가용) |
 | <a name="output_tgw_subnet_ids"></a> [tgw\_subnet\_ids](#output\_tgw\_subnet\_ids) | Transit Gateway 어태치먼트용 서브넷 ID 목록 |

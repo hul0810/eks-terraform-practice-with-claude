@@ -35,7 +35,7 @@ resource "aws_organizations_policy" "required_tags" {
         }
         # 허용값 문서화: 거버넌스 기준 정의 및 validate_tags remote state output의 단일 소스.
         tag_value = {
-          "@@assign" = ["develop", "production", "common"]
+          "@@assign" = ["develop", "production", "common", "monitoring"]
         }
         # tag_policy_compliance가 이 리소스 타입에서 키 누락을 plan 단계에서 차단한다.
         report_required_tag_for = {
@@ -101,14 +101,24 @@ resource "aws_organizations_policy" "required_tags" {
   }
 }
 
-# 단일 계정 환경: 계정 ID로 연결해 정확한 범위를 지정한다.
-# 멀티 계정 확장 시: Root가 아니라 OU ID로 교체한다.
+# 계정별로 정책을 연결해 정확한 범위를 지정한다.
+# 신규 계정 추가 시 locals._policy_target_account_ids에만 추가하면 된다.
 # Root 연결은 마스터·보안·Sandbox 계정까지 무차별 적용되어 범위가 너무 광범위하다.
 resource "aws_organizations_policy_attachment" "required_tags" {
+  for_each = local._policy_target_account_ids
+
   policy_id = aws_organizations_policy.required_tags.id
-  target_id = data.aws_caller_identity.current.account_id
+  target_id = each.value
 
   lifecycle {
     prevent_destroy = true
   }
+}
+
+# for_each 전환 전 단일 리소스를 관리 계정 키로 이전한다.
+# TODO: 모든 실행 주체가 terraform apply 완료 후 이 블록을 삭제한다.
+#       삭제 조건: `terraform state list | grep required_tags` 결과에 ["MGMT_ACCOUNT_ID"] 키가 보이면 이전 완료.
+moved {
+  from = aws_organizations_policy_attachment.required_tags
+  to   = aws_organizations_policy_attachment.required_tags["MGMT_ACCOUNT_ID"]
 }

@@ -23,7 +23,7 @@ locals {
   vpc_id = data.aws_eks_cluster.this.vpc_config[0].vpc_id
 
   # eks/locals.tf의 kubernetes_version과 동기화 — EKS 버전 업그레이드 시 함께 변경한다
-  cluster_version = "1.33"
+  cluster_version = "1.34"
 
   # dev: 시스템 노드 1개(비용 절감)로 모든 애드온 replica=1. prd는 모듈 기본값 사용
   replica_counts = {
@@ -66,6 +66,14 @@ locals {
     argocd_admin_password_bcrypt = "ARGOCD_HASH_REDACTED"
     argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
 
+    # OTel Spoke Collector (GitOps로 OTel Gateway 배포 완료 후 활성화)
+    # 활성화 순서:
+    #   1. monitoring vpc apply → dev vpc peering_routes 주석 해제 + pcx ID 입력 → apply
+    #   2. Phase 6 ArgoCD Hub-Spoke 구성 후 devops-manifest 저장소에서 OTel Gateway 배포
+    #   3. OTel Gateway Internal NLB DNS 확인 후 아래 값 설정 → apply
+    enable_otel_spoke_collector       = false
+    otel_gateway_endpoint             = "" # "<NLB DNS>:4317" — ArgoCD 배포 후 Internal NLB DNS 확인
+    otel_spoke_operator_chart_version = "0.76.1"
   }
 
   # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────

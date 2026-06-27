@@ -22,6 +22,8 @@ locals {
     "${local.project}-api-gateway${local.name_suffix}" = {
       # dev 환경: 이미지 10개 초과분 자동 삭제로 저장소 비용 통제
       lifecycle_tagged_count = 10
+      # workload 계정 이관을 위해 이미지 포함 강제 삭제 허용
+      force_delete = true
       # 나머지 설정은 모듈 기본값 사용:
       #   image_tag_mutability = "IMMUTABLE" (태그 덮어쓰기 방지)
       #   scan_on_push         = true        (ECR Basic 스캔, 무료)

@@ -47,3 +47,8 @@ output "nat_public_ips" {
   description = "NAT Gateway 퍼블릭 IP 목록"
   value       = module.vpc.nat_public_ips
 }
+
+output "public_route_table_ids" {
+  description = "퍼블릭 서브넷 라우팅 테이블 ID 목록"
+  value       = module.vpc.public_route_table_ids
+}

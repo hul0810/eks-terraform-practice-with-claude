@@ -24,9 +24,9 @@
 ### Terraform 코드 작성 시
 - `get_latest_provider_version` → `get_provider_capabilities` → `get_provider_details` 순서로 조회한다.
 - 모듈 사용 시 `get_latest_module_version`으로 최신 버전을 확인한다.
-- **모든 AWS provider에 `assume_role`을 반드시 포함한다.**
-  - profile: `terraform`
-  - role_arn: `arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole`
+- **모든 AWS provider에 `profile = "terraform"`을 명시한다.** (AWS SSO 인증)
+  - Terraform 실행 전 `aws sso login --profile terraform` 필수
+  - `assume_role` 블록은 사용하지 않는다 (SSO가 AdministratorAccess를 직접 제공)
 
 ### AWS 인프라 구축 시
 - 신규 AWS 서비스 또는 익숙하지 않은 서비스 사용 시 `aws___read_documentation`으로 공식 문서를 참조한다.

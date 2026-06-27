@@ -29,6 +29,10 @@ module "eks_addons" {
   argocd_admin_password_bcrypt        = local.eks_addons.argocd_admin_password_bcrypt
   argocd_admin_password_mtime         = local.eks_addons.argocd_admin_password_mtime
 
+  enable_otel_spoke_collector       = local.eks_addons.enable_otel_spoke_collector
+  otel_gateway_endpoint             = local.eks_addons.otel_gateway_endpoint
+  otel_spoke_operator_chart_version = local.eks_addons.otel_spoke_operator_chart_version
+
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags
 }

@@ -37,7 +37,6 @@ locals {
 
     # cert-manager: CriticalAddonsOnly toleration으로 시스템 노드 배치. replica는 기본값(2) 유지
     cert_manager_configuration_values = jsonencode({
-      installCRDs = true
       tolerations = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
       webhook = {
         tolerations = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
@@ -99,9 +98,11 @@ locals {
         }
       }
     }
-    # helm/kubernetes provider가 aws eks get-token --role-arn으로 이 Role을 assume하므로 클러스터 admin 권한 필요
+    # Terraform 실행 주체(AWS SSO Role)에게 K8s ClusterAdmin 부여.
+    # helm/kubernetes provider가 aws eks get-token --profile terraform으로 이 Role의 토큰을 발급받는다.
+    # principal_arn은 data.aws_iam_session_context.current.issuer_arn으로 동적 참조 — SSO Role ARN 변경에 자동 대응.
     terraform_execution = {
-      principal_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
+      principal_arn = data.aws_iam_session_context.current.issuer_arn
       policy_associations = {
         cluster_admin = {
           policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"

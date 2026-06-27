@@ -228,3 +228,34 @@ variable "additional_tags" {
   type        = map(string)
   default     = {}
 }
+
+# ── OTel Spoke Collector ──────────────────────────────────────────────────────
+
+variable "enable_otel_spoke_collector" {
+  description = "OTel spoke collector 설치 여부. true로 설정하면 OTel Operator와 DaemonSet·Deployment 수집기를 otel-collector 네임스페이스에 배포한다. otel_gateway_endpoint와 otel_spoke_operator_chart_version을 함께 설정해야 한다"
+  type        = bool
+  default     = false
+}
+
+variable "otel_gateway_endpoint" {
+  description = "monitoring 클러스터 OTel Gateway Internal NLB 엔드포인트 (예: 'internal-xxxx.elb.ap-northeast-2.amazonaws.com:4317'). enable_otel_spoke_collector=true일 때 필수"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_otel_spoke_collector || length(var.otel_gateway_endpoint) > 0
+    error_message = "enable_otel_spoke_collector=true일 때 otel_gateway_endpoint는 비어 있을 수 없습니다."
+  }
+}
+
+variable "otel_spoke_operator_chart_version" {
+  description = "OTel Operator Helm chart 버전 (예: '0.76.1'). enable_otel_spoke_collector=true일 때 필수"
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = !var.enable_otel_spoke_collector || (var.otel_spoke_operator_chart_version != null && length(var.otel_spoke_operator_chart_version) > 0)
+    error_message = "enable_otel_spoke_collector=true일 때 otel_spoke_operator_chart_version은 설정되어야 합니다."
+  }
+}

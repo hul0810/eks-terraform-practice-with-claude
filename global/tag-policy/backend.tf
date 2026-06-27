@@ -5,9 +5,5 @@ terraform {
     region       = "ap-northeast-2"
     profile      = "terraform"
     use_lockfile = true
-
-    assume_role = {
-      role_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
-    }
   }
 }

@@ -1,15 +1,11 @@
 terraform {
   backend "s3" {
-    bucket       = "eks-practice-tfstate-MGMT_ACCOUNT_ID"
+    bucket       = "eks-practice-tfstate-WORKLOAD_ACCOUNT_ID"
     key          = "project/production/ap-northeast-2/order/ecr/terraform.tfstate"
     region       = "ap-northeast-2"
     use_lockfile = true
     encrypt      = true
 
-    profile = "terraform"
-
-    assume_role = {
-      role_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
-    }
+    profile = "terraform-workload"
   }
 }

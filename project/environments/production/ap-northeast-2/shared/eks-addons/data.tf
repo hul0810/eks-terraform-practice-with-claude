@@ -3,13 +3,10 @@
 data "terraform_remote_state" "eks" {
   backend = "s3"
   config = {
-    bucket  = "eks-practice-tfstate-MGMT_ACCOUNT_ID"
+    bucket  = "eks-practice-tfstate-WORKLOAD_ACCOUNT_ID"
     key     = "project/production/ap-northeast-2/shared/eks/terraform.tfstate"
     region  = "ap-northeast-2"
-    profile = "terraform"
-    assume_role = {
-      role_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:role/TerraformExecutionRole"
-    }
+    profile = "terraform-workload"
   }
 }
 

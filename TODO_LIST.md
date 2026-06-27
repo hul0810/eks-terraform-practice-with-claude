@@ -300,19 +300,68 @@
 
 ---
 
-## Phase 5. Observability 구축 (Prometheus + Grafana)
+## Phase 5. Observability 인프라 구성 (monitoring EKS 클러스터 + OTel Spoke)
 
-> **전제**: Phase 2-4 완료 후 진행 (Karpenter 앱 노드 프로비저닝 완료 상태)
-> kube-prometheus-stack pre-install hook이 앱 노드를 필요로 하므로 Karpenter 이후에 설치한다.
+> **목표**: Observability 전용 EKS 클러스터(monitoring, 10.12.0.0/16)의 인프라를 구성하고,
+> dev/prd 클러스터에 OTel Spoke Collector를 준비한다.
+>
+> **결정 사항**: LGTM 스택(Mimir·Loki·Tempo·Grafana)과 OTel Operator·Gateway는 **GitOps로 직행**.
+> Phase 5에서는 Terraform으로 클러스터 인프라(VPC·EKS·EKS Addons)만 구성하고,
+> LGTM 배포는 Phase 6(Hub-Spoke ArgoCD) 완료 후 `devops-manifest` 저장소에서 ArgoCD Application으로 관리한다.
+>
+> **아키텍처**: dev/prd OTel DaemonSet(spoke) → monitoring OTel Gateway(hub, GitOps 배포) → LGTM 백엔드
+> **전제**: Phase 2-4 완료. cert-manager Bootstrap 애드온 설치 완료 (OTel Operator 전제 조건).
 
-- [ ] `modules/eks-addons/1.0.0/main.tf`에 kube-prometheus-stack 추가
-  - [ ] `enable_kube_prometheus_stack = true` (aws-ia/eks-blueprints-addons)
-  - [ ] chart 버전 변수화 (`kube_prometheus_stack_chart_version`)
-  - [ ] Grafana, Prometheus, Alertmanager values 정의
-- [ ] `modules/eks-addons/1.0.0/variables.tf`에 `kube_prometheus_stack_chart_version` 변수 추가
-- [ ] `environments/develop/ap-northeast-2/shared/eks-addons/locals.tf`에 버전 추가
-- [ ] `kubectl get pods -n kube-prometheus-stack` — 파드 상태 확인
-- [ ] Grafana 대시보드 접속 확인
+### 5-1. modules/vpc/1.0.0 — VPC Peering + TGW 옵션 추가 ✅
+
+- [x] `modules/vpc/1.0.0/variables.tf` — 신규 변수 추가 (버전 유지, 하위 호환)
+  - [x] `vpc_peering_create`, `vpc_peering_routes`, `transit_gateway_id`, `transit_gateway_routes`
+- [x] `modules/vpc/1.0.0/main.tf` — 피어링·TGW 리소스 추가
+- [x] `modules/vpc/1.0.0/outputs.tf` — `vpc_peering_connection_ids`, `tgw_attachment_id` 추가
+
+### 5-2. modules/eks-addons/1.0.0 — OTel Spoke Collector 추가 ✅
+
+- [x] `modules/eks-addons/1.0.0/variables.tf` — `enable_otel_spoke_collector`, `otel_gateway_endpoint`, `otel_spoke_operator_chart_version`
+- [x] `modules/eks-addons/1.0.0/main.tf` — OTel Operator helm_release + DaemonSet(`otel-spoke-node`) + Deployment(`otel-spoke-singleton`) CRD
+  - k8s_cluster receiver는 DaemonSet에서 분리해 Deployment로 관리 (중복 메트릭 방지)
+- [x] `modules/eks-addons/1.0.0/CLAUDE.md` — OTel spoke 섹션 + GitOps 전환 계획 추가
+
+### 5-3. monitoring/ 환경 구성 (클러스터 인프라만) ✅
+
+> `monitoring/environments/ap-northeast-2/shared/` 디렉토리
+> 모듈 source 경로: `../../../../../modules/{name}/1.0.0` (루트까지 5단계)
+> **LGTM 스택은 이 단계에서 구성하지 않는다 — Phase 6 GitOps에서 배포**
+
+- [x] `global/tag-policy/main.tf` — "monitoring" 환경 허용값 추가
+- [x] `monitoring/environments/ap-northeast-2/shared/vpc/` 구성
+  - [x] CIDR: 10.12.0.0/16 (Phase 8 Intra CIDR과 동일, Phase 9 이전 시 재설계 불필요)
+  - [x] `vpc_peering_create`: dev(10.10.0.0/16), prd(10.11.0.0/16) VPC Peering 요청자 생성
+- [x] `monitoring/environments/ap-northeast-2/shared/eks/` 구성
+  - [x] `cluster_name = "eks-practice-mon"`, `kubernetes_version = "1.34"`, cert-manager Bootstrap 포함
+- [x] `monitoring/environments/ap-northeast-2/shared/eks-addons/` 구성
+  - [x] LBC, ExternalDNS, Karpenter, Metrics Server 활성화 (ArgoCD·OTel spoke 미포함)
+
+### 5-4. dev/prd — VPC peering_routes + OTel spoke 활성화
+
+> monitoring vpc apply 후 pcx ID 확인 → observability apply 후 NLB 호스트명 확인 필요
+
+- [x] `project/environments/develop/.../vpc/locals.tf` — `vpc_peering_routes` 플레이스홀더 추가 (pcx ID 입력 대기)
+- [x] `project/environments/production/.../vpc/locals.tf` — 동일
+- [x] `project/environments/develop/.../eks-addons/locals.tf` — `enable_otel_spoke_collector=false` 플레이스홀더 (NLB DNS 입력 대기)
+- [x] `project/environments/production/.../eks-addons/locals.tf` — 동일
+- [ ] monitoring vpc apply → `vpc_peering_connection_ids` 확인 후 dev/prd vpc 주석 해제 + pcx ID 입력 → apply
+- [ ] monitoring eks, eks-addons apply (2단계)
+- [ ] GitOps로 OTel Operator·Gateway·LGTM 배포 (Phase 6 이후)
+- [ ] OTel Gateway NLB 호스트명 확인 후 dev/prd eks-addons `enable_otel_spoke_collector=true` + endpoint 입력 → apply
+
+### 5-5. 검증
+
+- [ ] `aws eks update-kubeconfig --name eks-practice-mon --region ap-northeast-2`
+- [ ] `kubectl get nodes` — monitoring 클러스터 시스템 노드 확인
+- [ ] `kubectl get pods -A` — LBC·ExternalDNS·Karpenter·Metrics Server 확인
+- [ ] `aws ec2 describe-vpc-peering-connections --filters Name=status-code,Values=active` — Peering 상태 확인
+- [ ] (Phase 6 이후) `kubectl get opentelemetrycollector -A` — spoke 인스턴스 확인
+- [ ] (Phase 6 이후) Grafana UI 접속 (`https://grafana.pyhtest.com`)
 
 ---
 
