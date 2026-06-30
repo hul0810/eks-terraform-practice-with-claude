@@ -1,9 +1,12 @@
+# Terraform 실행자의 계정 ID 조회 — ACM ARN 동적 구성에 사용
+data "aws_caller_identity" "current" {}
+
 # eks/ state에서 클러스터 정보 참조 (cluster_name, cluster_endpoint, oidc_provider_arn).
 # eks/ root module이 먼저 apply된 상태를 전제로 한다.
 data "terraform_remote_state" "eks" {
   backend = "s3"
   config = {
-    bucket  = "eks-practice-tfstate-WORKLOAD_ACCOUNT_ID"
+    bucket  = "eks-practice-tfstate-workload"
     key     = "project/develop/ap-northeast-2/shared/eks/terraform.tfstate"
     region  = "ap-northeast-2"
     profile = "terraform-workload"

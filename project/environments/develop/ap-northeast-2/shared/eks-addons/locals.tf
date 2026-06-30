@@ -15,8 +15,8 @@ locals {
     project     = local.project
   }
 
-  # pyhtest.com ACM 인증서 — workload 계정, Terraform 외부 관리 리소스 (하드코딩)
-  acm_certificate_arn = "arn:aws:acm:ap-northeast-2:WORKLOAD_ACCOUNT_ID:certificate/25f64604-759b-42b2-8734-69b3d0d9cfb7"
+  # pyhtest.com ACM 인증서 — workload 계정, Terraform 외부 관리 리소스 (account_id는 런타임 조회)
+  acm_certificate_arn = "arn:aws:acm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:certificate/25f64604-759b-42b2-8734-69b3d0d9cfb7"
 
   # eks/ state에서 참조하는 클러스터 정보
   cluster_name      = data.terraform_remote_state.eks.outputs.cluster_name
