@@ -39,7 +39,7 @@ locals {
     endpoint_public_access = true
 
     # 로컬 kubectl 접근을 허용할 IP 목록. 공인 IP가 변경되면 갱신 후 terraform apply.
-    public_access_cidrs = ["OPERATOR_IP/32"]
+    public_access_cidrs = [var.operator_ip_cidr]
 
     # 컨트롤 플레인 로그: CloudWatch Logs 비용 발생 (로그 타입당 약 $0.50/GB~)
     # 기본 비활성화. 디버깅 필요 시 원하는 타입 추가 후 terraform apply.
@@ -95,7 +95,7 @@ locals {
   # access_scope.namespaces: type이 "namespace"일 때만 지정
   access_entries = {
     study = {
-      principal_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:user/study"
+      principal_arn = "arn:aws:iam::${var.account_id_mgmt}:user/study"
       policy_associations = {
         cluster_admin = {
           policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"

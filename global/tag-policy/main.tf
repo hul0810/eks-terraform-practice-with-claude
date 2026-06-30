@@ -114,11 +114,3 @@ resource "aws_organizations_policy_attachment" "required_tags" {
     prevent_destroy = true
   }
 }
-
-# for_each 전환 전 단일 리소스를 관리 계정 키로 이전한다.
-# TODO: 모든 실행 주체가 terraform apply 완료 후 이 블록을 삭제한다.
-#       삭제 조건: `terraform state list | grep required_tags` 결과에 ["MGMT_ACCOUNT_ID"] 키가 보이면 이전 완료.
-moved {
-  from = aws_organizations_policy_attachment.required_tags
-  to   = aws_organizations_policy_attachment.required_tags["MGMT_ACCOUNT_ID"]
-}

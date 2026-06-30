@@ -33,7 +33,7 @@ locals {
 
     # monitoring: 로컬 PC에서 kubectl 직접 접근 및 observability 스택 배포 편의를 위해 public 허용
     endpoint_public_access = true
-    public_access_cidrs    = ["OPERATOR_IP/32"]
+    public_access_cidrs    = [var.operator_ip_cidr]
 
     enabled_log_types = []
 
@@ -71,7 +71,7 @@ locals {
 
   access_entries = {
     study = {
-      principal_arn = "arn:aws:iam::MGMT_ACCOUNT_ID:user/study"
+      principal_arn = "arn:aws:iam::${var.account_id_mgmt}:user/study"
       policy_associations = {
         cluster_admin = {
           policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"

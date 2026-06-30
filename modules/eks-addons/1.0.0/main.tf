@@ -241,3 +241,238 @@ resource "aws_eks_access_entry" "karpenter_node" {
 
   tags = var.additional_tags
 }
+
+# ── OTel Spoke Collector ──────────────────────────────────────────────────────
+# dev/prd 클러스터에서 텔레메트리를 수집하여 monitoring 클러스터의 OTel Gateway로 전송한다.
+#
+# [수집 아키텍처: DaemonSet + Deployment 분리]
+# k8s_cluster receiver는 K8s API를 폴링하여 Deployment·Pod 상태 등 클러스터 수준 메트릭을 수집한다.
+# DaemonSet에 포함하면 노드 수만큼 중복 메트릭이 발생하므로 단일 Deployment로 분리한다.
+#
+# - otel-spoke-node   (DaemonSet):          노드별 kubeletstats 메트릭 + filelog 컨테이너 로그
+# - otel-spoke-singleton (Deployment, 1):   클러스터 메트릭(k8s_cluster) + 앱 트레이스(otlp)
+#
+# [사전 조건] OTel Operator CRD가 설치되어 있어야 kubernetes_manifest가 plan/apply된다.
+# cert-manager Bootstrap 애드온(modules/eks)이 먼저 배포되어 있어야 Operator webhook 인증서가 발급된다.
+#
+# [GitOps 전환] Phase 6에서 helm_release.otel_operator_spoke와 kubernetes_manifest.*를
+# ArgoCD Application으로 이관한다. CLAUDE.md의 GitOps 전환 계획 참조.
+
+locals {
+  # OTel Collector namespace 이름 단일 정의.
+  # kubernetes_manifest의 metadata.namespace와 kubernetes_namespace_v1이 이 값을 공유하여
+  # namespace 이름 변경 시 한 곳만 수정하면 된다.
+  otel_collector_namespace = "otel-collector"
+}
+
+resource "kubernetes_namespace_v1" "otel_collector" {
+  count = var.enable_otel_spoke_collector ? 1 : 0
+
+  metadata {
+    name = local.otel_collector_namespace
+  }
+}
+
+resource "helm_release" "otel_operator_spoke" {
+  count = var.enable_otel_spoke_collector ? 1 : 0
+
+  name             = "opentelemetry-operator"
+  repository       = "https://open-telemetry.github.io/opentelemetry-helm-charts"
+  chart            = "opentelemetry-operator"
+  version          = var.otel_spoke_operator_chart_version
+  namespace        = "opentelemetry-operator-system"
+  create_namespace = true
+
+  values = [
+    yamlencode({
+      admissionWebhooks = {
+        certManager = {
+          enabled = true
+        }
+      }
+      manager = {
+        collectorImage = {
+          repository = "otel/opentelemetry-collector-k8s"
+        }
+      }
+    })
+  ]
+}
+
+# ── OTel Spoke Node Collector (DaemonSet) ─────────────────────────────────────
+# 노드당 1개 Pod. 노드 메트릭(kubeletstats)과 컨테이너 로그(filelog)를 수집한다.
+# /var/log/pods 를 hostPath로 마운트하여 컨테이너 로그에 접근한다.
+resource "kubernetes_manifest" "otel_spoke_node" {
+  count = var.enable_otel_spoke_collector ? 1 : 0
+
+  manifest = {
+    apiVersion = "opentelemetry.io/v1beta1"
+    kind       = "OpenTelemetryCollector"
+    metadata = {
+      name      = "otel-spoke-node"
+      namespace = local.otel_collector_namespace
+    }
+    spec = {
+      mode = "daemonset"
+      config = {
+        receivers = {
+          kubeletstats = {
+            collection_interval  = "30s"
+            auth_type            = "serviceAccount"
+            insecure_skip_verify = true
+          }
+          filelog = {
+            include           = ["/var/log/pods/*/*/*.log"]
+            # "end": Pod 재시작 시 이미 전송된 로그 중복 방지.
+            # 초기 배포 시 기존 로그가 수집되지 않는 trade-off 있음.
+            # offset 영속화가 필요하면 filestorage extension 추가 검토.
+            start_at          = "end"
+            include_file_path = true
+            include_file_name = false
+          }
+        }
+        processors = {
+          k8sattributes = {
+            auth_type   = "serviceAccount"
+            passthrough = false
+            extract = {
+              metadata = ["k8s.namespace.name", "k8s.deployment.name", "k8s.pod.name", "k8s.node.name"]
+            }
+          }
+          resource = {
+            attributes = [
+              {
+                action = "upsert"
+                key    = "cluster"
+                value  = var.cluster_name
+              }
+            ]
+          }
+          batch = {}
+        }
+        exporters = {
+          otlp = {
+            endpoint = var.otel_gateway_endpoint
+            tls = {
+              insecure = true
+            }
+          }
+        }
+        service = {
+          pipelines = {
+            metrics = {
+              receivers  = ["kubeletstats"]
+              processors = ["k8sattributes", "resource", "batch"]
+              exporters  = ["otlp"]
+            }
+            logs = {
+              receivers  = ["filelog"]
+              processors = ["k8sattributes", "resource", "batch"]
+              exporters  = ["otlp"]
+            }
+          }
+        }
+      }
+      volumeMounts = [
+        {
+          name      = "varlogpods"
+          mountPath = "/var/log/pods"
+          readOnly  = true
+        }
+      ]
+      volumes = [
+        {
+          name = "varlogpods"
+          hostPath = {
+            path = "/var/log/pods"
+          }
+        }
+      ]
+    }
+  }
+
+  depends_on = [
+    helm_release.otel_operator_spoke,
+    kubernetes_namespace_v1.otel_collector,
+  ]
+}
+
+# ── OTel Spoke Singleton Collector (Deployment, 1 replica) ────────────────────
+# 클러스터당 1개 Pod. K8s 오브젝트 메트릭(k8s_cluster)과 앱 트레이스·메트릭(otlp)을 수집한다.
+# 앱 계측(Instrumentation) 활성화 전에는 otlp 파이프라인이 유휴 상태로 대기한다.
+resource "kubernetes_manifest" "otel_spoke_singleton" {
+  count = var.enable_otel_spoke_collector ? 1 : 0
+
+  manifest = {
+    apiVersion = "opentelemetry.io/v1beta1"
+    kind       = "OpenTelemetryCollector"
+    metadata = {
+      name      = "otel-spoke-singleton"
+      namespace = local.otel_collector_namespace
+    }
+    spec = {
+      mode     = "deployment"
+      replicas = 1
+      config = {
+        receivers = {
+          k8s_cluster = {
+            collection_interval = "30s"
+            auth_type           = "serviceAccount"
+          }
+          otlp = {
+            protocols = {
+              grpc = { endpoint = "0.0.0.0:4317" }
+              http = { endpoint = "0.0.0.0:4318" }
+            }
+          }
+        }
+        processors = {
+          k8sattributes = {
+            auth_type   = "serviceAccount"
+            passthrough = false
+            extract = {
+              metadata = ["k8s.namespace.name", "k8s.deployment.name", "k8s.pod.name", "k8s.node.name"]
+            }
+          }
+          resource = {
+            attributes = [
+              {
+                action = "upsert"
+                key    = "cluster"
+                value  = var.cluster_name
+              }
+            ]
+          }
+          batch = {}
+        }
+        exporters = {
+          otlp = {
+            endpoint = var.otel_gateway_endpoint
+            tls = {
+              insecure = true
+            }
+          }
+        }
+        service = {
+          pipelines = {
+            metrics = {
+              receivers  = ["k8s_cluster"]
+              processors = ["k8sattributes", "resource", "batch"]
+              exporters  = ["otlp"]
+            }
+            traces = {
+              receivers  = ["otlp"]
+              processors = ["k8sattributes", "resource", "batch"]
+              exporters  = ["otlp"]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    helm_release.otel_operator_spoke,
+    kubernetes_namespace_v1.otel_collector,
+  ]
+}
