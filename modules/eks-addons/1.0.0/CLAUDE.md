@@ -111,6 +111,17 @@ association이 필요 없다.
 enable_external_dns = var.enable_external_dns  # blueprints 파라미터로 전달
 ```
 
+### 크로스 계정 Route53 접근 (external_dns_assume_role_arn)
+
+Route53 zone이 클러스터와 다른 계정에 있을 때(예: monitoring 클러스터가 workload 계정의
+zone을 관리) `external_dns_assume_role_arn`에 위임 Role ARN을 전달하면 helm `set`으로
+`extraArgs[0]=--aws-assume-role=<arn>`이 주입된다.
+
+**주의(플래그 이름 함정)**: external-dns 바이너리의 실제 CLI 플래그는 `--aws-assume-role`이다.
+`--aws-assume-role-arn`처럼 직관적으로 보이는 이름을 쓰면 `flag parsing error: unknown long
+flag`로 pod가 즉시 CrashLoopBackOff에 빠진다. 플래그 이름 변경 시 `kubectl logs`로 helm
+release 자체가 아니라 컨테이너 시작 로그를 확인해야 원인을 바로 찾을 수 있다.
+
 ---
 
 ## ArgoCD 설치 (Phase 5-1)

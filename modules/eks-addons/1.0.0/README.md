@@ -11,6 +11,8 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_aws"></a> [aws](#provider\_aws) | 6.50.0 |
+| <a name="provider_helm"></a> [helm](#provider\_helm) | 2.17.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | 3.2.0 |
 
 ## Modules
 
@@ -23,6 +25,10 @@ No requirements.
 | Name | Type |
 |------|------|
 | [aws_eks_access_entry.karpenter_node](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_access_entry) | resource |
+| [helm_release.otel_operator_spoke](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
+| [kubernetes_manifest.otel_spoke_node](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/manifest) | resource |
+| [kubernetes_manifest.otel_spoke_singleton](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/manifest) | resource |
+| [kubernetes_namespace_v1.otel_collector](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace_v1) | resource |
 
 ## Inputs
 
@@ -48,12 +54,16 @@ No requirements.
 | <a name="input_enable_external_dns"></a> [enable\_external\_dns](#input\_enable\_external\_dns) | ExternalDNS 설치 여부. false이면 blueprints가 관련 IAM Role과 Helm release를 생성하지 않는다 | `bool` | `true` | no |
 | <a name="input_enable_karpenter"></a> [enable\_karpenter](#input\_enable\_karpenter) | Karpenter 설치 여부. false이면 blueprints가 관련 IAM Role, SQS, EventBridge Rule, Helm release를 생성하지 않는다 | `bool` | `true` | no |
 | <a name="input_enable_metrics_server"></a> [enable\_metrics\_server](#input\_enable\_metrics\_server) | Metrics Server 설치 여부 | `bool` | `true` | no |
+| <a name="input_enable_otel_spoke_collector"></a> [enable\_otel\_spoke\_collector](#input\_enable\_otel\_spoke\_collector) | OTel spoke collector 설치 여부. true로 설정하면 OTel Operator와 DaemonSet·Deployment 수집기를 otel-collector 네임스페이스에 배포한다. otel\_gateway\_endpoint와 otel\_spoke\_operator\_chart\_version을 함께 설정해야 한다 | `bool` | `false` | no |
+| <a name="input_external_dns_assume_role_arn"></a> [external\_dns\_assume\_role\_arn](#input\_external\_dns\_assume\_role\_arn) | ExternalDNS가 크로스 계정 Route53을 관리하기 위해 assume할 IAM Role ARN. 비어있으면 동일 계정 Route53 직접 접근 (dev/prd 기본값). monitoring처럼 Route53이 다른 계정에 있을 때 설정한다 | `string` | `""` | no |
 | <a name="input_external_dns_chart_version"></a> [external\_dns\_chart\_version](#input\_external\_dns\_chart\_version) | ExternalDNS Helm chart 버전 (예: "1.14.5") | `string` | n/a | yes |
 | <a name="input_external_dns_route53_zone_arns"></a> [external\_dns\_route53\_zone\_arns](#input\_external\_dns\_route53\_zone\_arns) | ExternalDNS가 레코드를 관리할 Route53 Hosted Zone ARN 목록. 빈 리스트이면 모든 Hosted Zone 접근 허용 (운영 환경에서는 반드시 명시할 것) | `list(string)` | `[]` | no |
 | <a name="input_karpenter_chart_version"></a> [karpenter\_chart\_version](#input\_karpenter\_chart\_version) | Karpenter Helm chart 버전 (예: "1.3.3") | `string` | n/a | yes |
 | <a name="input_lbc_chart_version"></a> [lbc\_chart\_version](#input\_lbc\_chart\_version) | AWS Load Balancer Controller Helm chart 버전 (예: "3.4.0") | `string` | n/a | yes |
 | <a name="input_metrics_server_chart_version"></a> [metrics\_server\_chart\_version](#input\_metrics\_server\_chart\_version) | Metrics Server Helm chart 버전 (예: "3.12.2") | `string` | n/a | yes |
 | <a name="input_oidc_provider_arn"></a> [oidc\_provider\_arn](#input\_oidc\_provider\_arn) | IRSA용 OIDC Provider ARN. blueprints 모듈이 LBC·ExternalDNS·Karpenter IAM Role 생성에 사용한다 | `string` | n/a | yes |
+| <a name="input_otel_gateway_endpoint"></a> [otel\_gateway\_endpoint](#input\_otel\_gateway\_endpoint) | monitoring 클러스터 OTel Gateway Internal NLB 엔드포인트 (예: 'internal-xxxx.elb.ap-northeast-2.amazonaws.com:4317'). enable\_otel\_spoke\_collector=true일 때 필수 | `string` | `""` | no |
+| <a name="input_otel_spoke_operator_chart_version"></a> [otel\_spoke\_operator\_chart\_version](#input\_otel\_spoke\_operator\_chart\_version) | OTel Operator Helm chart 버전 (예: '0.76.1'). enable\_otel\_spoke\_collector=true일 때 필수 | `string` | `null` | no |
 | <a name="input_replica_counts"></a> [replica\_counts](#input\_replica\_counts) | 애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값 | <pre>object({<br/>    lbc            = optional(number, 2) # LBC: replicaCount 기본 2<br/>    karpenter      = optional(number, 2) # Karpenter: replicas 기본 2<br/>    external_dns   = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)<br/>    metrics_server = optional(number, 1) # MetricsServer: replicas 기본 1<br/>    argocd_server  = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수<br/>    argo_rollouts  = optional(number, 1) # Argo Rollouts controller: 기본 1. 시스템 노드 HA(min>=2) 확보 후 2로 증설<br/>  })</pre> | `{}` | no |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | EKS 클러스터가 속한 VPC ID. LBC가 VPC ID를 IMDS에서 조회하지 않도록 직접 주입한다 | `string` | n/a | yes |
 

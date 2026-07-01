@@ -77,53 +77,68 @@ resource "kubernetes_manifest" "karpenter_node_pool" {
     }
 
     spec = {
-      template = {
-        spec = merge(
-          {
-            nodeClassRef = {
-              group = "karpenter.k8s.aws"
-              kind  = "EC2NodeClass"
-              name  = "default"
-            }
+      template = merge(
+        {
+          spec = merge(
+            {
+              nodeClassRef = {
+                group = "karpenter.k8s.aws"
+                kind  = "EC2NodeClass"
+                name  = "default"
+              }
 
-            requirements = [
-              {
-                key      = "karpenter.sh/capacity-type"
-                operator = "In"
-                values   = each.value.capacity_types
-              },
-              {
-                key      = "karpenter.k8s.aws/instance-category"
-                operator = "In"
-                values   = each.value.instance_families
-              },
-              {
-                key      = "karpenter.k8s.aws/instance-generation"
-                operator = "Gt"
-                values   = [tostring(each.value.instance_gen_min)]
-              },
-              {
-                key      = "kubernetes.io/arch"
-                operator = "In"
-                values   = each.value.architectures
-              },
-              {
-                key      = "kubernetes.io/os"
-                operator = "In"
-                values   = ["linux"]
-              },
-            ]
-          },
-          length(each.value.taints) > 0 ? { taints = each.value.taints } : {}
-        )
-      }
+              requirements = [
+                {
+                  key      = "karpenter.sh/capacity-type"
+                  operator = "In"
+                  values   = each.value.capacity_types
+                },
+                {
+                  key      = "karpenter.k8s.aws/instance-category"
+                  operator = "In"
+                  values   = each.value.instance_families
+                },
+                {
+                  key      = "karpenter.k8s.aws/instance-generation"
+                  operator = "Gt"
+                  values   = [tostring(each.value.instance_gen_min)]
+                },
+                {
+                  # 조직 SCP(DenyOtherInstance, p-v2sbnmua)가 nano~xlarge 크기만 RunInstances를 허용한다.
+                  # metal/2xlarge 이상을 배제하지 않으면 Karpenter의 권한 검증(auth check)이나
+                  # 실제 노드 프로비저닝이 SCP에 막혀 "unauthorized to call ec2:RunInstances"로 실패한다.
+                  key      = "karpenter.k8s.aws/instance-size"
+                  operator = "In"
+                  values   = ["nano", "micro", "small", "medium", "large", "xlarge"]
+                },
+                {
+                  key      = "kubernetes.io/arch"
+                  operator = "In"
+                  values   = each.value.architectures
+                },
+                {
+                  key      = "kubernetes.io/os"
+                  operator = "In"
+                  values   = ["linux"]
+                },
+              ]
+            },
+            length(each.value.taints) > 0 ? { taints = each.value.taints } : {}
+          )
+        },
+        # 유상태 풀만 라벨을 부여한다. taint는 무상태 워크로드를 "밀어내기"만 하므로,
+        # 유상태 파드가 이 풀이 만든 노드를 nodeSelector로 명시 선택하게 하려면 라벨이 필요하다.
+        length(each.value.labels) > 0 ? { metadata = { labels = each.value.labels } } : {}
+      )
 
       weight = each.value.weight
 
+      # 풀별 disruption 정책 — general은 기존 공격적인 컨솔리데이션 유지,
+      # observability-stateful은 locals.tf 주석 참조 (PVC 재연결 지연 방지를 위해 완화)
       disruption = {
-        consolidationPolicy = "WhenEmptyOrUnderutilized"
-        consolidateAfter    = "30s"
-        budgets             = [{ nodes = "20%" }]
+        consolidationPolicy = each.value.consolidation_policy
+        consolidateAfter    = each.value.consolidate_after
+        budgets             = each.value.disruption_budgets
       }
 
       limits = each.value.limits
@@ -131,6 +146,9 @@ resource "kubernetes_manifest" "karpenter_node_pool" {
   }
 
   computed_fields = [
+    # general 풀은 metadata를 선언하지 않으므로(labels={}) 이 경로 전체를 computed로 유지해야
+    # 서버 측 기본값 처리와 무관하게 drift가 발생하지 않는다. observability-stateful의 labels는
+    # computed 여부와 무관하게 최초 apply 시 선언값이 그대로 적용된다 (dev/production과 동일 패턴).
     "spec.template.metadata",
     "spec.template.spec.kubeletConfiguration",
     "metadata.annotations",

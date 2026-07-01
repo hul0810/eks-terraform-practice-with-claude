@@ -13,12 +13,16 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.36"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 }
 
 provider "aws" {
-  region  = "ap-northeast-2"
-  profile = "terraform-monitoring"
+  region                = "ap-northeast-2"
+  profile               = "terraform-monitoring"
   tag_policy_compliance = "error"
   default_tags {
     tags = local.common_tags

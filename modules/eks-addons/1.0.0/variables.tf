@@ -164,9 +164,12 @@ variable "argocd_ingress_allowed_cidrs" {
 
   validation {
     # 빈 리스트면 join(",", [])="" → ALB inbound-cidrs 어노테이션이 무효화되어 0.0.0.0/0(전체 허용)으로
-    # fail-open될 수 있다. argocd_ingress_enabled=true일 때는 반드시 1개 이상의 CIDR을 강제한다.
-    condition     = !var.argocd_ingress_enabled || length(var.argocd_ingress_allowed_cidrs) > 0
-    error_message = "argocd_ingress_enabled=true일 때 argocd_ingress_allowed_cidrs는 최소 1개 이상의 CIDR을 포함해야 합니다 (비워두면 ALB가 모든 IP를 허용할 수 있습니다)."
+    # fail-open될 수 있다. argocd_ingress_enabled=true일 때는 반드시 1개 이상의 유효한 CIDR을 강제한다.
+    condition = !var.argocd_ingress_enabled || (
+      length(var.argocd_ingress_allowed_cidrs) > 0 &&
+      alltrue([for cidr in var.argocd_ingress_allowed_cidrs : can(cidrnetmask(cidr))])
+    )
+    error_message = "argocd_ingress_enabled=true일 때 argocd_ingress_allowed_cidrs는 최소 1개 이상의 유효한 CIDR(예: 1.2.3.4/32)을 포함해야 합니다. 비워두거나 형식이 잘못된 값이 있으면 ALB가 모든 IP를 허용할 수 있습니다."
   }
 }
 
@@ -182,7 +185,8 @@ variable "argocd_ingress_alb_name" {
 
   validation {
     # AWS ALB 이름 제한: 최대 32자, 영문/숫자/하이픈만 허용, 하이픈으로 시작/종료 불가
-    condition     = var.argocd_ingress_alb_name == "" || can(regex("^[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9]$", var.argocd_ingress_alb_name))
+    # 1자 이름(영문/숫자 단독)도 허용: `([a-zA-Z0-9-]{0,30}[a-zA-Z0-9])?`로 감싸 선택적 처리
+    condition     = var.argocd_ingress_alb_name == "" || can(regex("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,30}[a-zA-Z0-9])?$", var.argocd_ingress_alb_name))
     error_message = "argocd_ingress_alb_name은 1~32자의 영문/숫자/하이픈만 허용하며 하이픈으로 시작하거나 끝날 수 없습니다."
   }
 }
@@ -257,5 +261,16 @@ variable "otel_spoke_operator_chart_version" {
   validation {
     condition     = !var.enable_otel_spoke_collector || (var.otel_spoke_operator_chart_version != null && length(var.otel_spoke_operator_chart_version) > 0)
     error_message = "enable_otel_spoke_collector=true일 때 otel_spoke_operator_chart_version은 설정되어야 합니다."
+  }
+}
+
+variable "external_dns_assume_role_arn" {
+  description = "ExternalDNS가 크로스 계정 Route53을 관리하기 위해 assume할 IAM Role ARN. 비어있으면 동일 계정 Route53 직접 접근 (dev/prd 기본값). monitoring처럼 Route53이 다른 계정에 있을 때 설정한다"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.external_dns_assume_role_arn == "" || can(regex("^arn:aws:iam::[0-9]{12}:role/", var.external_dns_assume_role_arn))
+    error_message = "external_dns_assume_role_arn은 빈 문자열이거나 유효한 IAM Role ARN(arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME) 형식이어야 합니다."
   }
 }

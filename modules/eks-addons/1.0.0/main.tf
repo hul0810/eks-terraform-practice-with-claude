@@ -120,14 +120,20 @@ module "eks_blueprints_addons" {
     chart_version        = var.external_dns_chart_version
     role_name            = "${var.cluster_name}-external-dns-irsa"
     role_name_use_prefix = false
-    set = [
-      # 기본값 1이나 명시적으로 관리
-      { name = "replicaCount", value = tostring(var.replica_counts.external_dns) },
-      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
-      { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect", value = "NoSchedule" },
-    ]
+    # external_dns_assume_role_arn이 설정된 경우 --aws-assume-role 인자를 추가한다.
+    # 실제 external-dns 바이너리 플래그는 --aws-assume-role이다 (--aws-assume-role-arn 아님).
+    # concat 패턴: 빈 리스트와 병합하여 조건부로 extraArgs를 주입한다.
+    set = concat(
+      [
+        { name = "replicaCount", value = tostring(var.replica_counts.external_dns) },
+        { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
+        { name = "tolerations[0].operator", value = "Exists" },
+        { name = "tolerations[0].effect", value = "NoSchedule" },
+      ],
+      var.external_dns_assume_role_arn != "" ? [
+        { name = "extraArgs[0]", value = "--aws-assume-role=${var.external_dns_assume_role_arn}" }
+      ] : []
+    )
   }
 
   # ── Metrics Server ────────────────────────────────────────────────────────────

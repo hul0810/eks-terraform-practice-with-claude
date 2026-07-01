@@ -12,3 +12,8 @@ output "karpenter_node_iam_role_name" {
   description = "Karpenter 노드 IAM Role 이름. EC2NodeClass의 role 필드에 사용한다"
   value       = module.eks_addons.karpenter_node_iam_role_name
 }
+
+output "external_dns_role_arn" {
+  description = "ExternalDNS IRSA IAM Role ARN. project/global/ap-northeast-2/route53-delegation의 Trust Policy에서 참조한다"
+  value       = module.eks_addons.external_dns_role_arn
+}
