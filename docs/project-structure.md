@@ -42,8 +42,7 @@ terraform-eks-practice/
 │       │       ├── shared/                 # 모든 서비스 공용 인프라
 │       │       │   ├── vpc/                # ← root module
 │       │       │   ├── eks/                # ← root module
-│       │       │   ├── eks-addons/         # ← root module
-│       │       │   └── tgw/                # (예정)
+│       │       │   └── eks-addons/         # ← root module
 │       │       ├── api-gateway/            # MSA 서비스별 인프라 (서비스명 디렉토리)
 │       │       │   └── ecr/                # ← root module (이미지 저장소)
 │       │       ├── order/                  # MSA 서비스별 인프라
@@ -75,7 +74,7 @@ terraform-eks-practice/
 | `{project}` | `project`, `project-b` | 최상위 프로젝트 단위. 독립 modules/와 environments/를 소유 |
 | `{env}` | `develop`, `production` | 환경 분리. 서로 다른 AWS 계정 또는 동일 계정 내 격리 |
 | `{region}` | `ap-northeast-2` | 리전별 독립 배포 지원. 멀티 리전 확장 시 디렉토리 추가만으로 대응 |
-| `{service}` | `shared`, `api`, `payment` | 워크로드/팀 단위 분리. `shared`는 VPC·TGW 등 공용 인프라 |
+| `{service}` | `shared`, `api`, `payment` | 워크로드/팀 단위 분리. `shared`는 VPC·EKS 등 공용 인프라 |
 | `{resource}` | `vpc`, `eks`, `rds` | 리소스 타입별 독립 state. 변경 범위를 최소화하고 blast radius를 줄임 |
 
 ---

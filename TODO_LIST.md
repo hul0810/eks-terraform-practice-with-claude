@@ -15,7 +15,7 @@
 | 태그 | 달성 단계 | 설명 |
 |------|----------|------|
 | `foundation/single-account-eks` | 1단계(Phase 1~5) 완료 시 | 단일 계정, dev/prd 2클러스터, GitOps·Observability 포함 기초 구성 |
-| `enterprise/hub-spoke-eks` | 2단계(Phase 6~10) 완료 시 | 2계정(intra/workload), TGW, Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
+| `enterprise/hub-spoke-eks` | 2단계(Phase 6~9) 완료 시 | 2계정(intra/workload), VPC Peering(수동 관리), Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
 
 ---
 
@@ -53,7 +53,7 @@
   - [x] Public 서브넷 (ALB, NAT GW용)
   - [x] Private 서브넷 (EKS 노드용)
   - [x] Database 서브넷 (RDS, ElastiCache용)
-  - [x] TGW 서브넷 (Transit Gateway 어태치먼트용, intra 타입 활용)
+  - [x] TGW 서브넷 (Transit Gateway 어태치먼트용, intra 타입 활용) — 확장성을 위해 예약만 해두고 실제 TGW 연결(옛 Phase 8)은 비용 문제로 보류. 서브넷 구성 자체는 유지
   - [x] NAT Gateway 단일/다중 AZ 변수 토글 (`single_nat_gateway`, `enable_nat_gateway`)
   - [x] S3 Gateway Endpoint (`aws_vpc_endpoint` 별도 리소스)
 - [x] `modules/vpc/outputs.tf` 작성 (vpc_id, subnet_ids 4종, route_table_ids, nat_public_ips)
@@ -312,12 +312,20 @@
 > **아키텍처**: dev/prd OTel DaemonSet(spoke) → monitoring OTel Gateway(hub, GitOps 배포) → LGTM 백엔드
 > **전제**: Phase 2-4 완료. cert-manager Bootstrap 애드온 설치 완료 (OTel Operator 전제 조건).
 
-### 5-1. modules/vpc/1.0.0 — VPC Peering + TGW 옵션 추가 ✅
+### 5-1. modules/vpc/1.0.0 — VPC Peering + TGW 옵션 추가 ❌ 취소 (수동 관리로 전환)
 
-- [x] `modules/vpc/1.0.0/variables.tf` — 신규 변수 추가 (버전 유지, 하위 호환)
-  - [x] `vpc_peering_create`, `vpc_peering_routes`, `transit_gateway_id`, `transit_gateway_routes`
-- [x] `modules/vpc/1.0.0/main.tf` — 피어링·TGW 리소스 추가
-- [x] `modules/vpc/1.0.0/outputs.tf` — `vpc_peering_connection_ids`, `tgw_attachment_id` 추가
+> **취소 사유**: monitoring↔dev/prd는 계정이 다른 크로스 계정 피어링(계정 ID는
+> `docs/network-design.md` 참조)이라 모듈에 변수로 넣으면 root module마다 상대
+> 계정 provider 배선이 필요해진다. 연결 수가 2개뿐이고 변경 빈도도 낮아
+> IaC 비용을 들이지 않고 **AWS CLI로 수동 관리**하기로 결정했다 (원래는 Phase 8
+> TGW 도입 시 대체될 임시 구성으로 시작했으나, TGW 자체를 비용 문제로 취소하면서
+> VPC Peering이 영구 구성이 되었다 — 하단 "2단계" 섹션 참조). 아래 항목은 실제
+> 코드로 구현된 적이 없다 (계획만 있었고 착수 전 취소됨). 절차는
+> `docs/network-design.md` 참조.
+
+- [ ] ~~`modules/vpc/1.0.0/variables.tf` — `vpc_peering_create`, `vpc_peering_routes`, `transit_gateway_id`, `transit_gateway_routes` 추가~~ (취소)
+- [ ] ~~`modules/vpc/1.0.0/main.tf` — 피어링·TGW 리소스 추가~~ (취소)
+- [ ] ~~`modules/vpc/1.0.0/outputs.tf` — `vpc_peering_connection_ids`, `tgw_attachment_id` 추가~~ (취소)
 
 ### 5-2. modules/eks-addons/1.0.0 — OTel Spoke Collector 추가 ✅
 
@@ -332,24 +340,29 @@
 > 모듈 source 경로: `../../../../../modules/{name}/1.0.0` (루트까지 5단계)
 > **LGTM 스택은 이 단계에서 구성하지 않는다 — Phase 6 GitOps에서 배포**
 
+> **참고**: `monitoring/`은 Phase 7(2계정 정식 분리)보다 먼저 별도 AWS 계정으로
+> 구축되어 있다 (`terraform-monitoring` profile, 계정 ID는 `docs/network-design.md`
+> 참조). 아래 "단일 계정" 서술은 이 사실과 어긋나며, Phase 7 설계 시 반영해야 한다.
+
 - [x] `global/tag-policy/main.tf` — "monitoring" 환경 허용값 추가
 - [x] `monitoring/environments/ap-northeast-2/shared/vpc/` 구성
-  - [x] CIDR: 10.12.0.0/16 (Phase 8 Intra CIDR과 동일, Phase 9 이전 시 재설계 불필요)
-  - [x] `vpc_peering_create`: dev(10.10.0.0/16), prd(10.11.0.0/16) VPC Peering 요청자 생성
+  - [x] CIDR: 10.12.0.0/16 (Phase 7에서 Intra 계정으로 이전하더라도 동일 CIDR 유지 예정, 재설계 불필요)
+  - [ ] ~~`vpc_peering_create`: dev/prd VPC Peering 요청자 생성~~ (취소 — 5-1 참조, AWS CLI 수동 관리로 전환)
 - [x] `monitoring/environments/ap-northeast-2/shared/eks/` 구성
   - [x] `cluster_name = "eks-practice-mon"`, `kubernetes_version = "1.34"`, cert-manager Bootstrap 포함
 - [x] `monitoring/environments/ap-northeast-2/shared/eks-addons/` 구성
   - [x] LBC, ExternalDNS, Karpenter, Metrics Server 활성화 (ArgoCD·OTel spoke 미포함)
 
-### 5-4. dev/prd — VPC peering_routes + OTel spoke 활성화
+### 5-4. VPC Peering(AWS CLI 수동) + dev/prd OTel spoke 활성화
 
-> monitoring vpc apply 후 pcx ID 확인 → observability apply 후 NLB 호스트명 확인 필요
+> 절차·명령어는 `docs/network-design.md` 참조. VPC peering은 Terraform 코드가
+> 아니라 AWS CLI로 직접 생성하므로 아래 항목은 `.tf` 변경이 아니다.
 
-- [x] `project/environments/develop/.../vpc/locals.tf` — `vpc_peering_routes` 플레이스홀더 추가 (pcx ID 입력 대기)
-- [x] `project/environments/production/.../vpc/locals.tf` — 동일
 - [x] `project/environments/develop/.../eks-addons/locals.tf` — `enable_otel_spoke_collector=false` 플레이스홀더 (NLB DNS 입력 대기)
 - [x] `project/environments/production/.../eks-addons/locals.tf` — 동일
-- [ ] monitoring vpc apply → `vpc_peering_connection_ids` 확인 후 dev/prd vpc 주석 해제 + pcx ID 입력 → apply
+- [x] `docs/network-design.md` 절차대로 mon-to-dev, mon-to-prd VPC Peering 생성 + 라우트 추가 (AWS CLI, 2026-07-01)
+- [x] `aws ec2 describe-vpc-peering-connections`로 `active` 상태 확인 → 문서의 "연결 목록" 표에 PCX ID 기록
+      (`pcx-07fa1a0e9eb100e47`, `pcx-084a197c6a2532991`)
 - [ ] monitoring eks, eks-addons apply (2단계)
 - [ ] GitOps로 OTel Operator·Gateway·LGTM 배포 (Phase 6 이후)
 - [ ] OTel Gateway NLB 호스트명 확인 후 dev/prd eks-addons `enable_otel_spoke_collector=true` + endpoint 입력 → apply
@@ -372,12 +385,18 @@
 >
 > **의존성 순서** (반드시 이 순서로 진행):
 > ```
-> Phase 6 (ArgoCD Hub GitOps) → Phase 7 (Organizations 2계정) → Phase 8 (TGW) → Phase 9 (중앙 Observability)
->                                                              ↘ Phase 10 (보안·거버넌스, Phase 7 직후 병렬 가능)
+> Phase 6 (ArgoCD Hub GitOps) → Phase 7 (Organizations 2계정) → Phase 8 (중앙 Observability)
+>                                                              ↘ Phase 9 (보안·거버넌스, Phase 7 직후 병렬 가능)
 > ```
 >
-> **비용 경고**: Phase 8(TGW)부터 고정 비용이 크게 증가한다.
-> TGW 어태치먼트는 VPC당 ~$36/월, Intra EKS 클러스터는 컨트롤 플레인 $73/월 + 노드 추가.
+> **네트워크 토폴로지 결정**: 계정 간 연결에 Transit Gateway를 도입하지 않는다.
+> TGW 어태치먼트 비용(VPC당 ~$36/월, 3 VPC 기준 ~$108/월)이 이 로드맵에서 가장 큰
+> 고정비 증가 항목이라 비용 문제로 취소했다. Intra↔Workload 연결은 Phase 5에서
+> 이미 구축한 VPC Peering(AWS CLI 수동 관리)을 계속 사용한다 — 절차·이유는
+> `docs/network-design.md` 참조.
+>
+> **비용 경고**: Phase 8(중앙 Observability)부터 Intra EKS 클러스터 컨트롤 플레인
+> $73/월 + 노드 비용이 추가된다.
 > **학습 세션 중에만 `terraform apply` 하고 종료 시 `terraform destroy`하는 운영 패턴을 기본으로 한다.**
 
 ---
@@ -385,7 +404,7 @@
 ### Phase 6. Hub-and-Spoke ArgoCD (중앙 GitOps)
 
 > **목표**: dev/prd에 개별 설치된 ArgoCD를 제거하고 단일 ArgoCD Hub를 두어 spoke로 원격 관리한다.
-> **단일 계정에서 먼저 패턴을 검증**하고 Phase 7~8 완료 후 Intra 계정 클러스터로 이전한다.
+> **단일 계정에서 먼저 패턴을 검증**하고 Phase 7 완료 후 Intra 계정 클러스터로 이전한다.
 >
 > **왜 중앙 집중인가**:
 > - **운영 표면 1/N 감소**: ArgoCD를 n개 클러스터에 개별 운영 vs Hub 1개 운영. 업그레이드·RBAC·백업이 Hub 한 곳으로 집약.
@@ -396,9 +415,9 @@
 > **SPOF 검토**: ArgoCD Hub 장애 시 이미 배포된 워크로드는 정상 동작 (ArgoCD는 reconciler이지 데이터 플레인이 아님).
 >
 > **비용 영향**: Hub 클러스터 컨트롤 플레인 $73/월 + 소형 노드 ~$30/월 (신규). dev/prd ArgoCD 워크로드 제거로 일부 상쇄.
-> Phase 9과 Intra 클러스터를 공유하므로 추가 컨트롤 플레인 비용은 Phase 9에서 분담.
+> Phase 8(중앙 Observability)과 Intra 클러스터를 공유하므로 추가 컨트롤 플레인 비용은 Phase 8에서 분담.
 >
-> **전제 조건**: Phase 4-1 완료 (ArgoCD 설치됨). 단일 계정 구성 가능 — Phase 7~8 완료 후 Intra 계정 클러스터로 이전.
+> **전제 조건**: Phase 4-1 완료 (ArgoCD 설치됨). 단일 계정 구성 가능 — Phase 7 완료 후 Intra 계정 클러스터로 이전.
 
 - [ ] Hub 클러스터 구성 (`environments/hub/ap-northeast-2/shared/eks/`) — 기존 `modules/eks/1.0.0` 재사용
 - [ ] Hub ArgoCD 설치 (`argocd_ha_enabled = true`) — `modules/eks-addons/1.0.0` 재사용
@@ -428,7 +447,7 @@
 > SCP 기본 가드레일, IAM Identity Center(SSO), 중앙 로깅의 토대를 마련한다.
 >
 > **계정 구조**:
-> - **Intra 계정** (신규): ArgoCD Hub, 중앙 Observability, TGW 소유자. 공유 서비스 전담.
+> - **Intra 계정** (신규): ArgoCD Hub, 중앙 Observability. 공유 서비스 전담.
 > - **Workload 계정** (현재 계정 유지): dev + prd EKS 클러스터. 애플리케이션 워크로드 전담.
 >
 > *(실무 표준은 dev/prd를 별도 계정으로 추가 분리하지만, 비용·복잡도 절감을 위해 2계정으로 단순화)*
@@ -460,36 +479,7 @@
 
 ---
 
-### Phase 8. 네트워크 토폴로지 — Transit Gateway + 중앙 Egress
-
-> **목표**: 예약해둔 TGW 서브넷을 실제로 활용해 Intra/Dev/Prd VPC를 Transit Gateway로 연결하고,
-> dev↔prd 직접 통신을 격리한다.
->
-> **왜 TGW인가 (VPC Peering 대비)**:
-> - **Hub-Spoke 구조 필수**: ArgoCD Hub(intra)가 dev/prd API에 도달하고, 중앙 Grafana가 양쪽 메트릭을 수집하려면
->   transitive 라우팅이 필요하다. Peering은 A↔B, B↔C여도 A↔C 통신 불가 — TGW만 이 요구를 충족.
-> - **격리 보장**: TGW route table 분리로 "dev↔prd 직접 통신 차단, 각각 intra하고만 통신" 정책 명시적 강제.
-> - **확장성**: VPC 3~4개에선 Peering도 가능하나 10개 이상에서 풀메시 관리가 붕괴한다.
->
-> **비용 영향**: TGW 어태치먼트 VPC당 ~$36/월 × VPC 수. 3 VPC 기준 어태치먼트만 ~$108/월.
-> 이 로드맵에서 **가장 큰 고정 비용 증가 항목** — 학습 세션에서만 apply/destroy 운영 강력 권장.
->
-> **전제 조건**: Phase 7 완료 (멀티 계정 + RAM으로 TGW 공유 필요).
-
-- [ ] CIDR 충돌 사전 검증: dev `10.10.0.0/16`, prd `10.11.0.0/16`, **intra `10.12.0.0/16` 신규 할당**
-- [ ] `modules/tgw/1.0.0/` 신규 모듈 생성 (`terraform-aws-modules/transit-gateway` 사용 검토)
-  - [ ] TGW route table 2개: `shared`(intra↔all), `isolated`(dev/prd 상호 격리)
-- [ ] Intra 계정에 TGW 생성 → RAM으로 Dev/Prd 계정에 공유
-- [ ] 각 VPC의 예약된 TGW 서브넷에 `aws_ec2_transit_gateway_vpc_attachment` 생성
-  - 현재 VPC 설계에 이미 TGW 서브넷을 예약해둔 이유가 여기서 실현됨
-- [ ] `modules/vpc`에 `transit_gateway_routes` 변수 추가 → 모듈 버전 `2.0.0`으로 범프, `moved` 블록으로 state 이전
-- [ ] (선택) 중앙 Egress VPC + NAT 통합 → dev/prd의 0.0.0.0/0을 TGW 경유 Egress 계정 NAT로
-- [ ] EKS Private 엔드포인트 도달성 검증: intra Hub → dev/prd EKS API (`kubectl` via TGW)
-- [ ] Git 태그: `enterprise/hub-spoke-network`
-
----
-
-### Phase 9. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
+### Phase 8. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
 
 > **목표**: 각 클러스터의 메트릭·로그를 Intra 계정의 중앙 백엔드로 집계하고,
 > 단일 Grafana에서 전 환경을 관측한다.
@@ -505,15 +495,17 @@
 > - Thanos: CNCF 표준, 면접 단골이나 컴포넌트 多·무거움. "CNCF 표준 학습" 목표면 선택 가능.
 > - 절충안: Phase 9a VictoriaMetrics 먼저 → 여유 시 Phase 9b Thanos 비교 실습.
 >
-> **비용 영향**: S3 스토리지(소액) + Intra 클러스터 관측 노드(Karpenter Spot으로 절감). Phase 8과 클러스터 공유.
+> **비용 영향**: S3 스토리지(소액) + Intra 클러스터 관측 노드(Karpenter Spot으로 절감). Hub 클러스터(Phase 6)와 컨트롤 플레인 공유.
 >
-> **전제 조건**: Phase 8 완료 (Intra 클러스터 존재) + Phase 7 (spoke→hub remote_write 경로).
+> **전제 조건**: Phase 7 완료 (Intra 계정 분리 + Hub 클러스터 이전).
+> spoke→hub remote_write 경로는 Phase 5에서 구축한 VPC Peering(수동 관리,
+> `docs/network-design.md`)을 그대로 사용한다 — 별도 네트워크 구축 불필요.
 > Phase 5의 kube-prometheus-stack을 **로컬 수집기 역할로 재배치** (중앙 전송으로 변경).
 
 - [ ] 각 spoke의 kube-prometheus-stack `remoteWrite` 설정 → Intra 중앙 백엔드 전송 (로컬 장기 보존 비활성)
 - [ ] Intra 클러스터에 VictoriaMetrics 배포 (ArgoCD Hub로 배포)
   - [ ] S3 백엔드 설정 (장기 메트릭 보존)
-  - [ ] remote_write 인증·암호화: TGW 사설 경로 + TLS
+  - [ ] remote_write 인증·암호화: VPC Peering 사설 경로 + TLS
 - [ ] Intra 클러스터에 중앙 Grafana 배포
   - [ ] 데이터소스 멀티테넌시: 환경 라벨(`cluster=dev/prd`)로 구분
   - [ ] 핵심 대시보드: 클러스터 오버뷰, Karpenter 노드 현황, 서비스별 SLI
@@ -525,7 +517,7 @@
 
 ---
 
-### Phase 10. 보안·정책 거버넌스 (Phase 7 직후 병렬 진행 가능)
+### Phase 9. 보안·정책 거버넌스 (Phase 7 직후 병렬 진행 가능)
 
 > **목표**: 시크릿 외부화, 정책 강제(Policy-as-Code), 런타임·이미지 보안을 전 클러스터에 일관 적용한다.
 >
@@ -538,7 +530,7 @@
 >
 > **비용 영향**: 대부분 오픈소스 (Kyverno, External Secrets 컴퓨트 비용만). Secrets Manager 시크릿당 $0.40/월.
 >
-> **전제 조건**: Phase 7 (Secrets Manager 계정 경계 확립). Phase 8~9과 병렬 진행 가능.
+> **전제 조건**: Phase 7 (Secrets Manager 계정 경계 확립). Phase 8과 병렬 진행 가능.
 
 - [ ] **External Secrets Operator** 배포 (ArgoCD Hub로 전 클러스터 배포)
   - [ ] AWS Secrets Manager/SSM Parameter Store → K8s Secret 동기화
