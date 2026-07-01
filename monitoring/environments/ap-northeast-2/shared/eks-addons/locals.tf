@@ -31,9 +31,8 @@ locals {
   # *.pyhtest.com ACM 인증서 ARN — monitoring 계정, AWS CLI 외부 관리 리소스
   # 발급: aws acm request-certificate --domain-name "*.pyhtest.com" --validation-method DNS \
   #         --region ap-northeast-2 --profile terraform-monitoring
-  # ARN 확인: aws acm list-certificates --region ap-northeast-2 --profile terraform-monitoring
-  # 발급 후 아래 UUID를 실제 인증서 ID로 교체한다
-  acm_certificate_arn = "arn:aws:acm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:certificate/c23096ac-d684-4850-aea3-c0e5879622c1"
+  # data.aws_acm_certificate로 domain 기준 동적 조회 (data.tf 참조) — 재발급 시 ARN 수동 교체 불필요
+  acm_certificate_arn = data.aws_acm_certificate.pyhtest_wildcard.arn
 
   # workload 계정 Route53 위임 Role ARN — ExternalDNS --aws-assume-role에 주입
   #
