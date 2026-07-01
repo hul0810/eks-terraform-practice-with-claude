@@ -34,15 +34,15 @@ locals {
   # data.aws_acm_certificate로 domain 기준 동적 조회 (data.tf 참조) — 재발급 시 ARN 수동 교체 불필요
   acm_certificate_arn = data.aws_acm_certificate.pyhtest_wildcard.arn
 
-  # workload 계정 Route53 위임 Role ARN — ExternalDNS --aws-assume-role에 주입
+  # workload 계정 Route53 크로스 계정 Role ARN — ExternalDNS --aws-assume-role에 주입
   #
   # [최초 부트스트랩 순환 의존 해소]
-  # monitoring/eks-addons와 route53-delegation이 서로의 output을 참조하는 양방향 의존이 발생한다.
-  # try()로 소프트 참조를 만들어 route53-delegation state 미존재 시 "" 폴백 → 아래 순서로 적용한다:
-  #   1단계: terraform apply                        (route53-delegation 참조 없이 ExternalDNS IRSA 생성)
-  #   2단계: route53-delegation apply               (monitoring state에서 IRSA ARN 읽어 Trust Policy 설정)
-  #   3단계: terraform apply                        (delegation role ARN 주입 → cross-account DNS 활성화)
-  route53_delegation_role_arn = try(data.terraform_remote_state.route53_delegation.outputs.role_arn, "")
+  # monitoring/eks-addons와 external-dns-cross-account-role이 서로의 output을 참조하는 양방향 의존이 발생한다.
+  # try()로 소프트 참조를 만들어 external-dns-cross-account-role state 미존재 시 "" 폴백 → 아래 순서로 적용한다:
+  #   1단계: terraform apply                        (external-dns-cross-account-role 참조 없이 ExternalDNS IRSA 생성)
+  #   2단계: external-dns-cross-account-role apply   (monitoring state에서 IRSA ARN 읽어 Trust Policy 설정)
+  #   3단계: terraform apply                        (cross-account role ARN 주입 → cross-account DNS 활성화)
+  external_dns_cross_account_role_arn = try(data.terraform_remote_state.external_dns_cross_account_role.outputs.role_arn, "")
 
   eks_addons = {
     # 2026-06-09 기준 최신 stable 버전
@@ -54,7 +54,7 @@ locals {
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
     # pyhtest.com zone ARN — workload 계정 소유, Terraform 외부 관리 리소스 (하드코딩)
-    # ExternalDNS IRSA가 route53_delegation_role_arn을 assume하여 이 zone에 접근한다
+    # ExternalDNS IRSA가 external_dns_cross_account_role_arn을 assume하여 이 zone에 접근한다
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
     enable_metrics_server          = true
     enable_karpenter               = true

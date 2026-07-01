@@ -10,7 +10,7 @@ terraform {
 
   backend "s3" {
     bucket       = "eks-practice-tfstate-workload"
-    key          = "project/global/ap-northeast-2/route53-delegation/terraform.tfstate"
+    key          = "project/global/ap-northeast-2/external-dns-cross-account-role/terraform.tfstate"
     region       = "ap-northeast-2"
     profile      = "terraform-workload"
     use_lockfile = true

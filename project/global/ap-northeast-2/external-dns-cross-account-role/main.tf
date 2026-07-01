@@ -1,8 +1,8 @@
 ################################################################################
-# Route53 크로스 계정 위임 IAM Role
+# ExternalDNS 크로스 계정 IAM Role
 #
 # monitoring 계정의 ExternalDNS가 workload 계정 Route53(pyhtest.com)에 DNS 레코드를
-# 생성할 수 있도록 크로스 계정 위임 Role을 생성한다.
+# 생성할 수 있도록 크로스 계정 Role을 생성한다.
 #
 # 동작 원리:
 #   1. monitoring 클러스터의 ExternalDNS Pod가 자신의 IRSA Role로 sts:AssumeRole 호출
@@ -14,10 +14,18 @@
 # (monitoring eks-addons에서 external_dns_assume_role_arn 변수로 주입)
 ################################################################################
 
-resource "aws_iam_role" "route53_delegation" {
-  name = "${local.project}-route53-delegation"
+# route53-delegation(구 이름) → external-dns-cross-account-role root module rename에 따른 리소스 주소 이전
+# 주의: name 속성도 함께 변경되어 실제로는 Role이 재생성된다(moved 블록은 state 주소 정리만 수행) —
+# apply 전 prevent_destroy 임시 해제 필요, apply 후 monitoring/eks-addons 재apply까지 순서대로 진행할 것
+moved {
+  from = aws_iam_role.route53_delegation
+  to   = aws_iam_role.external_dns_cross_account_role
+}
+
+resource "aws_iam_role" "external_dns_cross_account_role" {
+  name = "${local.project}-external-dns-cross-account-role"
   # IAM Role description은 AWS 정규식 제약(ASCII/Latin-1)으로 한글을 허용하지 않아 영문으로 작성
-  description = "Cross-account delegation role allowing monitoring account ExternalDNS to manage the pyhtest.com zone"
+  description = "Cross-account role allowing monitoring account ExternalDNS to manage the pyhtest.com zone"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -42,7 +50,7 @@ resource "aws_iam_role" "route53_delegation" {
 
 resource "aws_iam_role_policy" "route53_zone_management" {
   name = "route53-zone-management"
-  role = aws_iam_role.route53_delegation.id
+  role = aws_iam_role.external_dns_cross_account_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"

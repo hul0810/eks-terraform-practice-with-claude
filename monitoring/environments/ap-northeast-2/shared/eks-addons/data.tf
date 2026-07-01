@@ -26,12 +26,12 @@ data "aws_acm_certificate" "pyhtest_wildcard" {
   most_recent = true
 }
 
-# workload 계정 route53-delegation state에서 크로스 계정 위임 Role ARN 참조
-data "terraform_remote_state" "route53_delegation" {
+# workload 계정 external-dns-cross-account-role state에서 크로스 계정 Role ARN 참조
+data "terraform_remote_state" "external_dns_cross_account_role" {
   backend = "s3"
   config = {
     bucket  = "eks-practice-tfstate-workload"
-    key     = "project/global/ap-northeast-2/route53-delegation/terraform.tfstate"
+    key     = "project/global/ap-northeast-2/external-dns-cross-account-role/terraform.tfstate"
     region  = "ap-northeast-2"
     profile = "terraform-workload"
   }

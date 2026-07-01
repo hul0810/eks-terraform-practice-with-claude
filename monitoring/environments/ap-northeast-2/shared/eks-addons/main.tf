@@ -44,8 +44,8 @@ module "eks_addons" {
   enable_external_dns            = local.eks_addons.enable_external_dns
   external_dns_route53_zone_arns = local.eks_addons.external_dns_route53_zone_arns
   external_dns_chart_version     = local.eks_addons.external_dns_chart_version
-  # monitoring 클러스터: pyhtest.com zone이 workload 계정에 있으므로 크로스 계정 위임 Role 필요
-  external_dns_assume_role_arn = local.route53_delegation_role_arn
+  # monitoring 클러스터: pyhtest.com zone이 workload 계정에 있으므로 크로스 계정 Role 필요
+  external_dns_assume_role_arn = local.external_dns_cross_account_role_arn
 
   enable_metrics_server        = local.eks_addons.enable_metrics_server
   metrics_server_chart_version = local.eks_addons.metrics_server_chart_version
@@ -80,12 +80,17 @@ module "eks_addons" {
 # monitoring → workload 계정 Route53 접근을 위해 sts:AssumeRole 인라인 정책을 추가한다.
 # Role 이름 패턴: {cluster_name}-external-dns-irsa (modules/eks-addons CLAUDE.md 참조)
 #
-# route53_delegation_role_arn = "" (최초 부트스트랩 1단계)인 경우 이 리소스를 생성하지 않는다.
-# route53-delegation apply 후 3단계 재apply 시 count=1로 전환되어 정책이 추가된다.
-resource "aws_iam_role_policy" "external_dns_assume_route53_delegation" {
-  count = local.route53_delegation_role_arn != "" ? 1 : 0
+# external_dns_cross_account_role_arn = "" (최초 부트스트랩 1단계)인 경우 이 리소스를 생성하지 않는다.
+# external-dns-cross-account-role apply 후 3단계 재apply 시 count=1로 전환되어 정책이 추가된다.
+moved {
+  from = aws_iam_role_policy.external_dns_assume_route53_delegation
+  to   = aws_iam_role_policy.external_dns_assume_cross_account_role
+}
 
-  name = "assume-route53-delegation-role"
+resource "aws_iam_role_policy" "external_dns_assume_cross_account_role" {
+  count = local.external_dns_cross_account_role_arn != "" ? 1 : 0
+
+  name = "assume-external-dns-cross-account-role"
   # IAM Role ARN 마지막 세그먼트 추출 — path 포함 ARN(role/path/name)에서도 정확히 role name만 얻음
   role = regex("[^/]+$", module.eks_addons.external_dns_role_arn)
 
@@ -93,10 +98,10 @@ resource "aws_iam_role_policy" "external_dns_assume_route53_delegation" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "AssumeRoute53DelegationRole"
+        Sid      = "AssumeExternalDnsCrossAccountRole"
         Effect   = "Allow"
         Action   = "sts:AssumeRole"
-        Resource = local.route53_delegation_role_arn
+        Resource = local.external_dns_cross_account_role_arn
       }
     ]
   })
