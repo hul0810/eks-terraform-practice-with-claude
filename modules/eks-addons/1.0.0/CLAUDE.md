@@ -180,6 +180,14 @@ ExternalDNS의 Route53 레코드 재연결이 발생한다.
 `configs.secret.argocdServerAdminPassword`로 주입되어 ArgoCD 배포 시 admin 패스워드가 고정된다.
 비워두면 ArgoCD가 자동 생성한 시크릿을 사용하고 `argocd-initial-admin-secret`에서 확인해야 한다.
 
+각 환경 root module(`monitoring/`, `project/environments/{develop,production}/.../eks-addons/`)은 이 값을
+로컬 `secret.auto.tfvars` 대신 SSM Parameter Store(Standard tier, 무료)의
+`data "aws_ssm_parameter"`로 조회하여 `local.eks_addons.argocd_admin_password_bcrypt`에 담아 모듈로 전달한다
+(경로: `/eks-practice/{environment}/eks-addons/argocd-admin-password-bcrypt`, SecureString).
+`operator_ip_cidr`도 동일한 방식으로 `/eks-practice/{environment}/eks-addons/operator-ip-cidr`(String)에서 조회한다.
+값을 등록·갱신할 때마다 root module의 tfvars 파일을 손으로 고칠 필요가 없다는 것이 이 방식의 장점이다.
+모듈 자체는 여전히 plain string 변수를 받으므로 이 모듈의 인터페이스에는 영향이 없다.
+
 **반드시 사전 계산된 고정 해시를 사용해야 한다.**
 Terraform `bcrypt()` 함수는 호출마다 다른 salt를 생성하여 매 apply마다 `argocd-secret`이
 업데이트되고 ArgoCD server pod가 재시작된다.

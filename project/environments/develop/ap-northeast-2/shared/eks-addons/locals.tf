@@ -40,12 +40,12 @@ locals {
   eks_addons = {
     # 2026-06-09 기준 최신 stable 버전
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
-    lbc_chart_version             = "3.4.0"
-    external_dns_chart_version    = "1.14.5"
-    metrics_server_chart_version  = "3.12.2"
-    karpenter_chart_version       = "1.12.1"
-    argocd_chart_version          = "9.5.21"
-    argo_rollouts_chart_version   = "2.38.1"
+    lbc_chart_version            = "3.4.0"
+    external_dns_chart_version   = "1.14.5"
+    metrics_server_chart_version = "3.12.2"
+    karpenter_chart_version      = "1.12.1"
+    argocd_chart_version         = "9.5.21"
+    argo_rollouts_chart_version  = "2.38.1"
 
     enable_aws_load_balancer_controller = true
     enable_argo_rollouts                = true
@@ -60,13 +60,13 @@ locals {
     argocd_ingress_hostname        = "argocd-develop.pyhtest.com"
     argocd_ingress_alb_name        = "${local.project}-argocd${local.name_suffix}-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 내 IP로 제한
-    argocd_ingress_allowed_cidrs = [var.operator_ip_cidr]
+    argocd_ingress_allowed_cidrs = [data.aws_ssm_parameter.operator_ip_cidr.value]
 
     # ArgoCD admin 초기 패스워드 (bcrypt 해시). 해시 생성일: 2026-06-16
     # 패스워드 변경 시: 새 해시와 argocd_admin_password_mtime을 함께 갱신해야 ArgoCD가 변경을 감지한다.
     # 해시 재생성: python3 -c "import bcrypt; print(bcrypt.hashpw(b'NEW_PASSWORD', bcrypt.gensalt()).decode())"
     # 주의: Terraform bcrypt() 함수를 직접 사용하지 말 것 — apply마다 ArgoCD pod 재시작 유발
-    argocd_admin_password_bcrypt = var.argocd_admin_password_bcrypt
+    argocd_admin_password_bcrypt = data.aws_ssm_parameter.argocd_admin_password_bcrypt.value
     argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
 
     # OTel Spoke Collector (GitOps로 OTel Gateway 배포 완료 후 활성화)

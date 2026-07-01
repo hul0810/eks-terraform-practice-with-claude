@@ -47,19 +47,19 @@ locals {
     # 시스템 노드 min/desired=1(비용 예외, eks/locals.tf 참조)인 상태에서 HA를 켜면
     # redis-ha quorum이 spot 노드에 분산되어 단일 노드 장애 시 ArgoCD 전체가 다운될 수 있다.
     # 시스템 노드 HA 복원(min/desired=2) 시 true로 함께 전환할 것 (redis-ha + replica=2).
-    argocd_ha_enabled              = false
-    argocd_ingress_enabled         = true
-    argocd_ingress_hostname        = "argocd.pyhtest.com"
-    argocd_ingress_alb_name        = "eks-practice-argocd-alb"
+    argocd_ha_enabled       = false
+    argocd_ingress_enabled  = true
+    argocd_ingress_hostname = "argocd.pyhtest.com"
+    argocd_ingress_alb_name = "eks-practice-argocd-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 작업자 IP로 제한
-    argocd_ingress_allowed_cidrs = [var.operator_ip_cidr]
+    argocd_ingress_allowed_cidrs = [data.aws_ssm_parameter.operator_ip_cidr.value]
 
     # ArgoCD admin 초기 패스워드 (bcrypt 해시). 해시 생성일: 2026-06-16
     # dev 환경과 동일 패스워드 사용 (실습 환경 — 운영 환경에서는 별도 패스워드 설정 권장)
     # 패스워드 변경 시: 새 해시와 argocd_admin_password_mtime을 함께 갱신해야 ArgoCD가 변경을 감지한다.
     # 해시 재생성: python3 -c "import bcrypt; print(bcrypt.hashpw(b'NEW_PASSWORD', bcrypt.gensalt()).decode())"
     # 주의: Terraform bcrypt() 함수를 직접 사용하지 말 것 — apply마다 ArgoCD pod 재시작 유발
-    argocd_admin_password_bcrypt = var.argocd_admin_password_bcrypt
+    argocd_admin_password_bcrypt = data.aws_ssm_parameter.argocd_admin_password_bcrypt.value
     argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
 
     # OTel Spoke Collector (GitOps로 OTel Gateway 배포 완료 후 활성화)
