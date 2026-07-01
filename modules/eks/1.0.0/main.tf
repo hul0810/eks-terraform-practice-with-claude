@@ -236,7 +236,7 @@ module "eks" {
 # ── VPC CNI (aws-node) ────────────────────────────────────────────────────────
 # 노드 IAM Role에서 AmazonEKS_CNI_Policy를 제거하고 aws-node ServiceAccount에만 부여한다.
 resource "aws_iam_role" "vpc_cni" {
-  name        = "${var.cluster_name}-vpc-cni"
+  name        = "${var.cluster_name}-vpc-cni-pod-id"
   description = "VPC CNI Pod Identity IAM Role - ${var.cluster_name}"
 
   assume_role_policy = jsonencode({
@@ -251,18 +251,30 @@ resource "aws_iam_role" "vpc_cni" {
   })
 
   tags = var.additional_tags
+
+  # name 변경은 AWS IAM ForceNew라 destroy+recreate가 강제된다(moved 블록으로 회피 불가).
+  # 라이브 클러스터에서 name을 바꾸면 CBD 없이는 구 Role이 먼저 삭제되어, addons 블록의
+  # pod_identity_association.role_arn 갱신이 끝나기 전까지 association이 삭제된 ARN을
+  # 가리키는 구간이 생긴다 — 신규 Role을 먼저 만들어 그 구간을 없앤다.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "vpc_cni" {
   role       = aws_iam_role.vpc_cni.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # ── EBS CSI Driver (ebs-csi-controller-sa) ───────────────────────────────────
 # AmazonEBSCSIDriverPolicy를 사용한다.
 # (describe-addon-configuration 반환값은 V2이나 실제 IAM에 존재하지 않는 정책명이므로 원본 사용)
 resource "aws_iam_role" "ebs_csi" {
-  name        = "${var.cluster_name}-ebs-csi-driver"
+  name        = "${var.cluster_name}-ebs-csi-driver-pod-id"
   description = "EBS CSI Driver Pod Identity IAM Role - ${var.cluster_name}"
 
   assume_role_policy = jsonencode({
@@ -277,9 +289,18 @@ resource "aws_iam_role" "ebs_csi" {
   })
 
   tags = var.additional_tags
+
+  # name 변경 시 vpc_cni와 동일한 이유로 CBD 필요 (위 vpc_cni 리소스 주석 참조).
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "ebs_csi" {
   role       = aws_iam_role.ebs_csi.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
