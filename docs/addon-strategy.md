@@ -104,7 +104,7 @@ Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한
 | Karpenter | IRSA (blueprints 자동 처리) | `enable_karpenter = false`로 비활성화 가능 |
 | ArgoCD | 없음 | GitOps 전환(Phase 5) 시작점. AWS API 미호출로 IAM 불필요 |
 | Argo Rollouts | 없음 | Canary·Blue-Green 배포 전략 구현. AWS API 미호출로 IAM 불필요 |
-| External Secrets Operator | IRSA(blueprints 자동 처리, 이번 단계에서는 스코프 미지정) | `enable_external_secrets = false`로 비활성화 가능. SecretStore/ExternalSecret CR 구성은 다음 단계 |
+| External Secrets Operator | IRSA(blueprints 자동 처리, 이번 단계에서는 스코프 미지정) | `enable_external_secrets = false`로 비활성화 가능. ArgoCD repo-creds용 ClusterSecretStore/ExternalSecret은 `monitoring/environments/ap-northeast-2/shared/eks-addons/main.tf`에서 구성 완료 |
 
 ### Secrets Store CSI Driver 대신 External Secrets Operator를 쓰는 이유 (2026-07-02 결정)
 
@@ -114,6 +114,32 @@ Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한
 - **External Secrets Operator**: SSM Parameter Store/Secrets Manager 값을 K8s Secret으로 직접 동기화한다. ArgoCD repo-creds처럼 K8s Secret 형태 자체가 필요한 대상(Helm values, 컨트롤러가 기대하는 Secret 라벨 규칙 등)에 바로 맞고, `refreshInterval`로 갱신 주기를 세밀하게 제어할 수 있다.
 
 이 프로젝트가 다루는 민감 정보(ArgoCD admin 패스워드, GitHub App 인증 정보 등)는 전부 K8s Secret 형태로 소비되므로 ESO가 목적에 더 부합한다. 두 도구를 동시에 운영하면 시크릿 접근 경로가 두 갈래로 나뉘어 운영 복잡도만 늘어나므로, ESO 하나로 통일한다.
+
+> ArgoCD repo-creds(`ClusterSecretStore/aws-parameterstore`, `ExternalSecret/argocd-github-app-repo-creds`)가
+> Terraform 소관인 이유는 애드온별 사유가 아니라 아래 "GitOps 관리 경계" 원칙에 따른 것이다.
+
+---
+
+## GitOps 관리 경계 (부트스트랩 순환 의존성)
+
+이 프로젝트의 서비스 매니페스트(catalog/order/gateway 등)는 ArgoCD가
+`eks-practice-devops-manifest` 저장소를 sync해서 GitOps로 관리한다. 하지만 **ArgoCD 자신이
+그 sync 루프에 들어가기 위해 필요한 리소스**는 GitOps로 관리할 수 없다 — ArgoCD가 아직
+그 저장소를 sync할 수 없는 시점에 필요한 리소스이기 때문이다(순환 의존성).
+
+**판단 기준 (애드온마다 재해석하지 않고 이 기준 하나로 판단한다)**:
+"ArgoCD 자신의 부트스트랩에 필요한 리소스인가, 아니면 ArgoCD가 이미 sync 가능한 상태에서
+배포하는 리소스인가?"
+
+| 리소스 유형 | GitOps 관리 | 이유 |
+|---|---|---|
+| ArgoCD 자체 설치 (Helm) | 불가 → Terraform | ArgoCD가 자기 자신을 GitOps로 설치할 수 없음 |
+| ArgoCD repo-creds (ClusterSecretStore/ExternalSecret 등 ArgoCD의 Git 인증정보) | 불가 → Terraform | ArgoCD가 devops-manifest 저장소 인증정보를 그 저장소 안에서 가져올 수 없음 |
+| 개별 서비스 리소스 (Deployment, 그 서비스가 쓰는 ExternalSecret 등) | 가능 → devops-manifest(GitOps) | ArgoCD가 이미 sync 가능한 시점 이후에 배포되는 리소스 |
+| AWS 리소스 (IAM Role, ACM, Route53, SSM Parameter 값 등) | 해당 없음 → Terraform | K8s 오브젝트가 아니므로 애초에 GitOps(ArgoCD) 범위 밖 |
+
+새 애드온·리소스를 추가할 때도 이 표의 첫 두 행에 해당하는지만 확인하면 되고,
+애드온별로 별도 GitOps 불가 사유를 문서화할 필요는 없다.
 
 ---
 

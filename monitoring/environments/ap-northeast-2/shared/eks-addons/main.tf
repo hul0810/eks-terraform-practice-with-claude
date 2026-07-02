@@ -135,6 +135,10 @@ resource "aws_iam_role_policy" "external_dns_assume_cross_account_role" {
 # 대상 저장소 URL은 조직 전체 스코프(https://github.com/hul0810)이므로, ArgoCD가 URL prefix
 # 매칭으로 hul0810 계정 아래 모든 저장소(devops-manifest, application 등)에 이 인증을 적용한다.
 #
+# [왜 GitOps(devops-manifest 저장소)가 아니라 Terraform이 이 리소스를 관리하는가]
+# ArgoCD 자신의 부트스트랩에 필요한 리소스(순환 의존성)이기 때문이다.
+# 일반 원칙과 판단 기준은 docs/addon-strategy.md "GitOps 관리 경계" 참조.
+#
 # [ClusterSecretStore를 선택한 이유 — 크로스 네임스페이스 ServiceAccount 참조]
 # ESO controller의 ServiceAccount(external-secrets-sa)는 external-secrets 네임스페이스에 있고
 # IRSA Role 신뢰 정책의 OIDC sub 조건이 system:serviceaccount:external-secrets:external-secrets-sa로
