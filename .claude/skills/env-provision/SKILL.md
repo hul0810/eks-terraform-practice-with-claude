@@ -1,0 +1,207 @@
+---
+name: env-provision
+description: >
+  develop/monitoring/production 실습 환경의 비용 발생 리소스(VPC NAT Gateway, EKS 클러스터, eks-addons)를
+  올바른 순서로 생성한다. Karpenter/external-secrets CRD 순환 의존, LBC-ArgoCD 웹훅 경쟁 상태,
+  ExternalDNS cross-account role 신뢰 정책 갱신(필요한 환경만) 등 클러스터를 새로 만들 때마다
+  반복 발생하는 실패 패턴을 자동으로 감지하고 우회한다. 3개 환경 모두 실습용이므로 production도 대상이다.
+disable-model-invocation: false
+allowed-tools:
+  - Bash(terraform *)
+  - Bash(aws *)
+  - Bash(kubectl *)
+  - Read
+  - Grep
+  - Glob
+  - Edit
+---
+
+## 사용법
+
+`$ARGUMENTS`로 대상 환경을 받는다: `monitoring` / `develop` / `production`.
+
+```
+/env-provision monitoring
+/env-provision develop
+/env-provision production
+```
+
+## 실행 절차
+
+아래 순서를 반드시 지킨다. 각 단계는 이전 단계가 성공해야 진행한다.
+
+### Step 0: 환경 파라미터 결정
+
+`$ARGUMENTS`가 없으면 중단하고 안내한다:
+
+```
+[안내] 대상 환경을 지정하세요: /env-provision monitoring | develop | production
+```
+
+`monitoring` | `develop` | `production` 외 값이면 오류 출력 후 종료.
+
+`production`인 경우, 실행 전 아래를 출력하고 확인을 받는다 (다른 환경보다 리소스 규모가 크고
+과금 영향이 크므로):
+
+```
+[확인] production 환경에 리소스를 생성합니다. 계속할까요? (y/N)
+```
+
+`y`가 아니면 중단한다.
+
+> **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
+> `environments/production` 경로의 모든 `terraform apply`를 무조건 차단한다 (CLAUDE.md
+> "Production 배포 정책" 참조). 이 스킬은 production에서도 환경 인식·root 디렉토리 판별·
+> 각 단계 사전 확인까지는 동일하게 진행하지만, 실제 `terraform apply` 실행 시점에는 훅이
+> 차단하고 종료 코드 2를 반환한다. 이 경우 훅 출력 메시지를 그대로 사용자에게 보여주고
+> 중단한다 — 재시도하지 않는다. 사용자가 터미널에서 직접 `terraform apply`를 실행한 뒤
+> 다음 Step으로 이어서 진행해달라고 안내한다.
+
+**환경별 root 디렉토리** (하드코딩하지 않고 아래 매핑만 사용, 세부값은 이후 각 단계에서 파일을 직접 읽어 확인한다):
+
+| 환경 | root |
+|------|------|
+| monitoring | `monitoring/environments/ap-northeast-2/shared` |
+| develop | `project/environments/develop/ap-northeast-2/shared` |
+| production | `project/environments/production/ap-northeast-2/shared` |
+
+이후 단계의 `{root}`는 이 값을 가리킨다.
+
+### Step 1: VPC NAT Gateway 활성화
+
+`{root}/vpc/locals.tf`를 Read하여 `enable_nat_gateway` 현재 값을 확인한다.
+
+- 이미 `true`: "[안내] NAT Gateway가 이미 활성화되어 있습니다." 출력 후 Step 2로.
+- `false`: Edit로 `true`로 변경 후 아래 실행:
+
+```bash
+cd {root}/vpc && terraform apply -auto-approve
+```
+
+실패하면 즉시 중단하고 오류를 사용자에게 보고한다 (이후 단계 진행 금지).
+
+### Step 2: EKS 클러스터 생성
+
+```bash
+cd {root}/eks && terraform apply -auto-approve
+```
+
+완료 후 **반드시** kubeconfig를 갱신한다:
+
+1. `{root}/eks/locals.tf`(또는 `outputs.tf`)에서 `cluster_name` 값을 Grep으로 확인
+2. `{root}/eks/providers.tf`에서 `profile` 값을 Grep으로 확인
+3. 아래 실행:
+
+```bash
+aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profile <profile> --alias <cluster_name>
+```
+
+> **WHY**: 클러스터를 destroy 후 재생성하면 API 엔드포인트(클러스터 내부 ID)가 바뀐다.
+> 이 갱신 없이는 이후 모든 `kubectl` 명령이 옛 엔드포인트를 찾다가 `dial tcp: lookup ... no such host`로 실패한다.
+
+`kubectl get nodes`로 시스템 노드가 `Ready`가 될 때까지 대기한다 (최대 5분 polling).
+
+### Step 3: eks-addons 생성
+
+**3-1. 1차 시도**
+
+```bash
+cd {root}/eks-addons && terraform apply -auto-approve
+```
+
+**3-2. CRD 순환 의존 에러 감지 시**
+
+출력에 아래 패턴이 있으면 Karpenter/external-secrets CRD가 아직 클러스터에 없어
+`kubernetes_manifest` 리소스의 plan 자체가 실패한 것이다 (helm_release가 CRD를 설치하지만,
+같은 apply의 plan 단계에서 함께 검증되어 전체가 막힌다):
+
+- `no matches for kind "EC2NodeClass" in group "karpenter.k8s.aws"`
+- `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`
+
+아래로 helm_release만 먼저 적용해 CRD를 설치한다:
+
+```bash
+terraform apply -auto-approve \
+  -target='module.eks_addons.module.eks_blueprints_addons.module.karpenter.helm_release.this[0]' \
+  -target='module.eks_addons.module.eks_blueprints_addons.module.external_secrets.helm_release.this[0]'
+```
+
+이후 CRD 설치를 확인하고 (`kubectl get crd | grep -E "karpenter|external-secrets"`),
+**3-1의 전체 apply를 재실행**한다.
+
+**3-3. LBC 웹훅 경쟁 상태 감지 시**
+
+아래 패턴이 있으면 LBC와 ArgoCD(Ingress 포함)가 병렬 생성되며 LBC 웹훅이 아직 뜨기 전에
+ArgoCD Ingress 생성이 시도된 것이다 (일시적):
+
+- `no endpoints available for service "aws-load-balancer-webhook-service"`
+
+`kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로
+LBC 파드가 `Running`인지 확인 후 **3-1의 전체 apply를 재실행**한다 (최대 2회).
+
+**3-4. external-secrets 웹훅 미기동 감지 시**
+
+아래 패턴이 있으면 external-secrets-webhook 파드가 아직 뜨지 않은 것이다.
+초기 부트스트랩 시 Karpenter가 새 노드를 프로비저닝하는 데 1~2분 걸릴 수 있어
+파드가 `Pending` 상태로 남아있을 수 있다:
+
+- `no endpoints available for service "external-secrets-webhook"`
+
+`kubectl get pods -n external-secrets`로 3개 파드(`external-secrets`,
+`external-secrets-cert-controller`, `external-secrets-webhook`)가 모두 `Running`인지 확인
+(최대 3분 polling) 후 **3-1의 전체 apply를 재실행**한다.
+
+**3-5.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
+
+### Step 4: cross-account ExternalDNS 신뢰 정책 갱신 (조건부)
+
+`{root}/eks-addons/*.tf`에서 `external_dns_cross_account_role_arn` 문자열을 Grep한다.
+
+**매치 없음** (예: develop — 같은 워크로드 계정 내 Route53이라 cross-account 불필요):
+
+```
+[안내] 이 환경은 cross-account ExternalDNS를 사용하지 않습니다. 이 단계를 건너뜁니다.
+```
+
+Step 5로 진행.
+
+**매치 있음** (현재 monitoring):
+
+1. `cd project/global/ap-northeast-2/external-dns-cross-account-role && terraform plan -out=tfplan`
+2. plan 결과에 `aws_iam_role.external_dns_cross_account_role`의 `assume_role_policy` 변경이
+   없으면(`No changes`) "[안내] 신뢰 정책이 이미 최신 상태입니다." 출력 후 `rm -f tfplan`, Step 5로.
+3. 변경이 있으면 (IRSA 역할 재생성으로 unique ID 불일치 — plan에 `AROA...` → `arn:aws:iam::...role/...`
+   형태로 나타남) `terraform apply tfplan` 실행 후 `rm -f tfplan`.
+
+   > **WHY**: IAM 트러스트 정책의 `Principal.AWS`에 역할 ARN을 넣으면 AWS는 이를 역할의
+   > unique ID로 내부 변환해 저장한다. eks-addons destroy로 ExternalDNS IRSA 역할이 삭제되고
+   > 재생성되면 같은 이름이라도 새 unique ID를 받는다. 이 갱신 없이는 새 ExternalDNS가
+   > workload 계정 Route53에 대한 `sts:AssumeRole`을 거부당해 DNS 레코드를 생성하지 못한다.
+
+4. `cd {root}/eks-addons && terraform apply -auto-approve` 재실행 (통상 no-op이지만
+   상태 일치를 확인하기 위해 실행한다).
+
+### Step 5: 검증
+
+1. `kubectl get pods -A`로 `Running`/`Completed`가 아닌 파드가 있는지 확인, 있으면 경고 출력
+2. `kubectl get ingress -A`로 각 Ingress에 ALB 주소(ADDRESS)가 할당됐는지 확인
+3. Ingress가 있으면 `external-dns.alpha.kubernetes.io/hostname` 값을 각각 확인하고,
+   `{root}/eks-addons/locals.tf`에서 `external_dns_route53_zone_arns`를 Grep해 zone ID를 추출한 뒤:
+
+   ```bash
+   aws route53 list-resource-record-sets --hosted-zone-id <zone-id> --profile terraform-workload \
+     --query "ResourceRecordSets[?Name=='<hostname>.']"
+   ```
+
+   A 레코드의 `AliasTarget.DNSName`이 현재 Ingress의 ALB 주소와 일치하는지 확인
+   (최대 2분 polling — ExternalDNS 반영 지연 감안).
+
+4. 완료 안내를 출력한다.
+
+```
+[완료] <환경> 리소스 생성 완료
+- VPC NAT Gateway: 활성화
+- EKS 클러스터: <cluster_name>
+- eks-addons: 생성 완료
+- Ingress: <hostname 목록과 상태>
+```

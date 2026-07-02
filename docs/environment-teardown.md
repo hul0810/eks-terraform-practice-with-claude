@@ -1,13 +1,56 @@
 # 환경 전체 삭제(teardown) 절차
 
+> **자동화**: 아래 절차는 `/env-teardown <monitoring|develop|production>` 스킬로 자동화되어
+> 있다 (`.claude/skills/env-teardown/SKILL.md`). Route53 레코드 잔존, Karpenter 노드 조기
+> drain으로 인한 external-secrets 웹훅 교착까지 함께 처리한다. 생성은
+> `/env-provision <monitoring|develop|production>`. 이 문서는 스킬이 수행하는 절차의 배경
+> (WHY)을 설명하는 참고 자료로 유지한다.
+
 ## 배경
 
-이 프로젝트는 실습 목적이 있어 비용 절감을 위해 develop 환경의
+이 프로젝트는 실습 목적이 있어 비용 절감을 위해 environment의
 eks-addons → eks를 통째로 삭제하는 경우가 있다. VPC는 NAT Gateway를
 제외하면 자체 비용이 발생하지 않으므로 이 문서의 삭제 대상에서 제외한다
-(NAT Gateway 등 비용 발생 리소스는 별도로 직접 정리한다). production은
-운영 환경이므로 클러스터 전체 삭제를 전제하지 않는다 — 이 문서는 develop
-환경 기준이다.
+(NAT Gateway 등 비용 발생 리소스는 별도로 직접 정리한다). 아래 절차는
+environment 이름만 바꾸면 monitoring/develop/production 어디에나 동일하게
+적용된다.
+
+---
+
+## production teardown — 보호 원칙과 실습 예외
+
+실무 기준으로 production은 **절대 보호해야 할 인프라**로 간주한다.
+`project/environments/production/`에서 `terraform apply`는
+`.claude/hooks/block-production-apply.sh` 훅이 기본적으로 하드 차단하며,
+정상 배포는 `/git-commit` → PR → 팀 검토·승인 → 사용자가 터미널에서 직접
+`apply`하는 절차를 거쳐야 한다 (`CLAUDE.md` "Production 배포 정책" 참조).
+
+다만 이 프로젝트는 어디까지나 실습이므로, production도 다른 환경과 마찬가지로
+**삭제(destroy)는 항상 가능해야 한다**. `terraform destroy`는 애초에 훅의
+차단 대상이 아니므로(정규식이 `apply`만 감지) 별도 조치 없이 그대로
+진행된다. 문제는 destroy 절차 중간에 `terraform apply`가 필요한 지점이
+있다는 것이다 — 대표적으로 아래 **VPC NAT Gateway 비활성화** 단계.
+
+### 임시 우회 마커로 apply 진행하기
+
+이 단계에서는 명령 앞에 `ALLOW_PRODUCTION_TEARDOWN_APPLY=1` 마커를 붙여
+실행한다. 훅이 이 마커를 command 문자열에서 감지하면 **그 명령 1회에 한해서만**
+통과시킨다:
+
+```bash
+cd project/environments/production/ap-northeast-2/shared/vpc
+ALLOW_PRODUCTION_TEARDOWN_APPLY=1 terraform apply -auto-approve
+```
+
+- 세션 전역 환경변수나 `.claude/settings.json` 수정이 아니라 **커맨드 단위** 마커다.
+  트랜스크립트에 명령 그대로 남아 감사 가능하고, "우회를 끄는 걸 깜빡"할 위험이 없다.
+- 마커 없이 실행하면 훅이 기존과 동일하게 차단하고 안내 메시지를 출력한다.
+- **teardown(NAT Gateway 비활성화 등) 목적으로만 사용한다.** 일반 production 리소스
+  변경·배포에는 이 마커를 붙이지 않는다 — production apply 보호 원칙 자체를 무력화하는
+  용도가 아니라, 실습 편의를 위한 좁은 예외다.
+
+`/env-teardown production` 스킬 실행 시 VPC NAT Gateway 비활성화 단계에서
+이 마커를 자동으로 사용한다 (`.claude/skills/env-teardown/SKILL.md` 참조).
 
 ---
 
@@ -89,12 +132,12 @@ aws ec2 delete-security-group --group-id <sg-id>
 
 ## Route53 레코드 잔존 주의
 
-ExternalDNS가 생성한 Route53 A 레코드(예: `argo-develop.pyhtest.com`)는
+ExternalDNS가 생성한 Route53 A 레코드(예: `argocd-develop.pyhtest.com`)는
 ALB 삭제와 별개로 남는다. ALB가 사라진 뒤에도 레코드가 남으면 존재하지
 않는 ALB를 가리키는 dangling 레코드가 되므로 함께 확인·정리한다.
 
 ```bash
 aws route53 list-resource-record-sets \
   --hosted-zone-id Z0651638YFNLNW79M27P \
-  --query "ResourceRecordSets[?Name=='argo-develop.pyhtest.com.']"
+  --query "ResourceRecordSets[?Name=='argocd-develop.pyhtest.com.']"
 ```

@@ -64,6 +64,20 @@
 
 > 이 지시사항만으로는 강제 보장이 불가능하므로, `.claude/hooks/block-production-apply.sh` 훅이
 > `PreToolUse` 이벤트에서 production apply를 하드 차단한다.
+>
+> `/env-provision production` / `/env-teardown production`도 예외가 아니다 — 이 훅은 어떤
+> 도구가 호출했는지 구분하지 않고 `environments/production` 경로의 `terraform apply`를
+> 기본적으로 차단한다. 즉 두 스킬은 production 환경명·root 디렉토리를 인식하고 절차를 안내하지만,
+> 실제 apply 단계에서는 훅에 막혀 중단되고 사용자가 직접 실행해야 한다.
+>
+> **예외 — teardown 실습 목적의 임시 우회 마커**: production도 결국 실습 환경이므로 삭제(destroy)는
+> 항상 가능해야 한다는 원칙에 따라, `terraform destroy`는 애초에 이 훅의 정규식 대상이 아니라
+> 차단되지 않는다. 다만 teardown 절차 중 NAT Gateway 비활성화처럼 `terraform apply`가 필요한
+> 단계가 있다 (`docs/environment-teardown.md` 참조). 이 경우 명령 앞에
+> `ALLOW_PRODUCTION_TEARDOWN_APPLY=1` 마커를 붙이면 그 명령 1회에 한해 통과된다 (세션 전역
+> 환경변수나 설정 변경이 아니라 커맨드 문자열 단위 마커이므로 트랜스크립트에 그대로 남아 감사
+> 가능하고, 되돌리는 걸 깜빡할 위험이 없다). **이 마커는 teardown 실습 목적으로만 사용한다 —
+> 일반 production 변경 배포에는 절대 붙이지 않는다.**
 
 ---
 
