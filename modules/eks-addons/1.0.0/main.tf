@@ -1,7 +1,8 @@
 ################################################################################
 # EKS Addons 모듈 — Helm (blueprints) 전용
 #
-# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, Karpenter, ArgoCD, Argo Rollouts
+# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, External Secrets Operator,
+#            Karpenter, ArgoCD, Argo Rollouts
 #
 # 이 모듈은 EKS 관리형 addon API(aws_eks_addon)가 없거나 Helm values 커스터마이징이
 # 필요한 애드온을 aws-ia/eks-blueprints-addons 모듈로 관리한다.
@@ -144,6 +145,41 @@ module "eks_blueprints_addons" {
     set = [
       # 기본값 1이나 명시적으로 관리
       { name = "replicas", value = tostring(var.replica_counts.metrics_server) },
+      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
+      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
+      { name = "tolerations[0].operator", value = "Exists" },
+      { name = "tolerations[0].effect", value = "NoSchedule" },
+    ]
+  }
+
+  # ── External Secrets Operator ────────────────────────────────────────────────
+  # AWS SSM Parameter Store/Secrets Manager의 값을 K8s Secret으로 동기화한다.
+  # blueprints가 IRSA 자동 처리. IAM 정책은 blueprints 내부에서
+  # `length(var.external_secrets_ssm_parameter_arns) > 0 ? [statement] : []` 패턴의
+  # dynamic block으로 생성되므로, 이 모듈의 변수에 빈 리스트를 그대로 전달하면
+  # blueprints의 기본 와일드카드 대신 "정책 문(statement) 자체가 생성되지 않아 권한 없음"으로
+  # 귀결된다. 따라서 빈 리스트일 때는 blueprints 기본값과 동일한 와일드카드를 명시적으로
+  # 전달해 "미지정 시 동작"을 그대로 재현한다.
+  # SecretStore/ClusterSecretStore, ExternalSecret CR은 이 모듈의 관리 범위가 아니다
+  # (환경 root module에서 관리 — 예: monitoring/.../eks-addons/main.tf).
+  enable_external_secrets = var.enable_external_secrets
+  external_secrets_ssm_parameter_arns = (
+    length(var.external_secrets_ssm_parameter_arns) > 0
+    ? var.external_secrets_ssm_parameter_arns
+    : ["arn:aws:ssm:*:*:parameter/*"] # blueprints 기본값과 동일
+  )
+  external_secrets_kms_key_arns = (
+    length(var.external_secrets_kms_key_arns) > 0
+    ? var.external_secrets_kms_key_arns
+    : ["arn:aws:kms:*:*:key/*"] # blueprints 기본값과 동일
+  )
+  external_secrets = {
+    chart_version = var.external_secrets_chart_version
+    # 다른 addon(LBC/ExternalDNS/Karpenter)과 동일하게 고정 이름 사용 — 멀티 클러스터 환경에서 식별 용이
+    role_name            = "${var.cluster_name}-external-secrets-irsa"
+    role_name_use_prefix = false
+    set = [
+      { name = "replicaCount", value = tostring(var.replica_counts.external_secrets) },
       # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
       { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
       { name = "tolerations[0].operator", value = "Exists" },
@@ -328,7 +364,7 @@ resource "kubernetes_manifest" "otel_spoke_node" {
             insecure_skip_verify = true
           }
           filelog = {
-            include           = ["/var/log/pods/*/*/*.log"]
+            include = ["/var/log/pods/*/*/*.log"]
             # "end": Pod 재시작 시 이미 전송된 로그 중복 방지.
             # 초기 배포 시 기존 로그가 수집되지 않는 trade-off 있음.
             # offset 영속화가 필요하면 filestorage extension 추가 검토.

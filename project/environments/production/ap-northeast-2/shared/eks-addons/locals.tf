@@ -27,14 +27,15 @@ locals {
   replica_counts = {}
 
   eks_addons = {
-    # 2026-06-09 기준 최신 stable 버전
+    # 2026-06-09 기준 최신 stable 버전 (external_secrets_chart_version은 2026-07-02 기준)
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
-    lbc_chart_version            = "3.4.0"
-    external_dns_chart_version   = "1.14.5"
-    metrics_server_chart_version = "3.12.2"
-    karpenter_chart_version      = "1.12.1"
-    argocd_chart_version         = "9.5.21"
-    argo_rollouts_chart_version  = "2.38.1"
+    lbc_chart_version              = "3.4.0"
+    external_dns_chart_version     = "1.14.5"
+    metrics_server_chart_version   = "3.12.2"
+    karpenter_chart_version        = "1.12.1"
+    argocd_chart_version           = "9.5.21"
+    argo_rollouts_chart_version    = "2.38.1"
+    external_secrets_chart_version = "2.7.0"
 
     enable_aws_load_balancer_controller = true
     enable_argo_rollouts                = true
@@ -44,11 +45,19 @@ locals {
     enable_metrics_server          = true
     enable_karpenter               = true
     enable_argocd                  = true
+    # SecretStore/ClusterSecretStore·ExternalSecret CR 구성은 다음 단계 — 이번 단계는 애드온 설치까지.
+    # IAM 스코프는 blueprints 기본 와일드카드(계정 전체 SSM/KMS) 대신 이 환경의 SSM 경로(/eks-practice/production/*)로
+    # 미리 좁혀둔다 — 아직 이 경로에 파라미터가 없어도, 향후 SecretStore 구성 시 별도 IAM 변경 없이 바로 쓸 수 있다.
+    enable_external_secrets = true
+    external_secrets_ssm_parameter_arns = [
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/production/*"
+    ]
+    external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]
     # 시스템 노드 min/desired=1(비용 예외, eks/locals.tf 참조)인 상태에서 HA를 켜면
     # redis-ha quorum이 spot 노드에 분산되어 단일 노드 장애 시 ArgoCD 전체가 다운될 수 있다.
     # 시스템 노드 HA 복원(min/desired=2) 시 true로 함께 전환할 것 (redis-ha + replica=2).
-    argocd_ha_enabled       = false
-    argocd_ingress_enabled  = true
+    argocd_ha_enabled      = false
+    argocd_ingress_enabled = true
     # monitoring 클러스터가 "argocd.pyhtest.com" Hub를 운영하므로 production은 별도 subdomain 사용
     argocd_ingress_hostname = "argocd-production.pyhtest.com"
     argocd_ingress_alb_name = "eks-practice-argocd-prd-alb"

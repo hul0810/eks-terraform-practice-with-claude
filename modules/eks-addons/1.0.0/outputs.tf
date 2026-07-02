@@ -23,3 +23,8 @@ output "external_dns_role_arn" {
   description = "ExternalDNS IRSA IAM Role ARN. blueprints가 생성한다. external_dns_route53_zone_arns가 비면 빈 문자열 반환"
   value       = module.eks_blueprints_addons.external_dns.iam_role_arn
 }
+
+output "external_secrets_role_arn" {
+  description = "External Secrets Operator IRSA IAM Role ARN. blueprints가 생성한다. Role 신뢰 정책의 OIDC sub 조건은 system:serviceaccount:external-secrets:external-secrets-sa로 고정된다"
+  value       = module.eks_blueprints_addons.external_secrets.iam_role_arn
+}

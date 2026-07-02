@@ -21,11 +21,12 @@ locals {
 
   # monitoring: 단일 시스템 노드(비용 절감)로 모든 애드온 replica=1
   replica_counts = {
-    lbc            = 1
-    karpenter      = 1
-    external_dns   = 1
-    metrics_server = 1
-    argo_rollouts  = 1
+    lbc              = 1
+    karpenter        = 1
+    external_dns     = 1
+    metrics_server   = 1
+    argo_rollouts    = 1
+    external_secrets = 1
   }
 
   # *.pyhtest.com ACM 인증서 ARN — monitoring 계정, AWS CLI 외부 관리 리소스
@@ -46,10 +47,11 @@ locals {
 
   eks_addons = {
     # 2026-06-09 기준 최신 stable 버전
-    lbc_chart_version            = "3.4.0"
-    external_dns_chart_version   = "1.14.5"
-    metrics_server_chart_version = "3.12.2"
-    karpenter_chart_version      = "1.12.1"
+    lbc_chart_version              = "3.4.0"
+    external_dns_chart_version     = "1.14.5"
+    metrics_server_chart_version   = "3.12.2"
+    karpenter_chart_version        = "1.12.1"
+    external_secrets_chart_version = "2.7.0"
 
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
@@ -58,6 +60,14 @@ locals {
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
     enable_metrics_server          = true
     enable_karpenter               = true
+    enable_external_secrets        = true
+    # ArgoCD GitHub App 인증 정보(SSM SecureString)만 읽도록 스코프 — 계정 내 모든 파라미터
+    # 와일드카드(blueprints 기본값) 대신 이 prefix로 제한한다.
+    external_secrets_ssm_parameter_arns = [
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd/github-app/*"
+    ]
+    # SSM SecureString 기본 키(alias/aws/ssm)만 복호화 허용 — 계정 내 모든 KMS 키 와일드카드 대신 최소 권한
+    external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]
 
     # monitoring 클러스터는 OTel의 Hub이므로 spoke collector를 설치하지 않는다.
     # OTel Operator와 Gateway는 observability/ root module에서 관리한다.

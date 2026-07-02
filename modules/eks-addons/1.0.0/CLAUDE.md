@@ -1,18 +1,27 @@
 # modules/eks-addons 설계 원칙
 
-## 이 모듈이 관리하는 애드온 (9종)
+## 이 모듈이 관리하는 애드온 (10종)
 
 | 애드온 | 설치 방법 | IAM 방식 | 활성화 조건 |
 |--------|-----------|---------|------------|
 | aws-load-balancer-controller | Helm (eks-blueprints-addons) | IRSA | 기본 활성 |
 | external-dns | Helm (eks-blueprints-addons) | IRSA | 기본 활성 |
 | metrics-server | Helm (eks-blueprints-addons) | 없음 | 기본 활성 |
+| external-secrets | Helm (eks-blueprints-addons) | IRSA(스코프는 호출자가 명시, 미지정 시 blueprints 기본 와일드카드) | `enable_external_secrets=true` |
 | karpenter | Helm (eks-blueprints-addons) | IRSA | 기본 활성 |
 | argocd | Helm (eks-blueprints-addons) | 없음 | 기본 활성 |
 | argo-rollouts | Helm (eks-blueprints-addons) | 없음 | `enable_argo_rollouts=true` |
 | opentelemetry-operator | Helm (직접) | 없음 | `enable_otel_spoke_collector=true` |
 | otel-spoke-node (DaemonSet) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
 | otel-spoke-singleton (Deployment) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
+
+> **External Secrets Operator(2026-07-02 기준)**: AWS EKS 관리형 add-on 카탈로그와 커뮤니티 add-on
+> 카탈로그 어디에도 ESO가 없어 Bootstrap(`aws_eks_addon`)으로 관리할 수 없다 —
+> Helm(blueprints)만이 유일한 설치 경로다.
+> IAM 스코프(`external_secrets_ssm_parameter_arns`, `external_secrets_kms_key_arns`)는 이 모듈이 호출자에게
+> 위임한다 — 아래 "IAM 전략" 섹션의 "External Secrets Operator IAM 스코프 좁히기" 참조.
+> SecretStore/ClusterSecretStore, ExternalSecret CR은 이 모듈의 관리 범위가 아니다 — 환경 root module에서
+> 관리한다(예: `monitoring/environments/ap-northeast-2/shared/eks-addons/main.tf`).
 
 > EBS CSI Driver와 Secrets Store CSI Driver + ASCP는 Bootstrap 애드온으로 분류되어 `modules/eks`에서 관리한다.
 > cert-manager도 Bootstrap 애드온(`modules/eks`) — OTel Operator의 webhook 인증서 발급에 활용된다.
@@ -30,6 +39,7 @@
 | karpenter (Helm chart) | `1.12.1` |
 | argo-cd (Helm chart) | `9.5.21` |
 | argo-rollouts (Helm chart) | `2.38.1` |
+| external-secrets (Helm chart) | `2.7.0` |
 
 ---
 
@@ -44,6 +54,29 @@ IAM 방식 선택 기준: blueprints 사용 → IRSA / blueprints 미사용 → 
 
 blueprints 모듈에 `oidc_provider_arn`을 전달하면 각 애드온의 IAM Role 생성과
 Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한다.
+
+### External Secrets Operator IAM 스코프 좁히기
+
+blueprints의 `external_secrets_ssm_parameter_arns` / `external_secrets_secrets_manager_arns` /
+`external_secrets_kms_key_arns` 변수는 **기본값이 이미 와일드카드**다
+(`arn:aws:ssm:*:*:parameter/*`, `arn:aws:kms:*:*:key/*` 등 — blueprints 소스 확인 완료).
+이 프로젝트는 비용 정책과 무관하게 "실무 협업 기준"(`docs/terraform-principles.md`)에 따라
+IAM 최소 권한 원칙을 지키므로, 이 모듈이 `external_secrets_ssm_parameter_arns` /
+`external_secrets_kms_key_arns` 변수를 새로 노출해 호출자가 명시적으로 스코프를 좁히도록 강제한다
+(`external_secrets_secrets_manager_arns`는 이 프로젝트가 SSM Parameter Store만 사용하므로 아직 미노출).
+
+**"빈 리스트 = blueprints 기본값 유지"를 재현하는 방법**: blueprints 내부는
+`length(var.external_secrets_ssm_parameter_arns) > 0 ? [statement] : []` 형태의 dynamic block으로
+IAM 정책 statement를 생성한다. 즉 빈 리스트를 그대로 전달하면 "와일드카드 허용"이 아니라
+"해당 정책 statement 자체가 생성되지 않아 권한 없음"으로 귀결된다(ExternalDNS의
+`external_dns_route53_zone_arns=[]` → "IAM Role 자체 미생성"과는 다른 메커니즘).
+이 모듈은 `main.tf`에서 삼항 연산자로 빈 리스트일 때 blueprints 기본 와일드카드
+(`arn:aws:ssm:*:*:parameter/*`, `arn:aws:kms:*:*:key/*`)를 명시적으로 대신 전달해
+"미지정 시 동작"을 재현한다.
+
+실제 스코프 확정은 각 환경 root module의 몫이다(예: `monitoring/.../eks-addons/locals.tf`가
+`data.aws_caller_identity`로 계정 ID를, `data.aws_kms_alias.ssm_default`(`alias/aws/ssm`)로
+SSM SecureString 기본 키 ARN을 조회해 SSM parameter path prefix + 해당 KMS 키로 스코프를 좁힌다).
 
 ---
 

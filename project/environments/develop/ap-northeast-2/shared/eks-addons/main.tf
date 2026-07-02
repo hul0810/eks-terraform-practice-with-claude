@@ -16,6 +16,10 @@ module "eks_addons" {
   external_dns_chart_version          = local.eks_addons.external_dns_chart_version
   enable_metrics_server               = local.eks_addons.enable_metrics_server
   metrics_server_chart_version        = local.eks_addons.metrics_server_chart_version
+  enable_external_secrets             = local.eks_addons.enable_external_secrets
+  external_secrets_chart_version      = local.eks_addons.external_secrets_chart_version
+  external_secrets_ssm_parameter_arns = local.eks_addons.external_secrets_ssm_parameter_arns
+  external_secrets_kms_key_arns       = local.eks_addons.external_secrets_kms_key_arns
   enable_karpenter                    = local.eks_addons.enable_karpenter
   karpenter_chart_version             = local.eks_addons.karpenter_chart_version
   enable_argocd                       = local.eks_addons.enable_argocd

@@ -20,6 +20,12 @@ data "aws_eks_cluster" "this" {
   name = local.cluster_name
 }
 
+# SSM SecureString 파라미터 기본 암호화 키. External Secrets Operator가 SecureString 파라미터를
+# 복호화할 때 이 키에 대한 kms:Decrypt 권한만 허용한다 (계정 내 모든 KMS 키 와일드카드 대신 최소 권한).
+data "aws_kms_alias" "ssm_default" {
+  name = "alias/aws/ssm"
+}
+
 # 운영자 공인 IP CIDR — 로컬 tfvars 파일 대신 SSM Parameter Store(Standard tier)에서 조회
 # 값 등록/갱신: aws ssm put-parameter --name /eks-practice/production/eks-addons/operator-ip-cidr --type String --value "x.x.x.x/32" --overwrite
 data "aws_ssm_parameter" "operator_ip_cidr" {

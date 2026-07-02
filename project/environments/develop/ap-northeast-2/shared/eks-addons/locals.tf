@@ -30,22 +30,24 @@ locals {
 
   # dev: 시스템 노드 1개(비용 절감)로 모든 애드온 replica=1. prd는 모듈 기본값 사용
   replica_counts = {
-    lbc            = 1
-    karpenter      = 1
-    external_dns   = 1
-    metrics_server = 1
-    argo_rollouts  = 1
+    lbc              = 1
+    karpenter        = 1
+    external_dns     = 1
+    metrics_server   = 1
+    argo_rollouts    = 1
+    external_secrets = 1
   }
 
   eks_addons = {
-    # 2026-06-09 기준 최신 stable 버전
+    # 2026-06-09 기준 최신 stable 버전 (external_secrets_chart_version은 2026-07-02 기준)
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
-    lbc_chart_version            = "3.4.0"
-    external_dns_chart_version   = "1.14.5"
-    metrics_server_chart_version = "3.12.2"
-    karpenter_chart_version      = "1.12.1"
-    argocd_chart_version         = "9.5.21"
-    argo_rollouts_chart_version  = "2.38.1"
+    lbc_chart_version              = "3.4.0"
+    external_dns_chart_version     = "1.14.5"
+    metrics_server_chart_version   = "3.12.2"
+    karpenter_chart_version        = "1.12.1"
+    argocd_chart_version           = "9.5.21"
+    argo_rollouts_chart_version    = "2.38.1"
+    external_secrets_chart_version = "2.7.0"
 
     enable_aws_load_balancer_controller = true
     enable_argo_rollouts                = true
@@ -55,10 +57,18 @@ locals {
     enable_metrics_server          = true
     enable_karpenter               = true
     enable_argocd                  = true
-    argocd_ha_enabled              = false # dev: 단일 시스템 노드, 비용 절감 (redis-ha 등 추가 pod 회피)
-    argocd_ingress_enabled         = true
-    argocd_ingress_hostname        = "argocd-develop.pyhtest.com"
-    argocd_ingress_alb_name        = "${local.project}-argocd${local.name_suffix}-alb"
+    # SecretStore/ClusterSecretStore·ExternalSecret CR 구성은 다음 단계 — 이번 단계는 애드온 설치까지.
+    # IAM 스코프는 blueprints 기본 와일드카드(계정 전체 SSM/KMS) 대신 이 환경의 SSM 경로(/eks-practice/develop/*)로
+    # 미리 좁혀둔다 — 아직 이 경로에 파라미터가 없어도, 향후 SecretStore 구성 시 별도 IAM 변경 없이 바로 쓸 수 있다.
+    enable_external_secrets = true
+    external_secrets_ssm_parameter_arns = [
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/develop/*"
+    ]
+    external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]
+    argocd_ha_enabled             = false # dev: 단일 시스템 노드, 비용 절감 (redis-ha 등 추가 pod 회피)
+    argocd_ingress_enabled        = true
+    argocd_ingress_hostname       = "argocd-develop.pyhtest.com"
+    argocd_ingress_alb_name       = "${local.project}-argocd${local.name_suffix}-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 내 IP로 제한
     argocd_ingress_allowed_cidrs = [data.aws_ssm_parameter.operator_ip_cidr.value]
 

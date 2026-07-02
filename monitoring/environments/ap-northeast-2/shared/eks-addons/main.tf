@@ -53,6 +53,11 @@ module "eks_addons" {
   enable_karpenter        = local.eks_addons.enable_karpenter
   karpenter_chart_version = local.eks_addons.karpenter_chart_version
 
+  enable_external_secrets             = local.eks_addons.enable_external_secrets
+  external_secrets_chart_version      = local.eks_addons.external_secrets_chart_version
+  external_secrets_ssm_parameter_arns = local.eks_addons.external_secrets_ssm_parameter_arns
+  external_secrets_kms_key_arns       = local.eks_addons.external_secrets_kms_key_arns
+
   enable_argocd                      = local.eks_addons.enable_argocd
   argocd_chart_version               = local.eks_addons.argocd_chart_version
   argocd_ha_enabled                  = local.eks_addons.argocd_ha_enabled
@@ -105,4 +110,136 @@ resource "aws_iam_role_policy" "external_dns_assume_cross_account_role" {
       }
     ]
   })
+}
+
+################################################################################
+# ⚠️ ESO 최초 설치 시 2단계 apply 필수 (Karpenter/OTel과 동일한 제약)
+#
+#   hashicorp/kubernetes provider의 kubernetes_manifest는 plan 단계에서
+#   클러스터 API에 CRD 스키마를 조회하여 manifest를 검증한다. ClusterSecretStore/
+#   ExternalSecret CRD는 이 apply의 module.eks_addons(ESO Helm chart)가 설치하므로,
+#   depends_on으로 apply 순서는 보장되지만 plan-time 검증에는 영향을 주지 않는다.
+#   ESO가 클러스터에 아직 없는 상태(최초 설치, 또는 재설치)에서 plan을 실행하면
+#   "no matches for kind ClusterSecretStore/ExternalSecret" 에러가 발생한다.
+#
+#   1단계: terraform apply -target=module.eks_addons
+#          → ESO Helm chart 설치 → CRD 클러스터 등록
+#   2단계: terraform apply
+#          → ClusterSecretStore / ExternalSecret 생성
+################################################################################
+
+# ── ArgoCD GitHub App 인증 정보 동기화 (ESO) ───────────────────────────────────
+#
+# SSM Parameter Store(SecureString)에 등록된 GitHub App 인증 정보를
+# External Secrets Operator(ESO)로 읽어 ArgoCD가 기대하는 repo-creds Secret으로 동기화한다.
+# 대상 저장소 URL은 조직 전체 스코프(https://github.com/hul0810)이므로, ArgoCD가 URL prefix
+# 매칭으로 hul0810 계정 아래 모든 저장소(devops-manifest, application 등)에 이 인증을 적용한다.
+#
+# [ClusterSecretStore를 선택한 이유 — 크로스 네임스페이스 ServiceAccount 참조]
+# ESO controller의 ServiceAccount(external-secrets-sa)는 external-secrets 네임스페이스에 있고
+# IRSA Role 신뢰 정책의 OIDC sub 조건이 system:serviceaccount:external-secrets:external-secrets-sa로
+# 고정되어 있다(modules/eks-addons가 blueprints를 통해 생성 — 수동 변경 금지 대상).
+# 반면 이 Secret은 argocd 네임스페이스에 생성되어야 한다.
+#
+# 네임스페이스 스코프의 SecretStore는 spec.provider.aws.auth.jwt.serviceAccountRef.namespace를
+# 무시하고 항상 SecretStore 자신과 같은 네임스페이스의 ServiceAccount만 참조할 수 있다
+# (공식 이슈: external-secrets/external-secrets#366 "Enable Auth.JWTAuth.ServiceAccountRef.Namespace
+# in kind SecretStore" — 아직 미지원). ClusterSecretStore는 클러스터 스코프라 이 제약이 없고
+# serviceAccountRef.namespace를 그대로 존중한다(공식 문서: https://external-secrets.io/latest/api/clustersecretstore/).
+# 따라서 IAM Role 신뢰 정책을 건드리지 않고도 크로스 네임스페이스 참조가 가능한
+# ClusterSecretStore를 사용한다.
+resource "kubernetes_manifest" "argocd_github_app_secret_store" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ClusterSecretStore"
+    metadata = {
+      name = "aws-parameterstore"
+    }
+    spec = {
+      provider = {
+        aws = {
+          service = "ParameterStore"
+          region  = "ap-northeast-2"
+          auth = {
+            jwt = {
+              serviceAccountRef = {
+                name      = "external-secrets-sa"
+                namespace = "external-secrets"
+              }
+            }
+          }
+        }
+      }
+      # ClusterSecretStore는 기본적으로 모든 네임스페이스의 ExternalSecret이 참조할 수 있다.
+      # 이 스토어는 GitHub App Private Key(조직 전체 저장소 쓰기 권한)를 노출하므로,
+      # argocd 네임스페이스로 참조를 제한해 다른 네임스페이스에서의 탈취 경로를 차단한다.
+      conditions = [
+        { namespaces = ["argocd"] }
+      ]
+    }
+  }
+
+  depends_on = [module.eks_addons]
+}
+
+# ArgoCD 공식 repo-creds Secret 스펙(argocd.argoproj.io/secret-type: repo-creds 라벨 +
+# type/url/githubAppID/githubAppInstallationID/githubAppPrivateKey 키)을 그대로 따른다.
+# https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-repo-creds-yaml/
+#
+# [template.mergePolicy = Merge를 사용하는 이유]
+# ESO는 target.template이 설정되면 기본적으로 template에서 참조하지 않은 spec.data 키를
+# 결과 Secret에서 제외한다(https://external-secrets.io/latest/guides/templating/).
+# mergePolicy: Merge로 전환하면 template.data의 리터럴 값(type, url)과 spec.data로 가져온
+# 키(githubAppID 등, secretKey를 최종 Secret 키 이름과 동일하게 지정)가 함께 병합된다.
+resource "kubernetes_manifest" "argocd_github_app_repo_creds" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "argocd-github-app-repo-creds"
+      namespace = "argocd"
+    }
+    spec = {
+      secretStoreRef = {
+        name = kubernetes_manifest.argocd_github_app_secret_store.manifest.metadata.name
+        kind = "ClusterSecretStore"
+      }
+      refreshInterval = "1h"
+      target = {
+        name           = "argocd-github-app-repo-creds"
+        creationPolicy = "Owner"
+        template = {
+          mergePolicy = "Merge"
+          metadata = {
+            labels = {
+              "argocd.argoproj.io/secret-type" = "repo-creds"
+            }
+          }
+          data = {
+            type = "git"
+            url  = "https://github.com/hul0810"
+          }
+        }
+      }
+      data = [
+        {
+          secretKey = "githubAppID"
+          remoteRef = { key = "/eks-practice/monitoring/argocd/github-app/app-id" }
+        },
+        {
+          secretKey = "githubAppInstallationID"
+          remoteRef = { key = "/eks-practice/monitoring/argocd/github-app/installation-id" }
+        },
+        {
+          secretKey = "githubAppPrivateKey"
+          remoteRef = { key = "/eks-practice/monitoring/argocd/github-app/private-key" }
+        },
+      ]
+    }
+  }
+
+  depends_on = [
+    module.eks_addons,
+    kubernetes_manifest.argocd_github_app_secret_store,
+  ]
 }

@@ -88,6 +88,36 @@ variable "metrics_server_chart_version" {
   type        = string
 }
 
+variable "enable_external_secrets" {
+  description = "External Secrets Operator 설치 여부"
+  type        = bool
+  default     = false # 신규 애드온이므로 opt-in (enable_argo_rollouts, enable_otel_spoke_collector와 동일한 정책)
+}
+
+variable "external_secrets_chart_version" {
+  description = "External Secrets Operator Helm chart 버전 (예: \"2.7.0\"). enable_external_secrets=false이면 미사용 — null 허용"
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = !var.enable_external_secrets || (var.external_secrets_chart_version != null && length(var.external_secrets_chart_version) > 0)
+    error_message = "enable_external_secrets=true일 때 external_secrets_chart_version은 설정되어야 합니다."
+  }
+}
+
+variable "external_secrets_ssm_parameter_arns" {
+  description = "External Secrets Operator가 읽을 수 있는 SSM Parameter ARN 목록. 빈 리스트이면 blueprints 기본값(모든 파라미터 와일드카드 arn:aws:ssm:*:*:parameter/*)을 사용 — 운영 환경에서는 반드시 명시할 것"
+  type        = list(string)
+  default     = []
+}
+
+variable "external_secrets_kms_key_arns" {
+  description = "External Secrets Operator가 SecureString 파라미터 복호화에 사용할 KMS Key ARN 목록. 빈 리스트이면 blueprints 기본값(모든 KMS 키 와일드카드 arn:aws:kms:*:*:key/*)을 사용 — 운영 환경에서는 반드시 명시할 것"
+  type        = list(string)
+  default     = []
+}
+
 variable "enable_karpenter" {
   description = "Karpenter 설치 여부. false이면 blueprints가 관련 IAM Role, SQS, EventBridge Rule, Helm release를 생성하지 않는다"
   type        = bool
@@ -212,12 +242,13 @@ variable "argocd_admin_password_mtime" {
 variable "replica_counts" {
   description = "애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값"
   type = object({
-    lbc            = optional(number, 2) # LBC: replicaCount 기본 2
-    karpenter      = optional(number, 2) # Karpenter: replicas 기본 2
-    external_dns   = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)
-    metrics_server = optional(number, 1) # MetricsServer: replicas 기본 1
-    argocd_server  = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수
-    argo_rollouts  = optional(number, 1) # Argo Rollouts controller: 기본 1. 시스템 노드 HA(min>=2) 확보 후 2로 증설
+    lbc              = optional(number, 2) # LBC: replicaCount 기본 2
+    karpenter        = optional(number, 2) # Karpenter: replicas 기본 2
+    external_dns     = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)
+    metrics_server   = optional(number, 1) # MetricsServer: replicas 기본 1
+    argocd_server    = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수
+    argo_rollouts    = optional(number, 1) # Argo Rollouts controller: 기본 1. 시스템 노드 HA(min>=2) 확보 후 2로 증설
+    external_secrets = optional(number, 1) # External Secrets Operator: replicaCount 기본 1
   })
   default = {}
 
