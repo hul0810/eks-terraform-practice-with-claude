@@ -20,6 +20,7 @@ locals {
     private_subnets    = ["10.12.32.0/19", "10.12.64.0/19", "10.12.96.0/19", "10.12.128.0/19"]
     database_subnets   = ["10.12.4.0/24", "10.12.5.0/24", "10.12.6.0/24", "10.12.7.0/24"]
     tgw_subnets        = ["10.12.8.0/28", "10.12.8.16/28", "10.12.8.32/28", "10.12.8.48/28"]
+    # 실습 세션마다 켜고 끄는 값 — PR/커밋 diff에서 이 줄의 true/false 변경은 무시할 것
     enable_nat_gateway = false
     single_nat_gateway = true
     cluster_name       = "${local.project}${local.name_suffix}"
