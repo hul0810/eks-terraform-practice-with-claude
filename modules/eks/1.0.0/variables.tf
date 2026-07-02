@@ -133,13 +133,12 @@ variable "zonal_shift_config" {
 variable "addon_versions" {
   description = "Bootstrap 애드온 버전 맵. most_recent 사용 금지 — 명시적 버전 고정이 환경 간 일관성을 보장한다"
   type = object({
-    vpc_cni                  = string
-    kube_proxy               = string
-    coredns                  = string
-    eks_pod_identity_agent   = string
-    ebs_csi_driver           = string
-    secrets_store_csi_driver = string
-    cert_manager             = string
+    vpc_cni                = string
+    kube_proxy             = string
+    coredns                = string
+    eks_pod_identity_agent = string
+    ebs_csi_driver         = string
+    cert_manager           = string
   })
 }
 

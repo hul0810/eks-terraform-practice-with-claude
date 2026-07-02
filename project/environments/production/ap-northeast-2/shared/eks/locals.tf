@@ -26,13 +26,12 @@ locals {
     addon_versions = {
       # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.34 --region ap-northeast-2
       # 2026-06-24 기준 default 버전
-      vpc_cni                  = "v1.21.2-eksbuild.2"
-      kube_proxy               = "v1.34.6-eksbuild.11"
-      coredns                  = "v1.12.4-eksbuild.17"
-      eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
-      ebs_csi_driver           = "v1.62.0-eksbuild.1"
-      secrets_store_csi_driver = "v3.1.1-eksbuild.1"
-      cert_manager             = "v1.20.2-eksbuild.3"
+      vpc_cni                = "v1.21.2-eksbuild.2"
+      kube_proxy             = "v1.34.6-eksbuild.11"
+      coredns                = "v1.12.4-eksbuild.17"
+      eks_pod_identity_agent = "v1.3.10-eksbuild.3"
+      ebs_csi_driver         = "v1.62.0-eksbuild.1"
+      cert_manager           = "v1.20.2-eksbuild.3"
     }
 
     # cert-manager: CriticalAddonsOnly toleration으로 시스템 노드 배치. replica는 기본값(2) 유지

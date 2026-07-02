@@ -13,7 +13,6 @@
 #     - coredns: Kubernetes Deployment — 노드 없이는 ACTIVE 불가. before_compute = false로
 #       선언하면 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가하여
 #       이전 3단계 분리(Phase 1/2/3) 없이 동일한 안전성을 보장한다.
-#     - aws-secrets-store-csi-driver-provider: DaemonSet — 노드 없이는 ACTIVE 불가. coredns와 동일 패턴.
 #     - cert-manager: Deployment — 노드 없이는 ACTIVE 불가. coredns와 동일 패턴. AWS API 미호출로 IAM 불필요.
 ################################################################################
 
@@ -134,14 +133,6 @@ module "eks" {
       }]
       # before_compute 기본값 false: EKS가 노드 없이도 즉시 ACTIVE 표시.
     }
-    aws-secrets-store-csi-driver-provider = {
-      addon_version               = var.addon_versions.secrets_store_csi_driver
-      resolve_conflicts_on_create = "OVERWRITE"
-      resolve_conflicts_on_update = "OVERWRITE"
-      # before_compute 기본값 false: DaemonSet이므로 노드 없이는 ACTIVE 불가.
-      # 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가한다.
-      # IAM 불필요 — Secrets Manager/SSM 접근 IAM은 앱 Pod ServiceAccount에 별도 부여한다.
-    }
     cert-manager = {
       addon_version               = var.addon_versions.cert_manager
       resolve_conflicts_on_create = "OVERWRITE"
@@ -150,7 +141,7 @@ module "eks" {
       # before_compute 기본값 false: Deployment이므로 노드 없이는 ACTIVE 불가.
       # 모듈이 depends_on = [module.eks_managed_node_group]을 자동 추가한다.
       # IAM 불필요 — AWS API를 직접 호출하지 않는다.
-      # EKS 커뮤니티 애드온(2025-03 출시). secrets-store-csi-driver와 동일한 Bootstrap 분류 근거.
+      # EKS 커뮤니티 애드온(2025-03 출시). coredns와 동일한 Bootstrap 분류 근거.
     }
   }
 

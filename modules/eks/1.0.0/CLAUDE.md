@@ -14,7 +14,7 @@
 
 ### 이 모듈이 관리하는 범위
 
-**Bootstrap 애드온 7종** 이 모듈에서 관리한다. 나머지 애드온(LBC, ExternalDNS, Karpenter 등)은 `modules/eks-addons`에서 관리한다.
+**Bootstrap 애드온 6종** 이 모듈에서 관리한다. 나머지 애드온(LBC, ExternalDNS, Karpenter 등)은 `modules/eks-addons`에서 관리한다.
 
 - 분리 이유: bootstrap 애드온은 노드 조인 및 IAM 연동의 전제 조건이라 클러스터 lifecycle에 묶여야 한다.
   나머지는 클러스터 구축 후 독립적으로 설치·운영한다.
@@ -24,7 +24,7 @@ Bootstrap 7종은 `before_compute` 파라미터로 배포 순서를 제어한다
 | before_compute | 포함 애드온 | 이유 |
 |----------------|-------------|------|
 | `true` (노드 그룹 이전) | eks-pod-identity-agent, vpc-cni | aws-node Pod Identity 크레덴셜 획득 전제 조건; 노드 조인 전 CNI ACTIVE 보장 |
-| `false` (기본값, 노드 그룹 이후) | kube-proxy, coredns, aws-ebs-csi-driver, aws-secrets-store-csi-driver-provider, cert-manager | EKS가 즉시 ACTIVE 표시하거나(kube-proxy, ebs-csi), 노드 없이는 ACTIVE 불가(coredns, secrets-store, cert-manager) |
+| `false` (기본값, 노드 그룹 이후) | kube-proxy, coredns, aws-ebs-csi-driver, cert-manager | EKS가 즉시 ACTIVE 표시하거나(kube-proxy, ebs-csi), 노드 없이는 ACTIVE 불가(coredns, cert-manager) |
 
 **coredns를 before_compute = false로 처리하는 이유:**
 coredns는 Kubernetes Deployment이므로 실행 노드가 없으면 Pod가 스케줄되지 않아 ACTIVE 상태가 되지 않는다.
@@ -72,7 +72,6 @@ addon_versions = {
   coredns                  = "v1.12.4-eksbuild.10"
   eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
   ebs_csi_driver           = "v1.60.1-eksbuild.1"
-  secrets_store_csi_driver = "v3.1.1-eksbuild.1"
   cert_manager             = "v1.20.2-eksbuild.3"
 }
 ```

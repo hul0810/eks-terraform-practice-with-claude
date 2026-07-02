@@ -25,13 +25,12 @@ locals {
     addon_versions = {
       # 버전 조회: aws eks describe-addon-versions --kubernetes-version 1.34 --region ap-northeast-2
       # 2026-06-24 기준 default 버전
-      vpc_cni                  = "v1.21.2-eksbuild.2"
-      kube_proxy               = "v1.34.6-eksbuild.11"
-      coredns                  = "v1.12.4-eksbuild.17"
-      eks_pod_identity_agent   = "v1.3.10-eksbuild.3"
-      ebs_csi_driver           = "v1.62.0-eksbuild.1"
-      secrets_store_csi_driver = "v3.1.1-eksbuild.1"
-      cert_manager             = "v1.20.2-eksbuild.3"
+      vpc_cni                = "v1.21.2-eksbuild.2"
+      kube_proxy             = "v1.34.6-eksbuild.11"
+      coredns                = "v1.12.4-eksbuild.17"
+      eks_pod_identity_agent = "v1.3.10-eksbuild.3"
+      ebs_csi_driver         = "v1.62.0-eksbuild.1"
+      cert_manager           = "v1.20.2-eksbuild.3"
     }
 
     # develop: 로컬 PC에서 kubectl 직접 접근 편의를 위해 public 엔드포인트 허용
@@ -54,15 +53,15 @@ locals {
       desired_size   = 1
     }
 
-    # dev: t3.medium 시스템 노드 pod 한계(17)에서 secrets-store DaemonSet 2개를 위한 슬롯 확보.
-    # CoreDNS·EBS CSI Controller·cert-manager를 1 replica로 축소하여 시스템 노드 슬롯을 절약한다.
+    # dev: t3.medium 시스템 노드 pod 한계(17)에서 시스템 애드온 슬롯을 확보하기 위해
+    # CoreDNS·EBS CSI Controller·cert-manager를 1 replica로 축소한다.
     # 재시작 시 수초 단절 허용 — dev 환경 비용 예외 (production은 기본값 2 유지).
     coredns_configuration_values = jsonencode({ replicaCount = 1 })
     ebs_csi_configuration_values = jsonencode({ controller = { replicaCount = 1 } })
     # cert-manager: replicaCount=1(controller·webhook·cainjector), CriticalAddonsOnly toleration으로 시스템 노드 배치
     cert_manager_configuration_values = jsonencode({
       replicaCount = 1
-      tolerations = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
+      tolerations  = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
       webhook = {
         replicaCount = 1
         tolerations  = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
