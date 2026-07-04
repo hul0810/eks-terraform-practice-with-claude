@@ -67,24 +67,35 @@ allowed-tools:
 
 이후 단계의 `{root}`는 이 값을 가리킨다.
 
-### Step 1: VPC NAT Gateway 활성화
+### Step 1: VPC NAT Gateway 활성화 — EKS와 병렬 시작
 
 `{root}/vpc/locals.tf`를 Read하여 `enable_nat_gateway` 현재 값을 확인한다.
 
 - 이미 `true`: "[안내] NAT Gateway가 이미 활성화되어 있습니다." 출력 후 Step 2로.
-- `false`: Edit로 `true`로 변경 후 아래 실행:
+- `false`: Edit로 `true`로 변경 후 아래를 **백그라운드로 실행**하고, 완료를 기다리지 않고
+  바로 Step 2로 진행한다:
 
 ```bash
 cd {root}/vpc && terraform apply -auto-approve
 ```
 
-실패하면 즉시 중단하고 오류를 사용자에게 보고한다 (이후 단계 진행 금지).
+> **WHY 병렬 처리 (2026-07-04 확인)**: EKS 모듈이 remote state로 참조하는 subnet_id 등은
+> NAT Gateway 토글과 무관하게 이미 존재하는 서브넷이라 이 apply 완료를 기다릴 필요가 없다.
+> EKS 컨트롤 플레인 생성(~10~15분)이 NAT Gateway 생성(~1~2분)보다 훨씬 오래 걸리므로,
+> 노드가 실제로 아웃바운드가 필요해지는 시점(노드 그룹 부트스트랩)에는 NAT Gateway가 이미
+> 준비되어 있다. 순차 실행 대비 대기 시간을 크게 줄인다.
+
+이 apply가 실패하면 Step 2 진행 상황과 무관하게 즉시 사용자에게 보고한다.
 
 ### Step 2: EKS 클러스터 생성
 
 ```bash
 cd {root}/eks && terraform apply -auto-approve
 ```
+
+**Step 1의 VPC apply가 이 시점에 아직 끝나지 않았다면 여기서 완료를 기다린 뒤 결과를
+확인한다** (실패 시 중단, 이후 단계 진행 금지 — Step 3 eks-addons이 실제로 아웃바운드를
+쓰기 전까지는 여유가 있으므로 지금 확인해도 순차 실행 대비 손해가 없다).
 
 완료 후 **반드시** kubeconfig를 갱신한다:
 

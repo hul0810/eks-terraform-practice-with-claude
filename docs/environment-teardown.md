@@ -130,6 +130,47 @@ aws ec2 delete-security-group --group-id <sg-id>
 
 ---
 
+## Karpenter 노드 강제 종료로 인한 VPC CNI ENI 잔존
+
+`eks-addons` destroy 그래프의 `null_resource.karpenter_nodeclaims_drainer`는 Karpenter
+Helm release/CRD가 사라지기 전에 NodeClaim을 먼저 강제 삭제해 destroy가 막히지 않도록 한다
+(external-secrets 웹훅 교착 방지와 같은 이유 — 위 SKILL.md Step 6 참조). 그런데 NodeClaim을
+강제로 지우면 Karpenter가 그 밑의 EC2 인스턴스를 **정상적인 cordon → drain 절차 없이**
+빠르게 종료시킨다.
+
+**왜 ENI가 남는가**: VPC CNI(aws-node)는 노드의 파드 밀도가 primary ENI의 IP 용량을 넘으면
+secondary ENI를 추가로 붙인다. 이 secondary ENI는 `DeleteOnTermination=true`가 아니다 —
+EC2가 인스턴스 launch 시 자동으로 붙이는 primary ENI만 이 플래그가 켜져 있고, secondary ENI는
+CNI의 ipamd가 명시적으로 `DeleteNetworkInterface`를 호출해야 지워진다. 정상적인 노드
+스케일다운이라면 종료 전에 ipamd가 이 정리를 마칠 시간이 있지만, 강제 종료 경로에서는
+인스턴스가 먼저 사라져 정리 루틴이 끝까지 돌지 못한다. EC2는 인스턴스 종료 시 그 ENI를
+detach만 하고 delete는 하지 않으므로 `available` 상태로 고아가 되어 남고, 여전히 node
+security group을 참조하고 있어 `module.eks.module.eks.aws_security_group.node` 삭제가
+`DependencyViolation`으로 막힌다 (2026-07-04 monitoring teardown에서 실제 발생).
+
+**감지**: `eks` destroy가 `deleting Security Group ...: DependencyViolation: resource
+... has a dependent object` 에러로 멈추면 아래로 확인한다.
+
+```bash
+aws ec2 describe-network-interfaces --region ap-northeast-2 --profile <profile> \
+  --filters "Name=group-id,Values=<막힌 security-group-id>" \
+  --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status,Desc:Description}"
+```
+
+`Description`이 `aws-K8S-i-<instance-id>` 형태이고 `Status`가 `available`(= 이미 분리됨)이면
+VPC CNI가 만든 secondary ENI가 정리되지 않고 남은 것이다. 인스턴스에서 이미 분리된 상태라
+안전하게 직접 삭제할 수 있다.
+
+```bash
+aws ec2 delete-network-interface --region ap-northeast-2 --profile <profile> \
+  --network-interface-id <eni-id>
+```
+
+삭제 후 `eks` destroy를 재시도하면 나머지(이번 사례에서는 security group 하나)만 이어서
+정리된다.
+
+---
+
 ## Route53 레코드 잔존 주의
 
 ExternalDNS가 생성한 Route53 A 레코드(예: `argocd-develop.pyhtest.com`)는

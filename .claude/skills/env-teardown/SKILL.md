@@ -4,8 +4,9 @@ description: >
   develop/monitoring/production 실습 환경의 비용 발생 리소스(eks-addons, EKS 클러스터, VPC NAT Gateway)를
   역순으로 삭제한다. terraform destroy만으로는 정리되지 않는 잔여 리소스
   (ArgoCD Application/ApplicationSet가 재조정 중인 Ingress·ALB, workload 계정 Route53에
-  ExternalDNS가 만든 레코드, karpenter 노드 조기 drain으로 발생하는 external-secrets 웹훅 교착,
-  삭제된 클러스터를 가리키는 ~/.kube/config 잔여 context/cluster/user 항목)까지 함께 관리한다.
+  ExternalDNS가 만든 레코드, karpenter 노드 조기 drain으로 발생하는 external-secrets 웹훅 교착과
+  VPC CNI secondary ENI 잔존, 삭제된 클러스터를 가리키는 ~/.kube/config 잔여 context/cluster/user
+  항목)까지 함께 관리한다.
   VPC 자체·서브넷·파라미터 스토어 등 비용이 없는 리소스는 삭제하지 않는다. 3개 환경 모두
   실습용이므로 production도 대상이다.
 disable-model-invocation: false
@@ -240,11 +241,38 @@ kubectl patch <kind> <name> -n <namespace> --type=merge -p '{"metadata":{"finali
 
 제거 후 destroy를 재시도한다. 그 외 에러는 사용자에게 보고 후 중단한다.
 
-### Step 8: EKS 클러스터 destroy
+### Step 8: EKS 클러스터 destroy — VPC NAT Gateway 비활성화와 병렬 시작
 
 ```bash
 cd {root}/eks && terraform destroy -auto-approve
 ```
+
+이 destroy를 시작하는 즉시(완료를 기다리지 않고) **Step 10의 VPC NAT Gateway 비활성화도
+병렬로 시작한다.** eks-addons가 이미 Step 7에서 삭제되어 클러스터 안에 아웃바운드가 필요한
+워크로드가 남아있지 않으므로, EKS 클러스터 destroy 자체(컨트롤 플레인·노드그룹·SG 삭제는
+AWS API 호출이지 고객 VPC 경유 아웃바운드가 아니다)는 NAT Gateway 유무와 무관하게 안전하게
+동시 진행할 수 있다 (2026-07-04 확인 — provision 쪽 Step 1/2 병렬화와 같은 근거).
+
+**`deleting Security Group ...: DependencyViolation: resource ... has a dependent
+object` 에러 시** (VPC CNI가 만든 secondary ENI 잔존 — 2026-07-04 monitoring teardown
+실제 발생, 배경은 `docs/environment-teardown.md` "Karpenter 노드 강제 종료로 인한 VPC CNI
+ENI 잔존" 참조):
+
+```bash
+aws ec2 describe-network-interfaces --region ap-northeast-2 --profile <profile> \
+  --filters "Name=group-id,Values=<막힌 security-group-id>" \
+  --query "NetworkInterfaces[].{Id:NetworkInterfaceId,Status:Status,Desc:Description}"
+```
+
+`Description`이 `aws-K8S-i-<instance-id>` 형태이고 `Status`가 `available`이면 해당 ENI를
+직접 삭제한 뒤 `terraform destroy`를 재시도한다:
+
+```bash
+aws ec2 delete-network-interface --region ap-northeast-2 --profile <profile> \
+  --network-interface-id <eni-id>
+```
+
+그 외 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
 
 ### Step 9: kubeconfig 정리 — 삭제된 클러스터의 잔여 항목 제거
 
@@ -270,10 +298,10 @@ fi
 > 등록된 이름(별칭이 아니라 ARN 등으로 등록될 수 있음)을 먼저 조회한 뒤 각각 지워야
 > 잔여 항목 없이 완전히 제거된다.
 
-### Step 10: VPC NAT Gateway 비활성화
+### Step 10: VPC NAT Gateway 비활성화 (Step 8과 병렬 실행 — 이미 시작했다면 완료만 확인)
 
 `{root}/vpc/locals.tf`를 Read하여 `enable_nat_gateway`가 이미 `false`면 스킵.
-`true`면 Edit로 `false`로 변경 후:
+`true`면 Edit로 `false`로 변경 후, **Step 8의 EKS destroy 완료를 기다리지 말고** 실행한다:
 
 ```bash
 cd {root}/vpc && terraform apply -auto-approve
@@ -289,6 +317,8 @@ cd {root}/vpc && ALLOW_PRODUCTION_TEARDOWN_APPLY=1 terraform apply -auto-approve
 
 **VPC 자체, 서브넷, 파라미터 스토어 등 비용이 없는 리소스는 삭제하지 않는다** — plan에
 NAT Gateway/EIP/private route 외의 destroy가 나타나면 즉시 중단하고 사용자에게 확인받는다.
+
+Step 11로 넘어가기 전에 이 apply와 Step 8의 EKS destroy가 **둘 다** 완료됐는지 확인한다.
 
 ### Step 11: 완료 안내 및 잔여 비용 리소스 최종 확인
 
