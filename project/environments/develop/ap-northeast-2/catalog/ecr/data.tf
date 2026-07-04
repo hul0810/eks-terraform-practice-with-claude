@@ -8,3 +8,15 @@ data "terraform_remote_state" "tag_policy" {
     profile = "terraform"
   }
 }
+
+# ArgoCD Image Updater IRSA Role ARN — ECR repository policy(read_access_arns)에서 참조한다.
+# monitoring/environments/ap-northeast-2/shared/eks-addons/argocd-image-updater.tf 참조.
+data "terraform_remote_state" "monitoring_eks_addons" {
+  backend = "s3"
+  config = {
+    bucket  = "eks-practice-tfstate-monitoring"
+    key     = "monitoring/ap-northeast-2/shared/eks-addons/terraform.tfstate"
+    region  = "ap-northeast-2"
+    profile = "terraform-monitoring"
+  }
+}

@@ -16,6 +16,15 @@ locals {
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
   vpc_id            = data.aws_eks_cluster.this.vpc_config[0].vpc_id
 
+  # IRSA Trust Policy 조건 키(sub/aud)에 필요한 OIDC issuer 호스트.
+  # blueprints가 내부적으로 처리하는 IRSA와 달리 argocd-image-updater는 blueprints 밖에서
+  # 수동으로 IRSA를 구성하므로(argocd-image-updater.tf) 이 값을 직접 유도해야 한다.
+  oidc_provider_url = replace(data.aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")
+
+  # catalog/order/api-gateway 이미지가 위치한 workload 계정 — Terraform 외부 관리 리소스(하드코딩).
+  # argocd-image-updater.tf의 ECR registries.conf api_url/prefix에서 참조한다.
+  workload_account_id = "657231015203"
+
   # eks/locals.tf의 kubernetes_version과 동기화
   cluster_version = "1.34"
 
@@ -52,6 +61,9 @@ locals {
     metrics_server_chart_version   = "3.12.2"
     karpenter_chart_version        = "1.12.1"
     external_secrets_chart_version = "2.7.0"
+    # 2026-07-04 기준 최신 stable 버전 (appVersion v1.2.2) — eks-blueprints-addons 미지원으로
+    # argocd-image-updater.tf에서 helm_release로 직접 관리 (monitoring 전용, 상세 사유는 해당 파일 참조)
+    argocd_image_updater_chart_version = "1.2.4"
 
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
@@ -63,8 +75,11 @@ locals {
     enable_external_secrets        = true
     # ArgoCD GitHub App 인증 정보(SSM SecureString)만 읽도록 스코프 — 계정 내 모든 파라미터
     # 와일드카드(blueprints 기본값) 대신 이 prefix로 제한한다.
+    # argocd-image-updater/* : Image Updater가 이미지 태그 갱신을 커밋할 때 쓰는 GitHub App
+    # 인증 정보 — ArgoCD 레포 접근용(argocd/github-app/*)과 용도가 달라 별도 App/경로로 분리한다.
     external_secrets_ssm_parameter_arns = [
-      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd/github-app/*"
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd/github-app/*",
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd-image-updater/*"
     ]
     # SSM SecureString 기본 키(alias/aws/ssm)만 복호화 허용 — 계정 내 모든 KMS 키 와일드카드 대신 최소 권한
     external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]

@@ -1,0 +1,180 @@
+################################################################################
+# ArgoCD Image Updater — monitoring 클러스터 전용 파일럿 설치
+#
+# [왜 modules/eks-addons(공유 모듈)가 아니라 이 root에서 직접 관리하는가]
+# eks-blueprints-addons(aws-ia/eks-blueprints-addons ~> 1.23.0)는 ArgoCD 자체(enable_argocd/
+# argocd 변수)만 지원하고 Image Updater 서브모듈이 없다. develop/production도 각자 ArgoCD를
+# 운영하지만 Image Updater는 monitoring에서만 파일럿 운영하기로 결정했으므로, 3개 환경이 공유하는
+# modules/eks-addons에 넣지 않고 이 root의 helm_release로 직접 관리한다.
+#
+# [ECR 인증 방식 — ext: 스크립트 + IRSA, assume-role 아님]
+# argocd-image-updater는 ECR을 네이티브 지원하지 않는다(공식 문서 registries.md의 지원 레지스트리
+# 목록에 ECR 미포함). 대신 외부 스크립트가 로그인 토큰을 stdout으로 출력하는 `ext:<script>` 방식을
+# 공식 문서가 ECR의 대표 사용례로 명시한다(docs/basics/authentication.md:
+# "A prominent example would be ECR on aws").
+#
+# catalog/order/api-gateway ECR 저장소는 workload 계정(657231015203)에 있고 monitoring 클러스터
+# 계정(157325288431)과 다르다. 하지만 ECR의 GetAuthorizationToken은 호출자 자신의 계정에서 발급되는
+# 범용 토큰이며, 어떤 계정의 레지스트리든 그 레지스트리의 repository policy가 호출 principal을
+# 허용하면 동일 토큰으로 접근 가능하다(AWS 공식 크로스 계정 ECR 패턴 — assume-role 불필요).
+# 따라서 이 IRSA Role은 ecr:GetAuthorizationToken만 가지면 되고, 실제 read 권한은
+# project/environments/{develop,production}/ap-northeast-2/*/ecr/locals.tf의 read_access_arns에
+# 이 Role ARN을 추가하는 방식으로 부여한다 (modules/ecr가 repository policy를 자동 생성).
+#
+# [docker-credential-ecr-login을 initContainer로 주입하는 이유 — aws-cli가 아닌 이유]
+# ext: 스크립트는 ECR 로그인 토큰을 발급하는 바이너리가 필요한데, 차트 기본 이미지
+# (quay.io/argoprojlabs/argocd-image-updater)는 Alpine(musl libc) 기반이라 aws-cli(glibc 바이너리)를
+# 그대로 복사해 넣으면 "exec: no such file or directory"로 실행 자체가 안 된다(동적 링커 경로가
+# 다른 libc를 가리켜 파일이 있어도 실행 불가 — 실제로 이 프로젝트에서 aws-cli로 먼저 시도했다가
+# 이 문제로 교체했다). 대신 AWS 공식 amazon-ecr-credential-helper(docker-credential-ecr-login)를
+# 쓴다 — Alpine aports 공식 패키지로 배포되어 musl 바이너리를 그대로 얻을 수 있고, Go 정적 바이너리라
+# 별도 공유 라이브러리 의존성도 없다. initContainer 이미지를 메인 컨테이너와 같은 Alpine 버전으로
+# 맞춰 apk로 설치한 바이너리를 emptyDir에 복사한다.
+# IRSA 자격증명은 pod 수명 동안 projected token으로 자동 갱신되므로, 스크립트는 매 호출마다
+# 새로 서명된 요청을 보낼 뿐 initContainer의 1회성 실행과는 무관하게 계속 동작한다.
+#
+# [모니터링 대상 레지스트리가 1개뿐인 이유]
+# dev/prod 이미지 저장소(6개)가 모두 동일 계정(workload)의 동일 리전 ECR에 있으므로
+# 레지스트리 호스트(<account>.dkr.ecr.<region>.amazonaws.com)는 1개다. registries.conf는
+# 저장소가 아니라 호스트 단위로 인증을 구성하므로 항목도 1개면 충분하다.
+#
+# [개별 애플리케이션의 ImageUpdater CR은 이 root의 관리 범위 밖]
+# 어떤 이미지를 추적할지(images, applicationRefs)는 실제 ArgoCD Application이 배포된 이후에
+# 결정되는 서비스별 설정이다. docs/addon-strategy.md "GitOps 관리 경계" 판단 기준(ArgoCD 자신의
+# 부트스트랩에 필요한 리소스인가?)에 따르면 이는 아니오에 해당하므로, ImageUpdater CR은 이 root가
+# 아니라 eks-practice-devops-manifest 저장소(GitOps)에서 서비스 매니페스트와 함께 관리한다.
+################################################################################
+
+resource "aws_iam_role" "argocd_image_updater" {
+  name = "${local.cluster_name}-argocd-image-updater-irsa"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "ArgocdImageUpdaterIrsa"
+        Effect    = "Allow"
+        Principal = { Federated = local.oidc_provider_arn }
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${local.oidc_provider_url}:aud" = "sts.amazonaws.com"
+            "${local.oidc_provider_url}:sub" = "system:serviceaccount:argocd:argocd-image-updater"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+# GetAuthorizationToken은 리소스 수준 권한을 지원하지 않는 계정 단위 액션이라 Resource = "*"가
+# 유일한 형태다(AWS 공식 문서: ECR 액션별 리소스 수준 권한 표에서 GetAuthorizationToken은 "전체").
+# 실제 저장소 read 권한은 workload 계정 ECR repository policy(read_access_arns)에서 부여한다.
+resource "aws_iam_role_policy" "argocd_image_updater_ecr_auth" {
+  name = "ecr-get-authorization-token"
+  role = aws_iam_role.argocd_image_updater.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EcrGetAuthorizationToken"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "helm_release" "argocd_image_updater" {
+  name       = "argocd-image-updater"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-image-updater"
+  version    = local.eks_addons.argocd_image_updater_chart_version
+  namespace  = "argocd"
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.argocd_image_updater.arn
+  }
+
+  values = [
+    yamlencode({
+      authScripts = {
+        enabled = true
+        scripts = {
+          # docker-credential-ecr-login의 `get` 서브커맨드는 docker credential helper 프로토콜을
+          # 따른다 — stdin으로 레지스트리 호스트를 받아 stdout에 {"Username":"AWS","Secret":"<token>"}
+          # 형태의 JSON을 반환한다. sed로 Secret 값만 추출해 argocd-image-updater가 요구하는
+          # "<username>:<password>" 형식으로 변환한다.
+          "ecr-login.sh" = <<-EOT
+            #!/bin/sh
+            secret=$(printf '%s' "${local.workload_account_id}.dkr.ecr.ap-northeast-2.amazonaws.com" | /ecr-helper-bin/docker-credential-ecr-login get | sed -n 's/.*"Secret":"\([^"]*\)".*/\1/p')
+            echo "AWS:$secret"
+          EOT
+        }
+      }
+
+      config = {
+        registries = [
+          {
+            name        = "Amazon ECR (workload)"
+            api_url     = "https://${local.workload_account_id}.dkr.ecr.ap-northeast-2.amazonaws.com"
+            prefix      = "${local.workload_account_id}.dkr.ecr.ap-northeast-2.amazonaws.com"
+            ping        = true
+            credentials = "ext:/scripts/ecr-login.sh"
+            credsexpire = "10h"
+          }
+        ]
+      }
+
+      # [이 initContainer만 root로 실행하는 이유]
+      # 차트 기본 podSecurityContext.runAsNonRoot=true는 파드 내 모든 컨테이너에 적용되지만,
+      # apk add는 /etc/apk, /lib/apk/db 등 시스템 경로에 써야 해서 non-root UID로는 실행할 수 없다.
+      # 이 initContainer만 securityContext로 그 기본값을 명시적으로 되돌린다. 실제로 다른 컨테이너에
+      # 노출되는 것은 설치된 바이너리 파일 하나뿐이고(emptyDir로 복사), root 권한 자체가 다른
+      # 컨테이너로 전파되지는 않는다.
+      # fsGroup은 emptyDir(ecr-helper-bin)에 쓰인 파일의 그룹 소유권을 그 값으로 맞춰,
+      # non-root로 실행되는 메인 컨테이너도 복사된 바이너리를 읽고 실행할 수 있게 한다.
+      #
+      # [initContainer 이미지를 메인 컨테이너와 같은 Alpine 버전으로 고정하는 이유]
+      # apk로 설치한 바이너리는 그 Alpine 버전의 musl libc를 기준으로 빌드된다. 메인 컨테이너
+      # (quay.io/argoprojlabs/argocd-image-updater, Alpine 3.23 기반 확인됨)와 initContainer의
+      # musl 버전이 크게 어긋나면 동일한 문제(ABI 불일치)가 재발할 수 있어 버전을 맞춘다.
+      initContainers = [
+        {
+          name    = "ecr-credential-helper"
+          image   = "alpine:3.23"
+          command = ["/bin/sh", "-c"]
+          args = [
+            "apk add --no-cache docker-credential-ecr-login && cp /usr/bin/docker-credential-ecr-login /ecr-helper-bin/"
+          ]
+          securityContext = {
+            runAsNonRoot = false
+            runAsUser    = 0
+          }
+          volumeMounts = [
+            { name = "ecr-helper-bin", mountPath = "/ecr-helper-bin" }
+          ]
+        }
+      ]
+
+      podSecurityContext = {
+        fsGroup = 1000
+      }
+
+      volumes = [
+        { name = "ecr-helper-bin", emptyDir = {} }
+      ]
+
+      volumeMounts = [
+        { name = "ecr-helper-bin", mountPath = "/ecr-helper-bin" }
+      ]
+    })
+  ]
+
+  depends_on = [module.eks_addons]
+}

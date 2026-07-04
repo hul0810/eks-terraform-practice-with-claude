@@ -17,3 +17,8 @@ output "external_dns_role_arn" {
   description = "ExternalDNS IRSA IAM Role ARN. project/global/ap-northeast-2/external-dns-cross-account-role의 Trust Policy에서 참조한다"
   value       = module.eks_addons.external_dns_role_arn
 }
+
+output "argocd_image_updater_role_arn" {
+  description = "ArgoCD Image Updater IRSA IAM Role ARN. develop/production ECR repository policy의 read_access_arns에서 참조한다"
+  value       = aws_iam_role.argocd_image_updater.arn
+}

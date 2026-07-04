@@ -247,3 +247,54 @@ resource "kubernetes_manifest" "argocd_github_app_repo_creds" {
     kubernetes_manifest.argocd_github_app_secret_store,
   ]
 }
+
+# ArgoCD Image Updater가 이미지 태그 갱신 커밋에 사용할 GitHub App 인증 정보.
+# argocd-github-app-repo-creds(ArgoCD 레포 접근, 조직 전체 읽기 전용)와는 별도 GitHub App —
+# Image Updater는 매니페스트 저장소에 커밋(쓰기)해야 하므로 권한 범위가 다르다.
+#
+# [repo-creds와 달리 argocd.argoproj.io/secret-type 라벨이 불필요한 이유]
+# argocd-github-app-repo-creds는 ArgoCD server가 "repo-creds"로 라벨링된 Secret을 자동으로
+# 스캔해 레포 인증에 쓴다(ArgoCD 자체 컨벤션). Image Updater는 그런 자동 탐색 없이
+# Application(또는 전역 config)의 git.credentials 설정에서 Secret 이름을 직접 참조하므로,
+# 이 라벨도 template/mergePolicy도 필요 없다 — 3개 키를 그대로 담은 평범한 Secret이면 충분하다.
+resource "kubernetes_manifest" "argocd_image_updater_git_creds" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "argocd-image-updater-git-creds"
+      namespace = "argocd"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        kind = "ClusterSecretStore"
+        name = kubernetes_manifest.argocd_github_app_secret_store.manifest.metadata.name
+      }
+      target = {
+        name           = "argocd-image-updater-git-creds"
+        creationPolicy = "Owner"
+        deletionPolicy = "Retain"
+      }
+      data = [
+        {
+          secretKey = "githubAppID"
+          remoteRef = { key = "/eks-practice/monitoring/argocd-image-updater/app-id" }
+        },
+        {
+          secretKey = "githubAppInstallationID"
+          remoteRef = { key = "/eks-practice/monitoring/argocd-image-updater/installation-id" }
+        },
+        {
+          secretKey = "githubAppPrivateKey"
+          remoteRef = { key = "/eks-practice/monitoring/argocd-image-updater/private-key" }
+        },
+      ]
+    }
+  }
+
+  depends_on = [
+    module.eks_addons,
+    kubernetes_manifest.argocd_github_app_secret_store,
+  ]
+}

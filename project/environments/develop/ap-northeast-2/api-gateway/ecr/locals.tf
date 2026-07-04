@@ -24,6 +24,13 @@ locals {
       lifecycle_tagged_count = 10
       # workload 계정 이관을 위해 이미지 포함 강제 삭제 허용
       force_delete = true
+      # monitoring 클러스터의 ArgoCD Image Updater(IRSA)가 크로스 계정으로 이미지 태그를
+      # 조회할 수 있도록 read 권한 부여 — modules/ecr가 repository policy를 자동 생성한다.
+      # try()+compact()로 소프트 참조: monitoring eks-addons는 파일럿 애드온이라 /env-teardown
+      # monitoring으로 자주 destroy된다. 하드 참조([<arn>] 그대로)면 그 시점에 output 자체가
+      # state에서 사라져 이 root의 plan/apply가 전부 실패한다. Role이 없으면 빈 리스트로 폴백해
+      # repository policy statement 자체가 생성되지 않도록 한다(권한 없음 = 안전한 기본값).
+      read_access_arns = compact([try(data.terraform_remote_state.monitoring_eks_addons.outputs.argocd_image_updater_role_arn, "")])
       # 나머지 설정은 모듈 기본값 사용:
       #   image_tag_mutability = "IMMUTABLE" (태그 덮어쓰기 방지)
       #   scan_on_push         = true        (ECR Basic 스캔, 무료)
