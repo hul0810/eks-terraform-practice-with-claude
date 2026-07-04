@@ -138,6 +138,51 @@ association이 필요 없다.
 
 ---
 
+## Karpenter Spot capacity-type — EC2 Spot 서비스 연결 역할 권한 (2026-07-04)
+
+`karpenter_node_pools`의 `capacity_types`에 `"spot"`을 포함하면(이 프로젝트의 `general`
+NodePool 기본값), Karpenter controller가 `CreateFleet` 호출 시 계정에
+`AWSServiceRoleForEC2Spot`(EC2 Spot 서비스 연결 역할)이 없으면 직접 생성을 시도한다.
+
+**증상**: spot `nodeSelector`가 붙은 Pod이 `Pending`으로 멈추고, `kubectl describe pod`에는
+`no instance type has the required offering`만 보여 "spot 재고 부족"처럼 오인하기 쉽다.
+실제 원인은 `kubectl logs -n karpenter deployment/karpenter`에서 `CreateFleet` 관련 로그로만
+확인된다:
+
+```
+AuthFailure.ServiceLinkedRoleCreationNotPermitted: The provided credentials do not have
+permission to create the service-linked role for EC2 Spot Instances.
+```
+
+**원인**: blueprints가 생성하는 Karpenter controller 기본 IAM 정책에는
+`iam:CreateServiceLinkedRole`이 빠져있다. 서비스 연결 역할이 계정에 이미 있으면 문제가
+없지만, 그 계정에서 EC2 Spot을 한 번도 사용한 적이 없으면(신규 계정 등) 이 역할 자체가
+없어서 매번 생성 시도 → 권한 거부 → spot 인스턴스 요청 실패로 이어진다.
+
+**해결 (2단계)**:
+
+1. **즉시 우회(1회성, 계정 전체)**: 관리자 권한으로 서비스 연결 역할을 직접 생성한다.
+   계정당 1개만 있으면 되므로 클러스터를 몇 번을 재생성해도 다시 필요 없다.
+   ```bash
+   aws iam create-service-linked-role --aws-service-name spot.amazonaws.com --profile <admin-profile>
+   ```
+2. **근본 수정(IaC)**: `karpenter` 블록에 blueprints의 `policy_statements` 확장 포인트로
+   최소 권한 statement를 추가한다(`main.tf` 참고). 서비스 연결 역할 ARN과
+   `iam:AWSServiceName=spot.amazonaws.com` 조건으로 스코프를 좁혀, 이 역할 생성 외에는
+   아무 권한도 주지 않는다. 이 statement 덕분에 서비스 연결 역할이 없는 새 AWS 계정에
+   이 프로젝트를 배포해도 Karpenter가 스스로 만들 수 있어 1번 단계 없이도 동작한다.
+
+   **주의(필드명 함정)**: blueprints의 `policy_statements`는 `aws_iam_policy_document`
+   data source의 `statement` 블록을 그대로 감싸지만, condition 블록 키는 `condition`이
+   아니라 **`conditions`(복수)**다. 단수로 쓰면 조용히 무시되고(에러 없음) 조건 없는
+   전체 허용 정책이 생성되므로 최소 권한 원칙이 깨진다 — apply 후 반드시
+   `terraform plan`/`aws iam get-policy-version`으로 실제 반영된 JSON을 확인한다.
+
+이 모듈은 3개 환경이 공유하므로, monitoring에서 발견된 이 수정은 develop/production에도
+다음 apply 시 동일하게 적용된다.
+
+---
+
 ## External DNS 조건부 설치 패턴
 
 ```hcl

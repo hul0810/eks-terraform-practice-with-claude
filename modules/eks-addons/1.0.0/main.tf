@@ -209,6 +209,27 @@ module "eks_blueprints_addons" {
     # Policy도 고정 이름 사용 — 미설정 시 Role 이름을 prefix로 random suffix가 붙는다
     policy_name            = "${var.cluster_name}-karpenter-controller-irsa"
     policy_name_use_prefix = false
+    # blueprints가 생성하는 기본 정책에는 iam:CreateServiceLinkedRole이 빠져있다.
+    # spot capacity-type을 쓰는 NodePool에서 EC2 Spot 서비스 연결 역할
+    # (AWSServiceRoleForEC2Spot)이 계정에 아직 없으면 Karpenter가 CreateFleet 시점에
+    # 직접 생성을 시도하는데, 이 권한이 없어 AuthFailure.ServiceLinkedRoleCreationNotPermitted로
+    # 계속 실패하고 spot Pod이 "no instance type has the required offering"이라는
+    # (원인과 무관한) 메시지를 남긴 채 Pending 상태로 멈춘다. 서비스 연결 역할 자체는
+    # 계정당 1회만 생성되면 되므로(관리자 권한으로 `aws iam create-service-linked-role
+    # --aws-service-name spot.amazonaws.com` 1회 실행), 이 statement는 그 역할이 아직
+    # 없는 새 계정에서도 Karpenter가 스스로 만들 수 있도록 하는 방어적 최소 권한이다.
+    policy_statements = [
+      {
+        sid       = "AllowScopedEC2SpotServiceLinkedRoleCreation"
+        actions   = ["iam:CreateServiceLinkedRole"]
+        resources = ["arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"]
+        conditions = [{
+          test     = "StringEquals"
+          variable = "iam:AWSServiceName"
+          values   = ["spot.amazonaws.com"]
+        }]
+      }
+    ]
     set = [
       # 기본값 2 — dev는 replica_counts.karpenter=1로 낮춰 시스템 노드 Pending 해소
       { name = "replicas", value = tostring(var.replica_counts.karpenter) },
