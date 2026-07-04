@@ -1,0 +1,8 @@
+# .tf 파일은 항상 LF로 고정한다.
+# 이유: 일부 root(예: monitoring/.../eks-addons/argocd-image-updater.tf)는 helm_release values에
+# heredoc(<<-EOT)으로 셸 스크립트를 그대로 임베드한다. HCL heredoc은 줄바꿈 문자를 정규화 없이
+# 문자열에 그대로 보존하므로, Windows core.autocrlf=true 체크아웃으로 CRLF가 섞이면 그 \r이
+# yamlencode → helm values → ConfigMap을 거쳐 파드 안 스크립트 파일까지 그대로 전달되고,
+# 셔뱅(#!/bin/sh\r)이 깨져 스크립트 실행 자체가 실패한다. eol=lf로 고정하면 어떤 OS에서
+# 체크아웃하든 워킹트리 사본이 항상 LF로 유지된다.
+*.tf text eol=lf

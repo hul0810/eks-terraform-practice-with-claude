@@ -14,12 +14,22 @@
 # "A prominent example would be ECR on aws").
 #
 # catalog/order/api-gateway ECR 저장소는 workload 계정(657231015203)에 있고 monitoring 클러스터
-# 계정(157325288431)과 다르다. 하지만 ECR의 GetAuthorizationToken은 호출자 자신의 계정에서 발급되는
-# 범용 토큰이며, 어떤 계정의 레지스트리든 그 레지스트리의 repository policy가 호출 principal을
-# 허용하면 동일 토큰으로 접근 가능하다(AWS 공식 크로스 계정 ECR 패턴 — assume-role 불필요).
-# 따라서 이 IRSA Role은 ecr:GetAuthorizationToken만 가지면 되고, 실제 read 권한은
+# 계정(157325288431)과 다르다. ECR의 GetAuthorizationToken은 호출자 자신의 계정에서 발급되는
+# 범용 토큰이라 assume-role 없이 동일 토큰으로 다른 계정 레지스트리에 접근할 수 있다는 점까지는
+# 맞지만, 실제 이미지/태그 조회(BatchGetImage 등)가 성립하려면 IAM 평가 로직이 same-account와
+# 다르다: same-account는 identity 기반 정책 또는 resource 기반 정책 중 하나만 허용해도 되지만,
+# cross-account는 호출자 쪽 identity 기반 정책과 대상 리소스의 resource 기반 정책 둘 다
+# 명시적으로 허용해야 성립하는 AND 로직이다. 초기에는 이 사실을 놓치고 GetAuthorizationToken만
+# identity 측에 부여한 채 workload 계정 repository policy(read_access_arns)만으로 충분하다고
+# 가정했다가 실제 태그 조회에서 403이 발생했다(로그인은 되지만 조회가 막힘 — AND 조건 중 identity
+# 측이 비어 있었기 때문).
+# 따라서 이 IRSA Role에는 GetAuthorizationToken(계정 단위, 아래 별도 정책) 외에도 실제 조회에
+# 필요한 identity 측 read 액션(BatchGetImage/DescribeImages/ListImages/DescribeRepositories/
+# GetDownloadUrlForLayer/BatchCheckLayerAvailability)을 workload 계정 저장소 전체(현재 6개)에
+# prefix 와일드카드로 스코프를 좁혀 부여한다(아래 argocd_image_updater_ecr_read). resource 측 허용은 여전히
 # project/environments/{develop,production}/ap-northeast-2/*/ecr/locals.tf의 read_access_arns에
-# 이 Role ARN을 추가하는 방식으로 부여한다 (modules/ecr가 repository policy를 자동 생성).
+# 이 Role ARN을 추가하는 방식으로 부여한다(modules/ecr가 repository policy를 자동 생성) —
+# 두 방향 모두 있어야 cross-account 조회가 성립한다.
 #
 # [docker-credential-ecr-login을 initContainer로 주입하는 이유 — aws-cli가 아닌 이유]
 # ext: 스크립트는 ECR 로그인 토큰을 발급하는 바이너리가 필요한데, 차트 기본 이미지
@@ -84,6 +94,39 @@ resource "aws_iam_role_policy" "argocd_image_updater_ecr_auth" {
         Effect   = "Allow"
         Action   = "ecr:GetAuthorizationToken"
         Resource = "*"
+      }
+    ]
+  })
+}
+
+# cross-account ECR 조회 성립에 필요한 identity 측 read 액션 (위 헤더 주석의 AND 로직 참고).
+# AmazonEC2ContainerRegistryReadOnly 관리형 정책으로 임시 검증했으나, 그 정책은 Resource="*"로
+# GetLifecyclePolicy/GetRepositoryPolicy/DescribeImageScanFindings/ListTagsForResource 등 이미지
+# 태그 감지에 쓰이지 않는 액션까지 광범위하게 부여한다. 이 파일의 기존 최소 권한 패턴(위
+# argocd_image_updater_ecr_auth)과 일관되게, 실제 필요한 조회 액션만 부여한다.
+# Resource는 개별 리포지토리 이름을 나열하지 않고 "eks-practice-*" 프리픽스 와일드카드로 스코프를
+# 좁힌다 — 계정(workload) + 프로젝트 네이밍 프리픽스로 이미 충분히 제한되면서도, 새 서비스 ECR이
+# project/environments/{develop,production}/ap-northeast-2/*/ecr/에 추가될 때마다 이 리스트를
+# 수동 갱신하지 않아도 된다(누락 시 태그 조회 단계에서만 조용히 403이 나는 위험 제거).
+resource "aws_iam_role_policy" "argocd_image_updater_ecr_read" {
+  name = "ecr-image-tag-read"
+  role = aws_iam_role.argocd_image_updater.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EcrImageTagRead"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:ListImages",
+          "ecr:DescribeRepositories",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchCheckLayerAvailability",
+        ]
+        Resource = "arn:aws:ecr:ap-northeast-2:${local.workload_account_id}:repository/eks-practice-*"
       }
     ]
   })
@@ -167,11 +210,15 @@ resource "helm_release" "argocd_image_updater" {
       }
 
       volumes = [
-        { name = "ecr-helper-bin", emptyDir = {} }
+        { name = "ecr-helper-bin", emptyDir = {} },
+        # docker-credential-ecr-login이 인증 토큰 캐시를 쓰려는 경로. readOnlyRootFilesystem
+        # 기본값(차트 securityContext)은 유지하고 이 경로만 emptyDir로 예외 처리한다.
+        { name = "ecr-cache", emptyDir = {} }
       ]
 
       volumeMounts = [
-        { name = "ecr-helper-bin", mountPath = "/ecr-helper-bin" }
+        { name = "ecr-helper-bin", mountPath = "/ecr-helper-bin" },
+        { name = "ecr-cache", mountPath = "/app/.ecr" }
       ]
     })
   ]
