@@ -13,7 +13,6 @@ variable "repositories" {
   default = {}
 
   validation {
-    # MUTABLE_WITH_EXCLUSION, IMMUTABLE_WITH_EXCLUSION은 exclusion_filter 파라미터가 필요하여 현재 미지원
     condition = alltrue([
       for _, v in var.repositories :
       contains(["MUTABLE", "IMMUTABLE"], v.image_tag_mutability)

@@ -5,11 +5,11 @@ module "repositories" {
   version  = "~> 3.2.0"
   for_each = var.repositories
 
-  repository_name              = each.key
-  repository_image_tag_mutability = each.value.image_tag_mutability
-  repository_image_scan_on_push   = each.value.scan_on_push
-  repository_encryption_type      = each.value.encryption_type
-  repository_force_delete         = each.value.force_delete
+  repository_name                   = each.key
+  repository_image_tag_mutability   = each.value.image_tag_mutability
+  repository_image_scan_on_push     = each.value.scan_on_push
+  repository_encryption_type        = each.value.encryption_type
+  repository_force_delete           = each.value.force_delete
   repository_read_access_arns       = each.value.read_access_arns
   repository_read_write_access_arns = each.value.read_write_access_arns
 
