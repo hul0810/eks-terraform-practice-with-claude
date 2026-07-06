@@ -31,10 +31,12 @@ locals {
       # state에서 사라져 이 root의 plan/apply가 전부 실패한다. Role이 없으면 빈 리스트로 폴백해
       # repository policy statement 자체가 생성되지 않도록 한다(권한 없음 = 안전한 기본값).
       read_access_arns = compact([try(data.terraform_remote_state.monitoring_eks_addons.outputs.argocd_image_updater_role_arn, "")])
+      # ArgoCD Image Updater digest 전략 실습을 위해 동일 태그(latest) 반복 push가 필요하므로
+      # dev 환경은 MUTABLE로 구성한다. prod는 배포 불변성 보장을 위해 모듈 기본값 IMMUTABLE을 유지한다.
+      image_tag_mutability = "MUTABLE"
       # 나머지 설정은 모듈 기본값 사용:
-      #   image_tag_mutability = "IMMUTABLE" (태그 덮어쓰기 방지)
-      #   scan_on_push         = true        (ECR Basic 스캔, 무료)
-      #   encryption_type      = "AES256"    (비용 절감)
+      #   scan_on_push    = true      (ECR Basic 스캔, 무료)
+      #   encryption_type = "AES256"  (비용 절감)
     }
   }
 }
