@@ -36,6 +36,9 @@ terraform-eks-practice/
 │       └── 1.0.0/
 │
 ├── project/                                # 프로젝트 네임스페이스 (신규 프로젝트는 project-b/ 등으로 추가)
+│   ├── global/                              # 계정 전체에 singleton으로 딱 하나만 존재하는 자원
+│   │   └── ap-northeast-2/
+│   │       └── external-dns-cross-account-role/  # ← root module (Route53 zone은 전 서비스 공유)
 │   └── environments/
 │       ├── develop/
 │       │   └── ap-northeast-2/             # 리전
@@ -54,10 +57,14 @@ terraform-eks-practice/
 │       │       │   └── rds/
 │       │       └── payment/                # 워크로드별 인프라 (예정)
 │       │           └── eks/
-│       └── production/
+│       ├── production/
+│       │   └── ap-northeast-2/
+│       │       └── shared/
+│       │           └── vpc/                # (예정)
+│       └── common/                         # 서비스에는 속하지만 dev/prod 어느 한쪽에도 속하지 않는 자원
 │           └── ap-northeast-2/
-│               └── shared/
-│                   └── vpc/                # (예정)
+│               └── github-workflow-oidc/   # ← root module (OIDC Provider 1개 + 서비스별 GitHub Actions
+│                                            #    Role 3개를 for_each로 한 root module에서 통합 관리)
 │
 └── project-b/                              # (예정) 추가 프로젝트 예시
     └── environments/
@@ -72,10 +79,18 @@ terraform-eks-practice/
 | 레이어 | 예시 | 역할 |
 |--------|------|------|
 | `{project}` | `project`, `project-b` | 최상위 프로젝트 단위. 독립 modules/와 environments/를 소유 |
-| `{env}` | `develop`, `production` | 환경 분리. 서로 다른 AWS 계정 또는 동일 계정 내 격리 |
+| `{env}` | `develop`, `production`, `common` | 환경 분리. `common`은 서비스에는 속하지만 dev/prod 어느 한쪽에도 속하지 않는 자원(예: dev+prod ECR을 모두 접근하는 GitHub Actions Role). 서비스별로 반복되는 자원이라도 서로 강하게 연관되어 있으면(예: OIDC Provider + 서비스별 Role) 서비스 서브디렉토리로 쪼개지 않고 하나의 root module에서 `for_each`로 묶어 관리하기도 한다(`github-workflow-oidc/`) |
 | `{region}` | `ap-northeast-2` | 리전별 독립 배포 지원. 멀티 리전 확장 시 디렉토리 추가만으로 대응 |
 | `{service}` | `shared`, `api`, `payment` | 워크로드/팀 단위 분리. `shared`는 VPC·EKS 등 공용 인프라 |
 | `{resource}` | `vpc`, `eks`, `rds` | 리소스 타입별 독립 state. 변경 범위를 최소화하고 blast radius를 줄임 |
+
+> **`project/global/` vs `environments/common/`**: 계정 전체에 singleton으로 딱 하나만 존재하고
+> 특정 서비스에 속하지 않으면 `project/global/` (예: 공유 Route53 zone 관련 Role).
+> 서비스마다 반복해서 존재하지만 dev/prod 특정 환경에는 속하지 않으면 `environments/common/`
+> (예: 서비스별 GitHub Actions Role). 단, singleton 자원(OIDC Provider)이 서비스별 반복 자원(Role)과
+> 강하게 연관되어 함께 관리하는 것이 더 실용적이면 `environments/common/`의 root module 하나에
+> 묶어도 된다 (`github-workflow-oidc/`) — 이 구분은 절대 규칙이 아니라 state 파일 개수 대비
+> 관리 편의성을 저울질하는 기준이다.
 
 ---
 
@@ -96,6 +111,7 @@ terraform-eks-practice/
 | (동일 패턴) `order/ecr/`, `catalog/ecr/` 등 MSA 서비스별 ECR | `project/develop/ap-northeast-2/{service}/ecr/terraform.tfstate` |
 | `project/environments/develop/ap-northeast-2/api/eks/` | `project/develop/ap-northeast-2/api/eks/terraform.tfstate` |
 | `project/environments/production/ap-northeast-2/shared/vpc/` | `project/production/ap-northeast-2/shared/vpc/terraform.tfstate` |
+| `project/environments/common/ap-northeast-2/github-workflow-oidc/` | `project/common/ap-northeast-2/github-workflow-oidc/terraform.tfstate` |
 | `project-b/environments/develop/ap-northeast-2/shared/vpc/` | `project-b/develop/ap-northeast-2/shared/vpc/terraform.tfstate` |
 
 ---
