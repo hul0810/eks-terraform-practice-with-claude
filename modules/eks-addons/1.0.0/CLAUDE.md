@@ -40,6 +40,7 @@
 | argo-cd (Helm chart) | `9.5.21` |
 | argo-rollouts (Helm chart) | `2.38.1` |
 | external-secrets (Helm chart) | `2.7.0` |
+| rollout-extension (ArgoCD UI extension, GitHub Release 자산) | `v0.4.0` (`local.rollout_extension_version`) |
 
 ---
 
@@ -288,6 +289,35 @@ python3 -c "import bcrypt; print(bcrypt.hashpw(b'PASSWORD', bcrypt.gensalt()).de
 
 패스워드 변경 시 새 해시와 함께 `main.tf`의 `argocdServerAdminPasswordMtime` 타임스탬프도
 반드시 갱신해야 ArgoCD가 변경을 감지하고 반영한다.
+
+### Argo Rollouts UI Extension (extensions)
+
+`server.extensions`에 공식 [rollout-extension](https://github.com/argoproj-labs/rollout-extension)을
+등록하면 argocd-server에 initContainer가 추가되어 정적 파일(`extension.tar`)을 내려받고, ArgoCD UI에서
+canary/blue-green 진행 상황(step, weight 등)을 시각화한다. 신규 AWS 리소스는 생성하지 않는다.
+
+`var.enable_argo_rollouts` 조건부로만 주입한다 — Argo Rollouts가 꺼진 환경(`enable_argo_rollouts=false`)에서
+extension만 남아 있으면 표시할 Rollout 리소스가 없는데도 initContainer가 매 Pod 기동마다 불필요한
+외부 다운로드를 시도하기 때문이다. `enable_argo_rollouts=true`인 환경(현재 develop/monitoring/production
+전체)에서는 별도 변수 없이 자동으로 함께 켜진다.
+
+**주의(릴리스 자산 파일명 함정)**: `EXTENSION_URL`의 파일명은 `extension.tar`다(`.tar.gz`가 아님) —
+v0.4.0 기준 GitHub Releases 실제 자산명으로 확인했다. `.tar.gz`로 잘못 지정하면 초기 apply 시
+initContainer가 `curl 404`로 CrashLoopBackOff에 빠지고 argocd-server 전체가 기동 실패한다
+(monitoring 클러스터에서 실제로 겪은 장애 — 2026-07-09).
+
+**버전 고정 이유(공급망 리스크)**: `EXTENSION_URL`을 `releases/latest/download/...`로 두면 GitHub의
+"최신 릴리스" 별칭을 그대로 참조하게 되어 이 프로젝트의 버전 고정 원칙(위 "고정 버전" 표)을 벗어난다.
+argocd-server pod는 노드 교체·HPA·크래시 등 코드 변경과 무관한 이벤트로도 자주 재시작되는데, 그때마다
+initContainer가 그 시점의 최신 자산을 다시 받아온다 — 즉 git diff 없이 배포 아티팩트가 바뀔 수 있고,
+업스트림 릴리스 프로세스가 침해되면 검증 없는 콘텐츠가 ArgoCD 관리자 UI(GitOps 배포 권한을 가진 특권
+컨텍스트)에 그대로 반영되는 경로가 된다. 따라서 `local.rollout_extension_version`으로 특정 태그를
+고정하고 `EXTENSION_VERSION`도 동일 값으로 함께 설정한다(installer 문서상 필수 필드).
+
+`EXTENSION_CHECKSUM_URL`(다운로드 무결성 검증)은 설정하지 않았다 — rollout-extension 릴리스에
+체크섬 파일 자체가 게시되지 않는다(v0.4.0 자산은 `extension.tar` 단일 파일). 검증 대상 URL이
+없으므로 버전 태그 고정이 현재 확보 가능한 무결성 보장의 전부다. 업스트림이 향후 체크섬 자산을
+추가하면 이 값도 함께 채운다.
 
 ### app-controller replica를 늘리지 않는 이유
 
