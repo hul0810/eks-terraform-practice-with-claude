@@ -213,12 +213,20 @@ resource "helm_release" "argocd_image_updater" {
         { name = "ecr-helper-bin", emptyDir = {} },
         # docker-credential-ecr-login이 인증 토큰 캐시를 쓰려는 경로. readOnlyRootFilesystem
         # 기본값(차트 securityContext)은 유지하고 이 경로만 emptyDir로 예외 처리한다.
-        { name = "ecr-cache", emptyDir = {} }
+        # medium = "Memory"(tmpfs)로 지정해 ECR 토큰 캐시가 노드 디스크에 남지 않고 파드 종료 시
+        # 확실히 소멸하도록 한다.
+        { name = "ecr-cache", emptyDir = { medium = "Memory" } },
+        # AWS SDK가 IRSA 자격증명을 캐싱하려고 쓰기를 시도하는 경로. 위 ecr-cache와 동일한 이유로
+        # readOnlyRootFilesystem은 유지한 채 이 경로만 emptyDir로 예외 처리한다.
+        # medium = "Memory"(tmpfs)로 지정해 IRSA 임시 자격증명이 노드 디스크에 남지 않고 파드
+        # 종료 시 확실히 소멸하도록 한다.
+        { name = "aws-cache", emptyDir = { medium = "Memory" } }
       ]
 
       volumeMounts = [
         { name = "ecr-helper-bin", mountPath = "/ecr-helper-bin" },
-        { name = "ecr-cache", mountPath = "/app/.ecr" }
+        { name = "ecr-cache", mountPath = "/app/.ecr" },
+        { name = "aws-cache", mountPath = "/app/.aws" }
       ]
     })
   ]
