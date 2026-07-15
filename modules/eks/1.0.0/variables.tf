@@ -81,6 +81,16 @@ variable "system_node_ami_type" {
   default     = "AL2023_x86_64_STANDARD"
 }
 
+variable "system_node_capacity_type" {
+  description = "시스템 노드 그룹 용량 타입(ON_DEMAND 또는 SPOT). 이 노드 그룹은 Karpenter(클러스터 오토스케일러) 자체와 CoreDNS가 실행되는 전용 노드다 — SPOT 중단 시 Karpenter가 죽어 신규 노드 프로비저닝이 불가능해지고 클러스터 자가 회복 능력이 상실된다. 비용 절감이 필요하면 이 리스크를 감수할 환경에서만 명시적으로 SPOT을 선택한다(예: 실습용 develop). production처럼 가용성이 중요한 환경은 ON_DEMAND를 유지한다"
+  type        = string
+  default     = "ON_DEMAND"
+  validation {
+    condition     = contains(["ON_DEMAND", "SPOT"], var.system_node_capacity_type)
+    error_message = "system_node_capacity_type은 \"ON_DEMAND\" 또는 \"SPOT\"이어야 합니다."
+  }
+}
+
 variable "project" {
   description = "프로젝트 이름. 시스템 노드 그룹 이름 조합에 사용된다 ({project}-system-{environment}). cluster_name 대신 사용하는 이유: cluster_name은 project+environment를 이미 포함해 이름이 길어지면 IAM role name_prefix 38자 한도를 초과한다."
   type        = string

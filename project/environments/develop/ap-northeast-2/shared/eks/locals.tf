@@ -46,11 +46,18 @@ locals {
     enabled_log_types = []
 
     system_node = {
-      instance_types = ["t3.medium"]
+      # t3a.medium(AMD)을 추가해 Spot 풀을 다양화한다 — t3(Intel)와 물리적으로 다른 용량
+      # 풀이라 동시 회수 상관관계가 낮다. 두 타입 모두 2vCPU/4GiB 동일 스펙(파드 한도 유지)이며,
+      # 온디맨드 가격이 t3.medium($0.0520/hr, ap-northeast-2) 이하인 것만 선택했다
+      # (t3a.medium $0.0468/hr — 2026-07-08 조회. t2.medium/c5.large/m5.large 등은 초과해 제외).
+      instance_types = ["t3.medium", "t3a.medium"]
       ami_type       = "AL2023_x86_64_STANDARD"
       min_size       = 1
       max_size       = 3
       desired_size   = 1
+      # 비용 예외 항목(루트 CLAUDE.md 참조) — 실습 환경 한정으로 SPOT 중단 시 Karpenter
+      # 자가 회복 능력 상실 리스크를 감수한다. production은 ON_DEMAND 유지.
+      capacity_type = "SPOT"
     }
 
     # dev: t3.medium 시스템 노드 pod 한계(17)에서 시스템 애드온 슬롯을 확보하기 위해

@@ -65,6 +65,9 @@ locals {
       min_size     = 1
       max_size     = 4
       desired_size = 1
+      # ON_DEMAND 유지 — production은 가용성 우선. SPOT은 develop/monitoring에서만 실습
+      # 목적으로 선택(SPOT 중단 시 Karpenter 자가 회복 능력 상실 리스크, 루트 CLAUDE.md 참조).
+      capacity_type = "ON_DEMAND"
     }
 
     # STANDARD: 표준 지원 종료 시 다음 버전으로 자동 업그레이드 — Extended Support 비용($0.60/hr) 차단

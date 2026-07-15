@@ -38,6 +38,7 @@ module "eks" {
   system_node_min_size       = local.eks.system_node.min_size
   system_node_max_size       = local.eks.system_node.max_size
   system_node_desired_size   = local.eks.system_node.desired_size
+  system_node_capacity_type  = local.eks.system_node.capacity_type
 
   node_security_group_tags = local.eks.node_security_group_tags
 

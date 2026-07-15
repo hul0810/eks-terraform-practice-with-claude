@@ -27,6 +27,8 @@
 비용 예외 항목 (단일 작업 환경으로 인해 의도적으로 단순화):
 - develop 환경 NAT Gateway 단일 AZ
 - develop 환경 t-계열 인스턴스 사용
+- develop/monitoring 환경 시스템 노드 그룹 SPOT 용량 (Karpenter가 SPOT 중단으로 죽으면 클러스터
+  자가 회복 능력이 상실되는 리스크를 실습 환경 한정으로 감수, `modules/eks/1.0.0/CLAUDE.md` 참조)
 - production 환경 시스템 노드 그룹 min/desired=1 (HA 비활성화, `eks/locals.tf`에 복원 방법 주석)
 - production 환경 NAT Gateway 단일 구성 (`single_nat_gateway = true`, `vpc/locals.tf`에 복원 방법 주석)
 

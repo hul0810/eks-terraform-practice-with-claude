@@ -167,11 +167,12 @@ module "eks" {
       max_size       = var.system_node_max_size
       desired_size   = var.system_node_desired_size
 
-      # ON_DEMAND 하드코딩: 이 노드 그룹은 Karpenter(클러스터 오토스케일러)가 실행되는 전용 노드다.
-      # Karpenter는 Pod이므로 이 노드가 Spot 중단되면 신규 노드 프로비저닝이 불가능해진다.
-      # 클러스터 자가 회복 능력을 보장하기 위해 변수화하지 않고 ON_DEMAND로 고정한다.
-      # 비용 절감용 Spot은 Karpenter NodePool(앱 워크로드 레이어)에서 별도 적용한다.
-      capacity_type = "ON_DEMAND"
+      # 이 노드 그룹은 Karpenter(클러스터 오토스케일러)가 실행되는 전용 노드다.
+      # Karpenter는 Pod이므로 이 노드가 Spot 중단되면 신규 노드 프로비저닝이 불가능해져
+      # 클러스터 자가 회복 능력이 상실된다 — SPOT 선택 시 호출자가 이 리스크를 감수한다.
+      # 비용 절감용 Spot은 기본적으로 Karpenter NodePool(앱 워크로드 레이어)에서 적용하고,
+      # 이 시스템 노드 그룹은 var.system_node_capacity_type으로 환경별 선택을 허용한다.
+      capacity_type = var.system_node_capacity_type
 
       # role 레이블: Karpenter NodeAffinity 설정에서 시스템 노드를 선택할 때 사용
       labels = { role = "system" }
