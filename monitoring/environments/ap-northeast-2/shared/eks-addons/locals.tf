@@ -77,9 +77,12 @@ locals {
     # 와일드카드(blueprints 기본값) 대신 이 prefix로 제한한다.
     # argocd-image-updater/* : Image Updater가 이미지 태그 갱신을 커밋할 때 쓰는 GitHub App
     # 인증 정보 — ArgoCD 레포 접근용(argocd/github-app/*)과 용도가 달라 별도 App/경로로 분리한다.
+    # notifications/slack-bot-token은 더 이상 이 목록에 포함되지 않는다 — Argo Rollouts/ArgoCD
+    # Notifications는 전용 IRSA(notifications-irsa.tf, aws_iam_role.notifications_slack)로
+    # 분리되어 이 external-secrets-sa 공용 Role이 읽을 필요가 없다(최소 권한 원칙).
     external_secrets_ssm_parameter_arns = [
       "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd/github-app/*",
-      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd-image-updater/*"
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd-image-updater/*",
     ]
     # SSM SecureString 기본 키(alias/aws/ssm)만 복호화 허용 — 계정 내 모든 KMS 키 와일드카드 대신 최소 권한
     external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]
@@ -88,9 +91,19 @@ locals {
     # OTel Operator와 Gateway는 observability/ root module에서 관리한다.
     enable_otel_spoke_collector = false
 
-    enable_argocd        = true
-    enable_argo_rollouts = false
-    argocd_chart_version = "9.5.21"
+    enable_argocd = true
+    # develop/monitoring/production 전체 상시 활성화 (modules/eks-addons/1.0.0/CLAUDE.md 참조) —
+    # Argo Rollouts Notifications(Slack)가 이 값에 의존하므로 false로 되돌리면 알림 기능 전체가
+    # 조용히 깨진다.
+    enable_argo_rollouts        = true
+    argo_rollouts_chart_version = "2.38.1"
+    # Argo Rollouts Notifications의 Slack 알림 서비스(templates/triggers 포함) 활성화 여부.
+    # 전용 IRSA/SecretStore(notifications-irsa.tf)가 준비되어 있어야 한다.
+    argo_rollouts_notifications_slack_enabled = true
+    # ArgoCD Application Notifications의 Slack 알림 서비스 활성화 여부. 동일하게 전용
+    # IRSA/SecretStore(notifications-irsa.tf)가 준비되어 있어야 한다.
+    argocd_notifications_slack_enabled = true
+    argocd_chart_version               = "9.5.21"
     # monitoring: 단일 시스템 노드(비용 절감)라 HA 불필요
     argocd_ha_enabled = false
 

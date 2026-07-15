@@ -24,6 +24,376 @@ locals {
   # 배포된 아티팩트가 바뀌는 상태가 된다. 업그레이드 시 이 값만 변경한다.
   rollout_extension_version = "v0.4.0"
 
+  # Argo Rollouts Notifications — Slack 알림 서비스(notifiers) + 공식 기본 templates/triggers
+  # 9종씩(argoproj/argo-rollouts 공식 저장소 manifests/notifications-install.yaml 기준, email
+  # notifier용 항목은 이 프로젝트가 이메일 알림을 쓰지 않으므로 제외)을 함께 구성한다.
+  # notifiers만으로는 알림이 발송되지 않는다 — trigger가 어떤 이벤트에서 어떤 template으로 보낼지
+  # 정의하고, template이 실제 Slack 메시지 포맷을 정의해야 한다. 이 9개 trigger가 여기 준비되어
+  # 있어야 GitOps 저장소(eks-practice-devops-manifest)에서 Rollout 리소스에
+  # notifications.argoproj.io/subscriptions annotation을 붙였을 때 실제로 발송된다
+  # (subscriptions 자체는 여전히 GitOps 저장소에서 Rollout annotation으로 관리 — Terraform 범위 밖).
+  # $slack-token은 실제 토큰이 아니라 같은 네임스페이스의 argo-rollouts-notification-secret
+  # Secret의 slack-token 키를 가리키는 notifications-engine 참조 문법이다.
+  argo_rollouts_values = var.argo_rollouts_notifications_slack_enabled ? {
+    notifications = {
+      notifiers = {
+        "service.slack" = <<-EOT
+          token: $slack-token
+        EOT
+      }
+      templates = {
+        "template.analysis-run-error"     = <<-EOT
+          message: Rollout {{.rollout.metadata.name}}'s analysis run is in error state.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#ECB22E",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.analysis-run-failed"    = <<-EOT
+          message: Rollout {{.rollout.metadata.name}}'s analysis run failed.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#E01E5A",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.analysis-run-running"   = <<-EOT
+          message: Rollout {{.rollout.metadata.name}}'s analysis run is running.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#18be52",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.rollout-aborted"        = <<-EOT
+          message: Rollout {{.rollout.metadata.name}} has been aborted.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#E01E5A",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.rollout-completed"      = <<-EOT
+          message: Rollout {{.rollout.metadata.name}} has been completed.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#18be52",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.rollout-paused"         = <<-EOT
+          message: Rollout {{.rollout.metadata.name}} has been paused.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#18be52",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.rollout-step-completed" = <<-EOT
+          message: Rollout {{.rollout.metadata.name}} step number {{ add .rollout.status.currentStepIndex 1}}/{{len .rollout.spec.strategy.canary.steps}} has been completed.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#18be52",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  },
+                  {
+                    "title": "Step completed",
+                    "value": "{{add .rollout.status.currentStepIndex 1}}/{{len .rollout.spec.strategy.canary.steps}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.rollout-updated"        = <<-EOT
+          message: Rollout {{.rollout.metadata.name}} has been updated.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#18be52",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+        "template.scaling-replicaset"     = <<-EOT
+          message: Scaling Rollout {{.rollout.metadata.name}}'s replicaset to {{.rollout.spec.replicas}}.
+          slack:
+            attachments: |
+                [{
+                  "title": "{{ .rollout.metadata.name}}",
+                  "color": "#18be52",
+                  "fields": [
+                  {
+                    "title": "Strategy",
+                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
+                    "short": true
+                  },
+                  {
+                    "title": "Desired replica",
+                    "value": "{{.rollout.spec.replicas}}",
+                    "short": true
+                  },
+                  {
+                    "title": "Updated replicas",
+                    "value": "{{.rollout.status.updatedReplicas}}",
+                    "short": true
+                  }
+                  {{range $index, $c := .rollout.spec.template.spec.containers}}
+                    {{if not $index}},{{end}}
+                    {{if $index}},{{end}}
+                    {
+                      "title": "{{$c.name}}",
+                      "value": "{{$c.image}}",
+                      "short": true
+                    }
+                  {{end}}
+                  ]
+                }]
+        EOT
+      }
+      triggers = {
+        "trigger.on-analysis-run-error"     = <<-EOT
+          - send: [analysis-run-error]
+        EOT
+        "trigger.on-analysis-run-failed"    = <<-EOT
+          - send: [analysis-run-failed]
+        EOT
+        "trigger.on-analysis-run-running"   = <<-EOT
+          - send: [analysis-run-running]
+        EOT
+        "trigger.on-rollout-aborted"        = <<-EOT
+          - send: [rollout-aborted]
+        EOT
+        "trigger.on-rollout-completed"      = <<-EOT
+          - send: [rollout-completed]
+        EOT
+        "trigger.on-rollout-paused"         = <<-EOT
+          - send: [rollout-paused]
+        EOT
+        "trigger.on-rollout-step-completed" = <<-EOT
+          - send: [rollout-step-completed]
+        EOT
+        "trigger.on-rollout-updated"        = <<-EOT
+          - send: [rollout-updated]
+        EOT
+        "trigger.on-scaling-replica-set"    = <<-EOT
+          - send: [scaling-replicaset]
+        EOT
+      }
+    }
+  } : {}
+
+  # ArgoCD Application Notifications — Slack. 3종만 구성한다(app-health-degraded/app-sync-failed/
+  # app-sync-status-unknown) — "정상 동작은 알림 불필요" 원칙으로 on-deployed/on-sync-running/
+  # on-sync-succeeded/on-created/on-deleted는 의도적으로 제외. templates는 공식 카탈로그
+  # (argoproj/argo-cd notifications_catalog)와 구조가 달라 message+slack만 담은 경량 버전으로
+  # 별도 작성했고, triggers는 공식 카탈로그의 when/oncePer/send/description을 그대로 사용한다
+  # (ArgoCD Application은 이벤트가 아니라 상태를 계속 재평가하는 구조라 when 조건이 필수).
+  argocd_notifications_values = var.argocd_notifications_slack_enabled ? {
+    notifiers = {
+      "service.slack" = <<-EOT
+        token: $slack-token
+      EOT
+    }
+    templates = {
+      "template.app-health-degraded"     = <<-EOT
+        message: Application {{.app.metadata.name}} is Degraded.
+        slack:
+          attachments: |
+            [{
+              "title": "{{.app.metadata.name}}",
+              "color": "#E01E5A",
+              "fields": [
+                {"title": "Sync Status", "value": "{{.app.status.sync.status}}", "short": true},
+                {"title": "Health Status", "value": "{{.app.status.health.status}}", "short": true},
+                {"title": "Repository", "value": "{{.app.spec.source.repoURL}}", "short": false}
+              ]
+            }]
+      EOT
+      "template.app-sync-failed"         = <<-EOT
+        message: Application {{.app.metadata.name}} sync has failed.
+        slack:
+          attachments: |
+            [{
+              "title": "{{.app.metadata.name}}",
+              "color": "#E01E5A",
+              "fields": [
+                {"title": "Sync Status", "value": "{{.app.status.sync.status}}", "short": true},
+                {"title": "Revision", "value": "{{.app.status.sync.revision}}", "short": true}
+              ]
+            }]
+      EOT
+      "template.app-sync-status-unknown" = <<-EOT
+        message: Application {{.app.metadata.name}}'s sync status is Unknown.
+        slack:
+          attachments: |
+            [{
+              "title": "{{.app.metadata.name}}",
+              "color": "#ECB22E",
+              "fields": [
+                {"title": "Sync Status", "value": "{{.app.status.sync.status}}", "short": true}
+              ]
+            }]
+      EOT
+    }
+    triggers = {
+      "trigger.on-health-degraded"     = <<-EOT
+        - description: Application has degraded
+          oncePer: app.status.operationState?.syncResult?.revision
+          send:
+          - app-health-degraded
+          when: app.status.health.status == 'Degraded'
+      EOT
+      "trigger.on-sync-failed"         = <<-EOT
+        - description: Application syncing has failed
+          oncePer: app.status.operationState?.syncResult?.revision
+          send:
+          - app-sync-failed
+          when: app.status.operationState != nil and app.status.operationState.phase in ['Error',
+            'Failed']
+      EOT
+      "trigger.on-sync-status-unknown" = <<-EOT
+        - description: Application status is 'Unknown'
+          oncePer: app.status.operationState?.syncResult?.revision
+          send:
+          - app-sync-status-unknown
+          when: app.status.sync.status == 'Unknown'
+      EOT
+    }
+  } : {}
+
   argocd_values = {
     global = {
       tolerations = [{
@@ -32,8 +402,18 @@ locals {
         effect   = "NoSchedule"
       }]
     }
-    dex           = { enabled = false }
-    notifications = { enabled = false }
+    dex = { enabled = false }
+    # secret.create=false가 필요한 이유: argo-cd Helm chart의 notifications.secret.create 기본값이
+    # true라 이대로 두면 Helm이 argocd-notifications-secret을 직접 생성하려 시도하고, 우리 쪽
+    # ExternalSecret(argocd-notifications.tf)도 같은 이름의 Secret을 만들려 해서 소유권이 충돌한다.
+    # false로 명시해 ESO(External Secrets Operator)가 전담하도록 한다.
+    notifications = merge(
+      {
+        enabled = var.argocd_notifications_slack_enabled
+        secret  = { create = false }
+      },
+      local.argocd_notifications_values
+    )
     "redis-ha" = {
       enabled = var.argocd_ha_enabled
       tolerations = [{
@@ -301,6 +681,7 @@ module "eks_blueprints_addons" {
       { name = "controller.tolerations[0].operator", value = "Exists" },
       { name = "controller.tolerations[0].effect", value = "NoSchedule" },
     ]
+    values = [yamlencode(local.argo_rollouts_values)]
   }
 
   # ── ArgoCD ────────────────────────────────────────────────────────────────────

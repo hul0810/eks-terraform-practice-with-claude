@@ -148,6 +148,18 @@ variable "argo_rollouts_chart_version" {
   default     = null
 }
 
+variable "argo_rollouts_notifications_slack_enabled" {
+  description = "Argo Rollouts Notifications의 Slack 알림 서비스(notifications.notifiers[\"service.slack\"]) 활성화 여부. true로 설정하는 환경은 대상 네임스페이스(argo-rollouts)에 argo-rollouts-notification-secret Secret(키 slack-token)이 미리 준비되어 있어야 한다(예: External Secrets Operator)."
+  type        = bool
+  default     = false
+}
+
+variable "argocd_notifications_slack_enabled" {
+  description = "ArgoCD Application Notifications의 Slack 알림 서비스 활성화 여부. true로 설정하는 환경은 argocd 네임스페이스에 argocd-notifications-secret Secret(키 slack-token)이 미리 준비되어 있어야 한다(예: External Secrets Operator). true가 되면 ArgoCD 차트의 notifications 서브컴포넌트(별도 컨트롤러 파드)가 함께 활성화된다."
+  type        = bool
+  default     = false
+}
+
 variable "argocd_chart_version" {
   description = "ArgoCD Helm chart 버전 (예: \"9.5.21\")"
   type        = string

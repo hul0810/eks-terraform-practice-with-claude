@@ -214,12 +214,17 @@ GitOps 전환(Phase 5)의 시작점. 이후 단계(5-2~5-5)에서 `create_kubern
 ArgoCD는 AWS API를 호출하지 않으므로 IRSA/Pod Identity가 불필요하다. `metrics-server`와
 동일한 패턴 — `enable_argocd`만 blueprints에 전달하고 별도 IAM Role을 선언하지 않는다.
 
-### dex(SSO) / notifications 비활성화
+### dex(SSO) 비활성화 / notifications 조건부 활성화
 
-`values.dex.enabled = false`, `values.notifications.enabled = false`로 명시 비활성화한다.
-SSO Provider(OIDC/SAML)와 알림 채널(Slack 등)이 아직 구성되지 않은 상태이므로, 미구성
-상태에서 활성화하면 컨테이너가 CrashLoop 또는 무의미한 리소스를 점유한다. 필요 시
-이후 단계에서 SSO/알림 채널 구성과 함께 활성화한다.
+`values.dex.enabled = false`로 명시 비활성화한다. SSO Provider(OIDC/SAML)가 아직 구성되지
+않은 상태이므로, 미구성 상태에서 활성화하면 컨테이너가 CrashLoop에 빠진다. 필요 시 이후
+단계에서 SSO 구성과 함께 활성화한다.
+
+`values.notifications.enabled`는 더 이상 고정 `false`가 아니라 `argocd_notifications_slack_enabled`
+변수를 그대로 전달한다(상세: 아래 "ArgoCD Application Notifications — Slack" 절). 활성화 시
+`notifications.secret.create = false`를 함께 명시하는데, argo-cd 차트의 기본값(`true`)을 그대로
+두면 Helm이 `argocd-notifications-secret`을 직접 생성하려 시도해 ESO(External Secrets Operator)가
+관리하는 동일 이름 Secret과 소유권이 충돌하기 때문이다.
 
 ### argocd_ha_enabled 토글
 
@@ -318,6 +323,43 @@ initContainer가 그 시점의 최신 자산을 다시 받아온다 — 즉 git 
 체크섬 파일 자체가 게시되지 않는다(v0.4.0 자산은 `extension.tar` 단일 파일). 검증 대상 URL이
 없으므로 버전 태그 고정이 현재 확보 가능한 무결성 보장의 전부다. 업스트림이 향후 체크섬 자산을
 추가하면 이 값도 함께 채운다.
+
+### Argo Rollouts Notifications — Slack (argo_rollouts_notifications_slack_enabled)
+
+`notifications.notifiers["service.slack"]` 하나만 opt-in 변수로 노출한다. 이 모듈은
+develop/monitoring/production 3개 환경이 공유하는데, Slack Bot Token을 가리키는 Secret
+(`argo-rollouts-notification-secret`, 키 `slack-token`, 네임스페이스 `argo-rollouts`)은
+monitoring 계정에만 ESO(External Secrets Operator)로 준비되어 있다
+(`monitoring/environments/ap-northeast-2/shared/eks-addons/argo-rollouts-notifications.tf`).
+기본값을 켜두면 Secret이 없는 develop/production에도 monitoring 전용 알림 설정이 암묵적으로
+새어나가 "코드만으로 의도 파악 가능" 원칙에 어긋나므로, 이 변수를 `true`로 설정하는 환경은
+호출자가 해당 Secret을 직접 준비해야 한다.
+
+`notifiers`만으로는 알림이 실제로 발송되지 않는다 — 어떤 이벤트에서 어떤 템플릿으로 보낼지는
+`templates`/`triggers`/`subscriptions` 설정이 필요하며, 이 세 가지는 이 모듈(Terraform)의 관리
+범위가 아니다. `eks-practice-devops-manifest` GitOps 저장소에서 Rollout 리소스에
+`notifications.argoproj.io/subscriptions` annotation을 붙이는 방식으로 별도 관리한다.
+
+값(`token: $slack-token`)의 `$slack-token`은 실제 토큰 문자열이 아니라 argo-rollouts
+notifications-engine이 같은 네임스페이스의 `argo-rollouts-notification-secret` Secret에서
+`slack-token` 키를 찾아 치환하는 참조 문법이다.
+
+### ArgoCD Application Notifications — Slack (argocd_notifications_slack_enabled)
+
+Argo Rollouts Notifications와 동일한 opt-in 패턴이지만 스키마가 근본적으로 다르다 — ArgoCD
+Application은 이벤트가 아니라 상태를 계속 재평가하는 구조라 `triggers`마다 CEL 조건식인
+`when`이 필수다(Argo Rollouts는 `send`만으로 충분). `templates`/`triggers`는 3종만 구성한다
+(`app-health-degraded`/`app-sync-failed`/`app-sync-status-unknown`) — "정상 동작은 알림
+불필요" 원칙으로 `on-deployed`/`on-sync-running`/`on-sync-succeeded`/`on-created`/`on-deleted`는
+의도적으로 제외했다. `triggers`의 `when`/`oncePer`/`send`/`description`은 공식 카탈로그
+(`argoproj/argo-cd` `notifications_catalog/install.yaml`)를 그대로 사용한다 — CEL 문법을
+손으로 다시 옮기면 실수하기 쉽기 때문이다.
+
+Slack Bot Token(`argocd-notifications-secret`, 키 `slack-token`, 네임스페이스 `argocd`)은
+Argo Rollouts Notifications와 동일한 Slack App/Bot을 공유하므로 공용 SSM 경로
+(`/eks-practice/notifications/slack-bot-token`)를 함께 참조한다. monitoring 계정에만
+ESO로 준비되어 있다(`monitoring/environments/ap-northeast-2/shared/eks-addons/argocd-notifications.tf`) —
+develop/production에서 이 변수를 `true`로 설정하려면 호출자가 해당 Secret을 직접 준비해야 한다.
 
 ### app-controller replica를 늘리지 않는 이유
 
