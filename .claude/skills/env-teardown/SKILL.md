@@ -14,6 +14,7 @@ allowed-tools:
   - Bash(terraform *)
   - Bash(aws *)
   - Bash(kubectl *)
+  - Bash(curl *)
   - Read
   - Grep
   - Glob
@@ -73,6 +74,66 @@ allowed-tools:
 > "production teardown — 보호 원칙과 실습 예외" 참고). 이 마커는 해당 명령 1회에만 적용되며,
 > teardown 목적 외에는 절대 사용하지 않는다.
 
+### 공통 처리: AWS SSO 토큰 만료 감지 및 반복 Slack 알림 (Step 1 이후 모든 terraform 명령에 적용)
+
+이 스킬이 실행하는 어떤 `terraform apply`/`destroy`/`plan` 출력에서든 아래 패턴이 보이면
+SSO 세션이 만료된 것이다:
+
+- `No valid credential sources found`
+- `refresh cached SSO token failed`
+- `InvalidGrantException`
+
+이 상태로 명령이 실패하면 destroy가 중단된 채 비용 발생 리소스(NAT Gateway, EKS 클러스터 등)가
+그대로 남아 계속 과금된다. 감지 즉시 아래 백그라운드 루프를 시작한다 — LLM 턴을 소비하지 않는
+순수 쉘 루프이므로 10초 간격 반복이 부담 없다 (`run_in_background: true`, `timeout: 600000`
+— Bash 도구가 허용하는 최대 10분):
+
+```bash
+PROFILE="<해당 root/서브디렉토리 providers.tf의 profile>"
+ENV_NAME="<환경>"
+WEBHOOK="$SLACK_WEBHOOK_URL"
+CMD_HINT="aws sso login --profile $PROFILE"
+i=0
+while true; do
+  if aws sts get-caller-identity --profile "$PROFILE" >/dev/null 2>&1; then
+    echo "SSO_RESOLVED (반복 ${i}회 후 감지)"
+    break
+  fi
+  if [ -n "$WEBHOOK" ]; then
+    msg=$(printf '<!channel> ⚠️ SSO_LOGIN_REQUIRED — *[%s] teardown 중단*\n실행: `%s`\n방치 시 비용 계속 발생 (반복 %s회)' "$ENV_NAME" "$CMD_HINT" "$i")
+    payload=$(jq -nc --arg text "$msg" '{text:$text}')
+    printf '%s' "$payload" | curl -s -X POST -H 'Content-type: application/json' --data-binary @- --max-time 5 "$WEBHOOK" >/dev/null 2>&1
+  fi
+  i=$((i+1))
+  sleep 10
+done
+```
+
+루프 완료 알림을 받으면:
+- 출력에 `SSO_RESOLVED`가 있으면 로그인이 확인된 것 — 실패했던 명령을 그대로 재실행한다.
+- 10분 타임아웃으로 종료됐는데 `SSO_RESOLVED`가 없으면, 사용자에게 "10분간 로그인이 확인되지
+  않았다"고 보고하고 계속 대기할지·중단할지 확인을 받는다 (자동으로 루프를 재시작하지 않는다 —
+  체이닝은 복잡도 대비 이득이 작다고 판단해 의도적으로 생략).
+
+> **WHY**: 2026-07-09 monitoring teardown 중 `eks-addons destroy`가 SSO 토큰 만료로 실패했다.
+> 채팅 텍스트만으로는 사용자가 다른 작업 중이면 놓치기 쉽고, 그 사이 NAT Gateway·EKS
+> 클러스터 등 비용 발생 리소스가 삭제되지 않은 채 계속 청구된다. 사용자는 알림을 주로
+> Slack으로 받으며, 이미 전역 `Stop` 훅(`~/.claude/hooks/notify-slack.sh`, `~/.claude/settings.json`)이
+> 매 턴 종료 시 Slack에 메시지를 전송하도록 되어 있다 — 하지만 이는 "1회성" 알림이라 사용자가
+> 놓치면 그만이다. 이 문제의 핵심은 "로그인할 때까지 반복해서 알려야 한다"는 것인데,
+> `ScheduleWakeup`은 최소 간격이 60초이고 매 wakeup마다 실제 LLM 턴을 소비해 10초 간격
+> 반복에 부적합하다. 대신 Slack Incoming Webhook에 순수 쉘 루프로 직접 curl하면 LLM 비용
+> 없이 10초 간격 반복이 가능하고, `aws sts get-caller-identity` 성공 여부로 로그인 완료를
+> 스스로 감지해 종료하므로 "로그인 필요할 때만" 동작한다. Slack Incoming Webhook API에는
+> 알림음을 지정하는 필드가 없어(수신자 클라이언트 설정 영역) 사운드 자체는 커스텀할 수
+> 없다 — 대신 `<!channel>` 멘션과 고정 키워드(`SSO_LOGIN_REQUIRED`)를 메시지에 포함해,
+> 사용자가 Slack "My Keywords"에 이 키워드를 등록해두면 채널이 음소거여도 항상 알림이
+> 오도록 했다 (2026-07-10 실제 백그라운드 루프로 10초 간격 반복 전송 및 sentinel 파일
+> 감지 시 자동 종료를 검증 완료 — 반복 5회 후 `SSO_RESOLVED` 출력 확인).
+> `env-provision`은 실패해도 리소스가 새로 생기지 않을 뿐이지만, `env-teardown`은 실패가
+> 곧 "삭제되어야 할 리소스가 계속 과금되는 상태"로 직결되므로 이 스킬에만 이 반복 알림
+> 로직을 넣었다.
+
 ### Step 1: kubectl context 확인
 
 `{root}/eks/providers.tf`에서 `profile`을, `{root}/eks/locals.tf`에서 `cluster_name`을 Grep으로
@@ -84,29 +145,25 @@ aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profil
 
 클러스터에 연결되지 않으면(이미 삭제됐거나 최초 생성 전) Step 2~5를 건너뛰고 Step 6으로 이동한다.
 
-### Step 2: ArgoCD Application/ApplicationSet 삭제 — 재조정 경쟁 방지
+### Step 2 (비활성화 — 실행하지 않음): ArgoCD Application/ApplicationSet 삭제
 
-`argocd` 네임스페이스가 있으면(ArgoCD 설치 여부) Application/ApplicationSet 리소스를 조회한다:
+**이 단계는 실행하지 않는다.** Application/ApplicationSet은 K8s 커스텀 리소스(etcd에 저장)이므로
+Step 8에서 클러스터(컨트롤 플레인)를 destroy하면 etcd 자체가 사라지면서 자동으로 함께
+없어진다 — 별도 조치가 불필요하다. 대신 Step 11의 zone 전체 재검증(모든 ALB·Route53
+레코드를 스캔해 대응 리소스가 없는 고아를 찾아 정리)을 **반드시** 실행해 ALB/Route53
+고아 여부를 사후 확인한다 (2026-07-10 monitoring teardown에서 이 단계를 생략하고
+Step 11까지 실행해 Route53·ALB 모두 깨끗함을 확인했다). 바로 Step 3으로 진행한다.
 
-```bash
-kubectl get application -n argocd 2>/dev/null
-kubectl get applicationset -n argocd 2>/dev/null
-```
-
-둘 다 없으면 이 단계를 건너뛴다. 있으면 **ApplicationSet부터** 삭제해 자식 Application이
-다시 생성되지 못하게 막은 뒤, Application을 전부 삭제한다 (app-of-apps 패턴이어도 부모
-Application 하나만 지우면 자식은 그대로 남으므로 반드시 전체를 대상으로 한다):
+과거에 이 단계가 실행하던 절차는 참고용으로만 남겨둔다 (실행하지 않음):
 
 ```bash
-kubectl delete applicationset --all -n argocd --ignore-not-found
-kubectl delete application --all -n argocd --ignore-not-found
+# kubectl get application -n argocd 2>/dev/null
+# kubectl get applicationset -n argocd 2>/dev/null
+# kubectl delete applicationset --all -n argocd --ignore-not-found
+# kubectl delete application --all -n argocd --ignore-not-found
 ```
 
-`--all` 삭제는 기본적으로 non-cascade이므로 Application이 관리하던 실제 K8s 리소스
-(Deployment/Service/Ingress 등)는 지워지지 않는다 — ArgoCD의 관리 소유권만 해제되고,
-남은 리소스는 Step 3(Ingress) 이후 단계와 클러스터 destroy(Step 7~8)가 정리한다.
-
-> **WHY**: 2026-07-04 monitoring teardown에서 `gateway-dev` Ingress를 Step 3(당시 Step 2)
+> **WHY (이 단계가 원래 존재했던 이유, 참고용)**: 2026-07-04 monitoring teardown에서 `gateway-dev` Ingress를 Step 3(당시 Step 2)
 > 절차대로 삭제했지만, 그 Ingress는 ArgoCD Application `gateway-dev`(destination이
 > `https://kubernetes.default.svc`인 in-cluster 배포, namespace `eks-practice-dev`)가
 > 계속 소유·조정하고 있었다. `syncPolicy.automated.selfHeal=false`라 즉시 되살아나지는
@@ -321,6 +378,42 @@ NAT Gateway/EIP/private route 외의 destroy가 나타나면 즉시 중단하고
 Step 11로 넘어가기 전에 이 apply와 Step 8의 EKS destroy가 **둘 다** 완료됐는지 확인한다.
 
 ### Step 11: 완료 안내 및 잔여 비용 리소스 최종 확인
+
+**Route53 zone 전체 고아 레코드 재검증** — 완료 보고 전에 반드시 수행한다. Step 5는 "이번
+세션에서 `kubectl get ingress -A`로 조회된 Ingress"만 대상으로 하므로, 과거 세션에서 빠뜨린
+레코드나 이 프로젝트처럼 여러 서비스가 namespace로만 분리되어 한 클러스터에 배포되는 구조에서
+발생하는 잔여물은 잡아내지 못한다. zone 전체를 기계적으로 훑어 "레코드는 있는데 가리키는
+ALB가 이미 없는" 고아 상태를 찾는다:
+
+```bash
+zone_id=<Step 5에서 사용한 zone-id>
+aws route53 list-resource-record-sets --hosted-zone-id "$zone_id" --profile terraform-workload \
+  --query "ResourceRecordSets[?Type=='TXT']" --output json
+```
+
+결과에 남은 각 TXT 레코드에 대해:
+1. `Value`에 `heritage=external-dns`가 없으면 스킵한다 (사람이 만든 레코드일 수 있으므로
+   자동 삭제 대상에서 제외하고 이 레코드 이름만 사용자에게 보고).
+2. `cname-` 접두사가 없는 이름(`<hostname>`)이면, 대응하는 A 레코드의
+   `AliasTarget.DNSName`(ALB DNS 이름)을 조회한다.
+3. 그 ALB가 실제로 존재하는지 확인한다 (환경별 profile로):
+
+   ```bash
+   aws elbv2 describe-load-balancers --region ap-northeast-2 --profile <profile> \
+     --query "LoadBalancers[?DNSName=='<alb-dns>']"
+   ```
+
+4. 빈 결과(`[]`)면 — ALB는 이미 삭제됐는데 레코드만 남은 고아 상태 — Step 5와 동일한 방식
+   (A + 해당 TXT + `cname-` TXT 3개를 하나의 change-batch로) 삭제한다.
+5. ALB가 실제로 존재하면(다른 서비스·환경이 현재 사용 중인 레코드) 삭제하지 않고
+   사용자에게만 보고한다.
+
+> **WHY**: 2026-07-06 monitoring teardown에서 이번 세션의 Ingress 목록(Step 3)만 정리한 뒤
+> 완료를 보고했으나, 사용자가 재확인을 요청해 zone 전체를 훑어보니 과거 세션의
+> `eks-practice-dev/gateway-dev` Ingress가 남긴 A+TXT+cname-TXT 레코드가 대응 ALB 없이 고아로
+> 남아있었다(해당 ALB는 이미 삭제된 상태). Step 3~5는 "이번 세션에 존재했던 Ingress"만
+> 추적하는 구조적 한계가 있으므로, 완료 보고 전 zone 전체 재검증을 teardown 절차의 필수
+> 단계로 승격한다.
 
 ```bash
 aws elbv2 describe-load-balancers --region ap-northeast-2 --profile <profile>

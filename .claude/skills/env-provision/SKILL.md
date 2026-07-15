@@ -2,9 +2,10 @@
 name: env-provision
 description: >
   develop/monitoring/production 실습 환경의 비용 발생 리소스(VPC NAT Gateway, EKS 클러스터, eks-addons)를
-  올바른 순서로 생성한다. Karpenter/external-secrets CRD 순환 의존, LBC-ArgoCD 웹훅 경쟁 상태,
-  ExternalDNS cross-account role 신뢰 정책 갱신(필요한 환경만) 등 클러스터를 새로 만들 때마다
-  반복 발생하는 실패 패턴을 자동으로 감지하고 우회한다. 3개 환경 모두 실습용이므로 production도 대상이다.
+  올바른 순서로 생성한다. Karpenter/external-secrets CRD 순환 의존은 eks-addons 코드 주석이 명시한
+  2단계 apply(-target=module.eks_addons 선행)로 선제 회피하고, LBC-ArgoCD 웹훅 경쟁 상태,
+  ExternalDNS cross-account role 신뢰 정책 갱신(필요한 환경만) 등 나머지 반복 실패 패턴은
+  발생 시 감지해 재시도한다. 3개 환경 모두 실습용이므로 production도 대상이다.
 disable-model-invocation: false
 allowed-tools:
   - Bash(terraform *)
@@ -114,41 +115,46 @@ aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profil
 
 ### Step 3: eks-addons 생성
 
-**3-1. 1차 시도**
+**3-1. 선행 CRD 설치 — 항상 먼저 실행 (전체 apply를 바로 시도하지 않는다)**
+
+`{root}/eks-addons/main.tf` 상단 주석(`⚠️ 첫 배포 또는 Karpenter 재설치 시 2단계 apply 필수`)이
+이미 명시하듯, Step 2에서 클러스터를 새로 만든 직후에는 Karpenter/external-secrets CRD가
+클러스터에 없어 `kubernetes_manifest` 리소스의 plan 자체가 **항상** 실패한다
+(`hashicorp/kubernetes` provider가 plan 단계에서 클러스터 API로 CRD 스키마를 직접 조회하기
+때문에 `depends_on`으로는 막을 수 없다). 이 실패가 예정돼 있다는 것을 코드가 이미 알려주므로,
+전체 apply를 먼저 시도해 실패를 확인하는 절차를 생략하고 module 전체를 target으로 먼저
+적용한다:
+
+```bash
+cd {root}/eks-addons && terraform apply -auto-approve -target=module.eks_addons
+```
+
+> **WHY (2026-07-07 확인)**: 이전에는 3-2(전체 apply)를 먼저 시도해 매번 CRD 에러로
+> 실패를 확인한 뒤에야 `-target`으로 좁혀 재시도했다. `main.tf`의 코드 주석이 이미
+> "1단계: `terraform apply -target=module.eks_addons`"를 명시하고 있으므로, 실패가
+> 확정적인 시도를 거치지 않고 이 순서를 그대로 선행 실행한다. target 범위도 기존의
+> karpenter/external_secrets helm_release 2개만이 아니라 `module.eks_addons` 전체로
+> 넓혀, LBC/ArgoCD/external-dns/argo-rollouts 등 CRD와 무관한 나머지 애드온도 이
+> 1단계에서 함께 설치되게 한다 — 단, ArgoCD의 Ingress는 이 module 안에 포함되므로
+> 3-3의 LBC 웹훅 경쟁은 이 1단계에서도 여전히 발생할 수 있다(아래 참고).
+
+**3-2. 전체 apply**
 
 ```bash
 cd {root}/eks-addons && terraform apply -auto-approve
 ```
 
-**3-2. CRD 순환 의존 에러 감지 시**
-
-출력에 아래 패턴이 있으면 Karpenter/external-secrets CRD가 아직 클러스터에 없어
-`kubernetes_manifest` 리소스의 plan 자체가 실패한 것이다 (helm_release가 CRD를 설치하지만,
-같은 apply의 plan 단계에서 함께 검증되어 전체가 막힌다):
-
-- `no matches for kind "EC2NodeClass" in group "karpenter.k8s.aws"`
-- `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`
-
-아래로 helm_release만 먼저 적용해 CRD를 설치한다:
-
-```bash
-terraform apply -auto-approve \
-  -target='module.eks_addons.module.eks_blueprints_addons.module.karpenter.helm_release.this[0]' \
-  -target='module.eks_addons.module.eks_blueprints_addons.module.external_secrets.helm_release.this[0]'
-```
-
-이후 CRD 설치를 확인하고 (`kubectl get crd | grep -E "karpenter|external-secrets"`),
-**3-1의 전체 apply를 재실행**한다.
-
-**3-3. LBC 웹훅 경쟁 상태 감지 시**
+**3-3. LBC 웹훅 경쟁 상태 감지 시 (3-1, 3-2 어느 단계에서 발생해도 동일하게 처리)**
 
 아래 패턴이 있으면 LBC와 ArgoCD(Ingress 포함)가 병렬 생성되며 LBC 웹훅이 아직 뜨기 전에
-ArgoCD Ingress 생성이 시도된 것이다 (일시적):
+ArgoCD Ingress 생성이 시도된 것이다 (일시적 — `module.eks_addons` 안에서 병렬 생성되므로
+3-1 단계에서도 나타날 수 있다):
 
 - `no endpoints available for service "aws-load-balancer-webhook-service"`
 
 `kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로
-LBC 파드가 `Running`인지 확인 후 **3-1의 전체 apply를 재실행**한다 (최대 2회).
+LBC 파드가 `Running`인지 확인 후 **직전에 실패한 단계(3-1 또는 3-2)를 그대로 재실행**한다
+(최대 2회).
 
 **3-4. external-secrets 웹훅 미기동 감지 시**
 
@@ -160,9 +166,18 @@ LBC 파드가 `Running`인지 확인 후 **3-1의 전체 apply를 재실행**한
 
 `kubectl get pods -n external-secrets`로 3개 파드(`external-secrets`,
 `external-secrets-cert-controller`, `external-secrets-webhook`)가 모두 `Running`인지 확인
-(최대 3분 polling) 후 **3-1의 전체 apply를 재실행**한다.
+(최대 3분 polling) 후 **3-2의 전체 apply를 재실행**한다.
 
-**3-5.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
+**3-5. 그럼에도 CRD 순환 의존 에러가 나타나는 경우** (3-1이 어떤 이유로 생략됐거나 module
+구조 변경으로 target 범위가 CRD 설치를 커버하지 못하게 된 경우의 대비책):
+
+- `no matches for kind "EC2NodeClass" in group "karpenter.k8s.aws"`
+- `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`
+
+3-1을 그대로 재실행해 CRD 설치를 확인한 뒤 (`kubectl get crd | grep -E "karpenter|external-secrets"`),
+3-2를 재실행한다.
+
+**3-6.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
 
 ### Step 4: cross-account ExternalDNS 신뢰 정책 갱신 (조건부)
 
