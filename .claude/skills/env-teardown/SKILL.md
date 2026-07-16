@@ -93,9 +93,14 @@ PROFILE="<해당 root/서브디렉토리 providers.tf의 profile>"
 ENV_NAME="<환경>"
 WEBHOOK="$SLACK_WEBHOOK_URL"
 CMD_HINT="aws sso login --profile $PROFILE"
+SSO_SESSION=$(awk -v p="[profile $PROFILE]" '$0==p{f=1;next} /^\[/{f=0} f && /sso_session/{print $3}' ~/.aws/config)
+CACHE_FILE="$HOME/.aws/sso/cache/$(printf '%s' "$SSO_SESSION" | sha1sum | cut -d' ' -f1).json"
 i=0
 while true; do
-  if aws sts get-caller-identity --profile "$PROFILE" >/dev/null 2>&1; then
+  EXPIRES_AT=$(jq -r '.expiresAt // empty' "$CACHE_FILE" 2>/dev/null)
+  EXPIRES_EPOCH=$(date -u -d "$EXPIRES_AT" +%s 2>/dev/null)
+  NOW_EPOCH=$(date -u +%s)
+  if [ -n "$EXPIRES_EPOCH" ] && [ "$EXPIRES_EPOCH" -gt "$NOW_EPOCH" ]; then
     echo "SSO_RESOLVED (반복 ${i}회 후 감지)"
     break
   fi
@@ -123,16 +128,59 @@ done
 > 놓치면 그만이다. 이 문제의 핵심은 "로그인할 때까지 반복해서 알려야 한다"는 것인데,
 > `ScheduleWakeup`은 최소 간격이 60초이고 매 wakeup마다 실제 LLM 턴을 소비해 10초 간격
 > 반복에 부적합하다. 대신 Slack Incoming Webhook에 순수 쉘 루프로 직접 curl하면 LLM 비용
-> 없이 10초 간격 반복이 가능하고, `aws sts get-caller-identity` 성공 여부로 로그인 완료를
-> 스스로 감지해 종료하므로 "로그인 필요할 때만" 동작한다. Slack Incoming Webhook API에는
-> 알림음을 지정하는 필드가 없어(수신자 클라이언트 설정 영역) 사운드 자체는 커스텀할 수
-> 없다 — 대신 `<!channel>` 멘션과 고정 키워드(`SSO_LOGIN_REQUIRED`)를 메시지에 포함해,
-> 사용자가 Slack "My Keywords"에 이 키워드를 등록해두면 채널이 음소거여도 항상 알림이
-> 오도록 했다 (2026-07-10 실제 백그라운드 루프로 10초 간격 반복 전송 및 sentinel 파일
-> 감지 시 자동 종료를 검증 완료 — 반복 5회 후 `SSO_RESOLVED` 출력 확인).
+> 없이 10초 간격 반복이 가능하다. Slack Incoming Webhook API에는 알림음을 지정하는 필드가
+> 없어(수신자 클라이언트 설정 영역) 사운드 자체는 커스텀할 수 없다 — 대신 `<!channel>` 멘션과
+> 고정 키워드(`SSO_LOGIN_REQUIRED`)를 메시지에 포함해, 사용자가 Slack "My Keywords"에 이
+> 키워드를 등록해두면 채널이 음소거여도 항상 알림이 오도록 했다 (2026-07-10 실제 백그라운드
+> 루프로 10초 간격 반복 전송 및 sentinel 파일 감지 시 자동 종료를 검증 완료 — 반복 5회 후
+> `SSO_RESOLVED` 출력 확인).
 > `env-provision`은 실패해도 리소스가 새로 생기지 않을 뿐이지만, `env-teardown`은 실패가
 > 곧 "삭제되어야 할 리소스가 계속 과금되는 상태"로 직결되므로 이 스킬에만 이 반복 알림
 > 로직을 넣었다.
+>
+> **WHY (로그인 확인 방식을 `aws sts get-caller-identity`에서 로컬 캐시 파일 직접 조회로
+> 변경, 2026-07-15)**: 처음엔 매 반복마다 `aws sts get-caller-identity`로 로그인 여부를
+> 확인했다. 그런데 2026-07-15 monitoring teardown에서 `aws sso login`을 여러 번 다시
+> 해도 뒤이은 `terraform destroy`가 계속 `InvalidGrantException`으로 실패하는 현상이
+> 발생했다. 원인은 AWS SSO OIDC의 refresh token이 1회용(사용 즉시 새 토큰으로 교체되는
+> rotation) 이라는 데 있었다 — access token이 만료된 상태에서 `get-caller-identity`를
+> 호출하면 AWS CLI가 캐시된 refresh token으로 **자동 갱신을 시도하며 그 토큰을 소모**하는데,
+> 바로 그 직후 terraform(별도의 Go AWS SDK 인스턴스)이 자체적으로 refresh를 시도하면서
+> 이미 소모된(무효화된) refresh token을 읽어 갱신에 실패했다. 즉 "로그인됐는지 확인하려고
+> 10초마다 호출하던 API 자체가 terraform의 인증 갱신과 경쟁해 실패를 유발"하고 있었다.
+> `aws sso login`으로 새 세션을 받은 직후 중간에 다른 `aws` 명령 없이 바로 terraform을
+> 실행하면 정상 동작한다는 점에서 이 레이스 컨디션을 확정했다. 해결책은 로그인 확인 자체를
+> AWS API 호출 없이 하는 것이다 — `~/.aws/sso/cache/`에 sso_session 이름의 SHA1 해시를
+> 파일명으로 캐시된 토큰 JSON이 있고(`aws configure`/`aws sso login`이 기록), 그 안의
+> `expiresAt`을 현재 시각과 로컬에서만 비교하면 AWS를 전혀 호출하지 않고도 "지금 유효한
+> 세션이 있는지"를 판단할 수 있다. 이러면 알림 루프가 refresh token에 손을 대지 않으므로
+> terraform의 자체 갱신과 절대 경쟁하지 않는다.
+
+### 공통 처리: `terraform apply`/`destroy` 출력을 파이프로 볼 때는 반드시 `pipefail`
+
+이 스킬의 모든 `terraform apply`/`destroy` 명령을 실제로 실행할 때(백그라운드 실행 포함)
+출력이 길어 `| tail -N`으로 줄여서 보는 경우가 많다. **`pipefail` 없이 파이프로 연결하면
+파이프라인 전체의 종료 코드가 마지막 명령(`tail`)의 종료 코드가 되어, `terraform`이 실제로
+실패해도 `tail`은 항상 0을 반환한다** — 그 결과 백그라운드 작업 완료 알림에 "completed
+(exit code 0)"로 잘못 보고되어 실패가 감춰진다. 반드시 아래 중 하나를 지킨다:
+
+```bash
+set -o pipefail && terraform destroy -auto-approve -no-color 2>&1 | tail -60
+```
+
+또는 파이프 없이 전체 출력을 받은 뒤 `Apply complete!`/`Destroy complete!`/`Error` 문자열로
+직접 성공 여부를 판단한다. 어느 쪽이든, **알림에 찍힌 종료 코드만 믿지 말고 출력 내용을
+반드시 눈으로 확인한 뒤에만 다음 Step으로 진행한다.** Step 8(EKS destroy)과 Step 10(NAT
+Gateway 비활성화)처럼 병렬로 실행하는 명령은 특히 취약하다 — 하나가 조용히 실패해도 다른
+하나의 "완료" 알림만 보고 둘 다 끝났다고 오판하기 쉽다.
+
+> **WHY (2026-07-16, `/env-provision`에서 실제 발생 후 두 스킬에 동일 반영)**: monitoring
+> provision 중 VPC와 EKS apply를 SSO 만료 시점에 동시에 실행했다. EKS apply는 실패 직후
+> 출력을 직접 확인해 재로그인 절차로 넘어갔지만, VPC apply는 `| tail -30`으로 실행한 뒤
+> 백그라운드 알림의 "completed (exit code 0)"만 보고 정상 종료로 오판했다 — 실제로는 VPC
+> apply도 같은 SSO 만료로 실패해 NAT Gateway가 전혀 생성되지 않았다. 사용자가 직접
+> 지적하고서야 `.output` 파일을 열어 에러를 발견했다. teardown도 Step 8/10을 병렬로 돌리는
+> 동일 구조라 같은 함정이 있어 함께 반영한다.
 
 ### Step 1: kubectl context 확인
 

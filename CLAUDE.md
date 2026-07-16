@@ -50,7 +50,7 @@
 - **Terraform 코드 작성 시**: `terraform` MCP로 provider/모듈 버전 및 리소스 스키마를 확인한 후 작성한다.
 - **AWS 인프라 구축 시**: `aws-knowledge-mcp-server` MCP로 서비스 문서 및 베스트 프랙티스를 확인한다.
 - **비용 조회 시**: `awslabs.billing-cost-management-mcp-server` MCP로 실제 청구 데이터, 이상 감지, 최적화 추천을 조회한다.
-- 상세 조회 순서 및 규칙: `@docs/terraform-principles.md` 참조
+- 상세 조회 순서 및 규칙: `docs/terraform-principles.md` 참조
 
 ---
 
@@ -103,14 +103,14 @@
 
 ## Terraform 작성 지시사항
 
-상세 원칙 전체: `@docs/terraform-principles.md` 참조
+상세 원칙 전체: `docs/terraform-principles.md` 참조
 **핵심 철학**: 초기에 올바른 구조를 갖춘다. 설정 비용이 낮고 장기 효과가 높다면 현재 규모와 관계없이 확장 가능한 구조를 기본값으로 선택한다.
 
 핵심 요약:
 - 환경별 설정값은 `locals.tf`에 집중 관리. `terraform.tfvars` 사용 금지
 - 태그: `environment` / `managed_by` 2개만, 소문자
-- 태그 거버넌스: `@docs/tag-governance.md` 참조 (신규 root module 작성 시 3계층 구성 필수)
-- 리소스 주소 안정성: `for_each` 기반 관리 필수, `count` 및 인라인 블록 금지. 공식 모듈 사용 시 `for_each` 파라미터 제공 여부 사전 확인 후 모듈 파라미터 또는 별도 리소스 결정 (`@docs/terraform-principles.md` → 리소스 주소 안정성 섹션)
+- 태그 거버넌스: `docs/tag-governance.md` 참조 (신규 root module 작성 시 3계층 구성 필수)
+- 리소스 주소 안정성: `for_each` 기반 관리 필수, `count` 및 인라인 블록 금지. 공식 모듈 사용 시 `for_each` 파라미터 제공 여부 사전 확인 후 모듈 파라미터 또는 별도 리소스 결정 (`docs/terraform-principles.md` → 리소스 주소 안정성 섹션)
 - `depends_on` 최소화, `moved` 블록으로 state 이전
 - 삭제 불가 리소스: `lifecycle { prevent_destroy = true }`
 - 공식 모듈 버전: `~> X.Y.Z` 형식 (패치만 허용)
@@ -164,14 +164,14 @@
 
 ## 프로젝트 컨텍스트
 
-- **폴더 구조 상세**: `@docs/project-structure.md` 참조
-- **Git 컨벤션**: `@docs/git-convention.md` 참조
-- **Terraform 원칙**: `@docs/terraform-principles.md` 참조
-- **태그 거버넌스**: `@docs/tag-governance.md` 참조
-- **모듈 CLAUDE.md 작성 기준**: `@docs/module-claude-template.md` 참조
-- **EKS 애드온 전략**: `@docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴)
-- **환경 전체 삭제 절차**: `@docs/environment-teardown.md` 참조 (LBC ALB orphan 방지 순서, 수동 정리)
-- **K8s 운영 팁**: `@docs/k8s-operator-tips.md` 참조 (RBAC 확인 명령어, krew 설치/트러블슈팅 등 누적 기록)
+- **폴더 구조 상세**: `docs/project-structure.md` 참조
+- **Git 컨벤션**: `docs/git-convention.md` 참조
+- **Terraform 원칙**: `docs/terraform-principles.md` 참조
+- **태그 거버넌스**: `docs/tag-governance.md` 참조
+- **모듈 CLAUDE.md 작성 기준**: `docs/module-claude-template.md` 참조
+- **EKS 애드온 전략**: `docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴)
+- **환경 전체 삭제 절차**: `docs/environment-teardown.md` 참조 (LBC ALB orphan 방지 순서, 수동 정리)
+- **K8s 운영 팁**: `docs/k8s-operator-tips.md` 참조 (RBAC 확인 명령어, krew 설치/트러블슈팅 등 누적 기록)
 - **Git 저장소**: https://github.com/hul0810/eks-terraform-practice-with-claude
 - **GitOps 매니페스트 저장소**: https://github.com/hul0810/eks-practice-devops-manifest
   (Phase 5 — ArgoCD가 참조할 EKS 애드온 Helm values/ApplicationSet 매니페스트 관리)

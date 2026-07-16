@@ -45,7 +45,7 @@ skills:
 
 ### 구조
 - 환경 설정값은 `locals.tf`에 집중 관리하여 단일 진입점 유지
-- **리소스 주소 안정성**: `for_each`-based stable key 관리 필수. 인라인 블록 및 `count` 기반 패턴 금지. 공식 모듈이 `for_each` 파라미터(`map(object(...))` 타입)를 제공하면 모듈 파라미터 우선 사용 (외부 리소스 주입 금지). 상세: `@docs/terraform-principles.md` → 리소스 주소 안정성 섹션
+- **리소스 주소 안정성**: `for_each`-based stable key 관리 필수. 인라인 블록 및 `count` 기반 패턴 금지. 공식 모듈이 `for_each` 파라미터(`map(object(...))` 타입)를 제공하면 모듈 파라미터 우선 사용 (외부 리소스 주입 금지). 상세: `docs/terraform-principles.md` → 리소스 주소 안정성 섹션
 - 모듈 인터페이스는 호출자가 필요한 것만 노출하도록 최소화
 - 커스텀 모듈은 반드시 `modules/{name}/{version}/` 디렉토리 구조로 작성 (예: `modules/vpc/1.0.0/`)
 
@@ -65,7 +65,7 @@ skills:
 - WHY가 불명확한 경우에만 한국어 주석 작성 (WHAT 주석 금지)
 
 ### 비용 최적화 설계
-- 신규 리소스 작성 전 `@docs/terraform-principles.md`의 **비용 최적화 설계 기본값** 섹션을 반드시 참조한다.
+- 신규 리소스 작성 전 `docs/terraform-principles.md`의 **비용 최적화 설계 기본값** 섹션을 반드시 참조한다.
 - 기본값에서 이탈하는 경우(예: develop에 NAT Gateway 2개, Multi-AZ RDS) 코드 주석 또는 사용자에게 명시적 근거를 제시한다.
 - CloudWatch Log Group 생성 시 `retention_in_days` 누락은 코드 오류와 동일하게 취급한다.
 - EKS 클러스터 버전 작성 시 해당 버전의 Standard Support 종료일을 확인하고 Extended Support 진입 여부를 명시한다.

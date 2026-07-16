@@ -68,6 +68,31 @@ allowed-tools:
 
 이후 단계의 `{root}`는 이 값을 가리킨다.
 
+### 공통 처리: `terraform apply`/`destroy` 출력을 파이프로 볼 때는 반드시 `pipefail`
+
+이 스킬의 모든 `terraform apply`/`destroy` 명령을 실제로 실행할 때(백그라운드 실행 포함)
+출력이 길어 `| tail -N`으로 줄여서 보는 경우가 많다. **`pipefail` 없이 파이프로 연결하면
+파이프라인 전체의 종료 코드가 마지막 명령(`tail`)의 종료 코드가 되어, `terraform`이 실제로
+실패해도 `tail`은 항상 0을 반환한다** — 그 결과 백그라운드 작업 완료 알림에 "completed
+(exit code 0)"로 잘못 보고되어 실패가 감춰진다. 반드시 아래 중 하나를 지킨다:
+
+```bash
+set -o pipefail && terraform apply -auto-approve -no-color 2>&1 | tail -60
+```
+
+또는 파이프 없이 전체 출력을 받은 뒤 `Apply complete!`/`Error` 문자열로 직접 성공 여부를
+판단한다. 어느 쪽이든, **알림에 찍힌 종료 코드만 믿지 말고 출력 내용(마지막 줄이
+`Apply complete!`/`Destroy complete!`인지, 아니면 `Error`가 있는지)을 반드시 눈으로
+확인한 뒤에만 다음 Step으로 진행한다.**
+
+> **WHY (2026-07-16 확인)**: monitoring provision 중 VPC와 EKS apply를 SSO 만료 시점에
+> 동시에 실행했다. EKS apply는 실패 직후 출력을 직접 확인해 SSO 재로그인 절차로 넘어갔지만,
+> VPC apply는 `| tail -30`으로 실행한 뒤 백그라운드 알림의 "completed (exit code 0)"만
+> 보고 정상 종료로 오판했다 — 실제로는 VPC apply도 같은 SSO 만료로 실패해 NAT Gateway가
+> 전혀 생성되지 않은 상태였다. 사용자가 "NGW 생성 안 되어있는데 확인해라"라고 지적하고서야
+> `.output` 파일을 직접 열어 `No valid credential sources found` 에러를 발견했다. 이후
+> 로그인 후 재시도로 정상 생성됨을 확인했다.
+
 ### Step 1: VPC NAT Gateway 활성화 — EKS와 병렬 시작
 
 `{root}/vpc/locals.tf`를 Read하여 `enable_nat_gateway` 현재 값을 확인한다.

@@ -63,7 +63,7 @@ skills:
 - `tag_policy_compliance = "error"` 설정 여부 (키 부재 차단)
 - `validate_tags` precondition 존재 여부 (값 유효성 차단)
 - 허용값이 `global/tag-policy` remote state에서 읽히는지 (단일 소스 원칙)
-- 신규 root module이 `@docs/tag-governance.md` 체크리스트를 충족하는지
+- 신규 root module이 `docs/tag-governance.md` 체크리스트를 충족하는지
 
 ## EKS 특화 검토 항목
 

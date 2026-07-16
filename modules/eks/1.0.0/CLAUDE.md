@@ -4,7 +4,7 @@
 
 현재 고정된 `terraform-aws-modules/eks/aws` 버전 자체는 `README.md`(terraform-docs 자동 생성)의 `Modules` 섹션에서 확인한다 — `main.tf`의 `version` 제약에서 직접 추출되므로 여기 별도로 적으면 drift만 생긴다.
 
-`~> X.Y.Z`(패치만 허용)로 고정하는 이유는 `@docs/terraform-principles.md`(버전 관리)에 공통 기술되어 있다. 이 모듈은 마이너 업그레이드(예: v21.22.0 → v21.23.0)를 자동 추적하지 않고 CHANGELOG 확인 후 의도적으로 수동 변경한다 — `terraform-aws-modules/eks/aws`는 마이너 버전에서도 `cluster_name`→`name` 같은 인터페이스 변경이 있었던 전례(아래 "v20 → v21 주요 파라미터 변경 사항" 참조)가 있어 자동 업그레이드가 위험하기 때문이다.
+`~> X.Y.Z`(패치만 허용)로 고정하는 이유는 `docs/terraform-principles.md`(버전 관리)에 공통 기술되어 있다. 이 모듈은 마이너 업그레이드(예: v21.22.0 → v21.23.0)를 자동 추적하지 않고 CHANGELOG 확인 후 의도적으로 수동 변경한다 — `terraform-aws-modules/eks/aws`는 마이너 버전에서도 `cluster_name`→`name` 같은 인터페이스 변경이 있었던 전례(아래 "v20 → v21 주요 파라미터 변경 사항" 참조)가 있어 자동 업그레이드가 위험하기 때문이다.
 
 ---
 

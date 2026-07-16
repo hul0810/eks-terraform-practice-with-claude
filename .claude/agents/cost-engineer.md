@@ -97,7 +97,7 @@ terraform-writer가 신규 리소스 설계 시 호출한다.
 ### 설계 비용 추정 (모드 B)
 
 1. 요청된 리소스 타입과 스펙으로 AWS 공개 요금표 기준 월 비용 계산
-2. `@docs/terraform-principles.md`의 비용 최적화 기본값과 대조
+2. `docs/terraform-principles.md`의 비용 최적화 기본값과 대조
 3. 기본값 대비 비용 절감 대안 제시 (Spot, gp3, 환경별 차등 등)
 4. 권장 Terraform 설정값 구체적으로 제안
 

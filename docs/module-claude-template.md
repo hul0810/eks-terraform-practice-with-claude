@@ -1,14 +1,14 @@
 # {모듈명} 모듈 설계 가이드
 
 > 새 모듈 추가 시 이 파일을 복사하여 `modules/{name}/{version}/CLAUDE.md`로 저장한다.
-> 공통 Terraform 원칙(`@docs/terraform-principles.md`)은 여기서 반복하지 않는다.
+> 공통 Terraform 원칙(`docs/terraform-principles.md`)은 여기서 반복하지 않는다.
 > 이 모듈에서만 적용되는 특이사항과 설계 결정만 기록한다.
 
 ---
 
 ## 작성 범위 — README.md(자동 생성)와 겹치지 않게
 
-같은 디렉토리의 `README.md`는 `terraform-docs`가 코드에서 자동 생성한다 (변수/출력값의 타입·기본값·필수 여부·설명 = WHAT). **이 CLAUDE.md에 같은 정보를 다시 적지 않는다** — 정보별 단일 진실 공급원 원칙(상세: `@docs/terraform-principles.md` → 모듈 문서화)에 따라 아래처럼 나눠 적는다.
+같은 디렉토리의 `README.md`는 `terraform-docs`가 코드에서 자동 생성한다 (변수/출력값의 타입·기본값·필수 여부·설명 = WHAT). **이 CLAUDE.md에 같은 정보를 다시 적지 않는다** — 정보별 단일 진실 공급원 원칙(상세: `docs/terraform-principles.md` → 모듈 문서화)에 따라 아래처럼 나눠 적는다.
 
 - **변수 하나로 설명되는 WHY** → 이 파일이 아니라 `variable`/`output`의 `description`에 직접 쓴다. terraform-docs가 README에 그대로 노출한다.
   - 예: `variable "project"`의 description에 "cluster_name 대신 사용하는 이유: cluster_name은 길어지면 IAM role name_prefix 38자 한도를 초과하기 때문"까지 포함해서 작성 → README Inputs 표에 자동 노출됨

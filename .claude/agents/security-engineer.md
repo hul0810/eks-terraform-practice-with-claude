@@ -64,7 +64,7 @@ skills:
 - [ ] `data.tf`에 `terraform_remote_state.tag_policy` 참조가 포함되어 있는가
 - [ ] `locals.tf`의 `common_tags`가 `environment` / `managed_by` 두 키만 포함하는가
 - [ ] 태그 값이 허용값(`develop`/`production`/`common`, `terraform`) 내에 있는가
-> 상세 기준: `@docs/tag-governance.md`
+> 상세 기준: `docs/tag-governance.md`
 
 ### 모니터링
 - [ ] CloudTrail이 활성화되어 있는가
