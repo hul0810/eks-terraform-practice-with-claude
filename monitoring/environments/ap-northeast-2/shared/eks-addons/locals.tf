@@ -15,6 +15,8 @@ locals {
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
   vpc_id            = data.aws_eks_cluster.this.vpc_config[0].vpc_id
+  # GitOps Bridge Hub(Phase 6-1): ArgoCD cluster Secret의 config.tlsClientConfig.caData에 필요
+  cluster_certificate_authority_data = data.terraform_remote_state.eks.outputs.cluster_certificate_authority_data
 
   # IRSA Trust Policy 조건 키(sub/aud)에 필요한 OIDC issuer 호스트.
   # blueprints가 내부적으로 처리하는 IRSA와 달리 argocd-image-updater는 blueprints 밖에서
@@ -70,9 +72,13 @@ locals {
     # pyhtest.com zone ARN — workload 계정 소유, Terraform 외부 관리 리소스 (하드코딩)
     # ExternalDNS IRSA가 external_dns_cross_account_role_arn을 assume하여 이 zone에 접근한다
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
-    enable_metrics_server          = true
-    enable_karpenter               = true
-    enable_external_secrets        = true
+    # GitOps Bridge(Phase 6-2)로 이관 완료 — ArgoCD Application(devops-manifest
+    # charts/eks-addons/metrics-server)이 관리한다. Terraform state에서는 이미
+    # `terraform state rm`으로 분리했고(실제 리소스는 유지, 무중단 인수 완료), 이 플래그를
+    # false로 유지해야 다음 plan이 "없어졌으니 재생성"으로 오판하지 않는다.
+    enable_metrics_server   = false
+    enable_karpenter        = true
+    enable_external_secrets = true
     # ArgoCD GitHub App 인증 정보(SSM SecureString)만 읽도록 스코프 — 계정 내 모든 파라미터
     # 와일드카드(blueprints 기본값) 대신 이 prefix로 제한한다.
     # argocd-image-updater/* : Image Updater가 이미지 태그 갱신을 커밋할 때 쓰는 GitHub App

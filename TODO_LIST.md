@@ -15,7 +15,7 @@
 | 태그 | 달성 단계 | 설명 |
 |------|----------|------|
 | `foundation/single-account-eks` | 1단계(Phase 1~5) 완료 시 | 단일 계정, dev/prd 2클러스터, GitOps·Observability 포함 기초 구성 |
-| `enterprise/hub-spoke-eks` | 2단계(Phase 6~9) 완료 시 | 2계정(intra/workload), VPC Peering(수동 관리), Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
+| `enterprise/hub-spoke-eks` | 2단계(Phase 6~9) 완료 시 | 2계정(monitoring/workload), VPC Peering(수동 관리), Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
 
 ---
 
@@ -340,13 +340,18 @@
 > 모듈 source 경로: `../../../../../modules/{name}/1.0.0` (루트까지 5단계)
 > **LGTM 스택은 이 단계에서 구성하지 않는다 — Phase 6 GitOps에서 배포**
 
-> **참고**: `monitoring/`은 Phase 7(2계정 정식 분리)보다 먼저 별도 AWS 계정으로
-> 구축되어 있다 (`terraform-monitoring` profile, 계정 ID는 `docs/network-design.md`
-> 참조). 아래 "단일 계정" 서술은 이 사실과 어긋나며, Phase 7 설계 시 반영해야 한다.
+> **참고 (2026-07-17 결정)**: 당초 계획은 공유 서비스(ArgoCD Hub·중앙 Observability 등)를
+> 별도의 Intra 계정에 두는 것이었으나, 계정을 추가로 늘리지 않고 이미 존재하는 `monitoring`
+> 계정(`terraform-monitoring` profile, 계정 ID는 `docs/network-design.md` 참조)이 그 역할을
+> 전부 흡수하기로 했다. 즉 이 프로젝트는 **workload 계정 + monitoring 계정, 2계정 구조가
+> 이미 완성된 상태**다. Phase 7은 "신규 계정 생성"이 아니라 이 2계정에 AWS Organizations
+> 거버넌스 계층(OU·SCP·IAM Identity Center)을 얹는 작업으로 범위가 바뀐다 — 아래 Phase 6~9의
+> "Intra 계정" 서술은 전부 "monitoring 계정"으로 대체한다.
 
 - [x] `global/tag-policy/main.tf` — "monitoring" 환경 허용값 추가
 - [x] `monitoring/environments/ap-northeast-2/shared/vpc/` 구성
-  - [x] CIDR: 10.12.0.0/16 (Phase 7에서 Intra 계정으로 이전하더라도 동일 CIDR 유지 예정, 재설계 불필요)
+  - [x] CIDR: 10.12.0.0/16 (Intra 계정 신규 생성 계획 취소 — monitoring 계정이 공유 서비스
+    역할을 영구적으로 흡수하므로 이 VPC는 이전 없이 그대로 유지된다)
   - [ ] ~~`vpc_peering_create`: dev/prd VPC Peering 요청자 생성~~ (취소 — 5-1 참조, AWS CLI 수동 관리로 전환)
 - [x] `monitoring/environments/ap-northeast-2/shared/eks/` 구성
   - [x] `cluster_name = "eks-practice-mon"`, `kubernetes_version = "1.34"`, cert-manager Bootstrap 포함
@@ -381,30 +386,54 @@
 ## 2단계: 엔터프라이즈 전환 (멀티 계정, 중앙 집중, 고가용성)
 
 > **목표**: 1단계 기초 구성을 실무 엔터프라이즈 수준으로 개선한다.
-> 2계정(Intra/Workload) 격리, Hub-Spoke GitOps·Observability, 보안·정책 거버넌스를 단계적으로 적용한다.
+> 2계정(monitoring/workload) 격리, Hub-Spoke GitOps·Observability, 보안·정책 거버넌스를 단계적으로 적용한다.
 >
 > **의존성 순서** (반드시 이 순서로 진행):
 > ```
-> Phase 6 (ArgoCD Hub GitOps) → Phase 7 (Organizations 2계정) → Phase 8 (중앙 Observability)
->                                                              ↘ Phase 9 (보안·거버넌스, Phase 7 직후 병렬 가능)
+> Phase 6 (ArgoCD Hub GitOps) → Phase 7 (Organizations 거버넌스) → Phase 8 (중앙 Observability)
+>                                                                ↘ Phase 9 (보안·거버넌스, Phase 7 직후 병렬 가능)
 > ```
 >
 > **네트워크 토폴로지 결정**: 계정 간 연결에 Transit Gateway를 도입하지 않는다.
 > TGW 어태치먼트 비용(VPC당 ~$36/월, 3 VPC 기준 ~$108/월)이 이 로드맵에서 가장 큰
-> 고정비 증가 항목이라 비용 문제로 취소했다. Intra↔Workload 연결은 Phase 5에서
+> 고정비 증가 항목이라 비용 문제로 취소했다. monitoring↔Workload 연결은 Phase 5에서
 > 이미 구축한 VPC Peering(AWS CLI 수동 관리)을 계속 사용한다 — 절차·이유는
 > `docs/network-design.md` 참조.
 >
-> **비용 경고**: Phase 8(중앙 Observability)부터 Intra EKS 클러스터 컨트롤 플레인
-> $73/월 + 노드 비용이 추가된다.
+> **비용 경고**: Phase 8(중앙 Observability)의 워크로드(VictoriaMetrics·Grafana·Loki)는
+> monitoring 계정의 기존 EKS 클러스터(`eks-practice-mon`)에 얹히므로 컨트롤 플레인 비용이
+> 신규로 추가되지 않는다 — 클러스터 자체가 이미 상시 운영 중이기 때문이다. 노드 비용만
+> 워크로드 증가에 비례해 늘어난다(Karpenter Spot으로 절감).
 > **학습 세션 중에만 `terraform apply` 하고 종료 시 `terraform destroy`하는 운영 패턴을 기본으로 한다.**
 
 ---
 
-### Phase 6. Hub-and-Spoke ArgoCD (중앙 GitOps)
+### Phase 6. Hub-and-Spoke ArgoCD + GitOps Bridge (중앙 GitOps)
 
-> **목표**: dev/prd에 개별 설치된 ArgoCD를 제거하고 단일 ArgoCD Hub를 두어 spoke로 원격 관리한다.
-> **단일 계정에서 먼저 패턴을 검증**하고 Phase 7 완료 후 Intra 계정 클러스터로 이전한다.
+> **목표**: dev/prd에 개별 설치된 ArgoCD를 제거하고, **monitoring 계정의 기존 EKS 클러스터
+> (`eks-practice-mon`)에 이미 설치된 ArgoCD**를 Hub로 삼아 spoke(dev/prd)를 원격 관리한다.
+> 별도 Hub 전용 클러스터를 새로 만들지 않는다 — monitoring이 이미 그 역할이다(위 "참고" 박스 참조).
+>
+> **GitOps Bridge 패턴 채택** (공식 참조: [gitops-bridge-dev/gitops-bridge](https://github.com/gitops-bridge-dev/gitops-bridge),
+> [terraform-helm-gitops-bridge](https://github.com/gitops-bridge-dev/terraform-helm-gitops-bridge)):
+> 애드온(LBC, Karpenter, ExternalDNS 등)은 클러스터 밖 AWS 리소스(IAM Role 등)에 의존하는데,
+> 그 IAM Role ARN 같은 메타데이터는 Terraform이 만든 결과물이지만 Helm chart 설치 자체는
+> GitOps(ArgoCD)가 한다. 이 둘을 잇는 다리가 **ArgoCD `cluster` Secret**이다 — Terraform이
+> IAM Role만 만든 뒤 그 ARN을 이 Secret의 annotation에 적어두면, ArgoCD ApplicationSet의
+> `cluster generator`가 그 Secret을 읽어 각 애드온 Helm values(예:
+> `serviceAccount.annotations.eks\.amazonaws\.com/role-arn`)에 자동 주입한다.
+>
+> **ArgoCD 자신은 예외적으로 계속 Terraform 관리**: GitOps Bridge/Hub-Spoke 패턴 자체가
+> ArgoCD를 전제로 동작하므로, ArgoCD 설치 자체를 ArgoCD로 관리할 수는 없다(부트스트랩 역설).
+> monitoring 기준 실제 구현은 `modules/eks-addons/2.0.0`의 전용 인스턴스
+> `eks_blueprints_addons_argocd`다(6-2/6-3 참고) — develop/production은 아직 `1.0.0`의
+> `enable_argocd` 경로 그대로다.
+>
+> **점진적 진행 원칙**: 아래 체크리스트는 **한 번에 몰아서 하지 않고, 항목 하나씩 순서대로
+> 진행하며 각 단계에서 실제로 GitOps Bridge가 어떻게 동작하는지 확인**한다. 특히 IAM
+> 메타데이터 주입(3번)은 애드온마다 조건이 다를 수 있어(Pod Identity vs IRSA, blueprints
+> `enable_*`가 IAM/Helm을 함께 묶어서 만드는지 등) 애드온 1개를 먼저 끝까지 검증한 뒤에만
+> 다음 애드온으로 넘어간다.
 >
 > **왜 중앙 집중인가**:
 > - **운영 표면 1/N 감소**: ArgoCD를 n개 클러스터에 개별 운영 vs Hub 1개 운영. 업그레이드·RBAC·백업이 Hub 한 곳으로 집약.
@@ -414,24 +443,55 @@
 >
 > **SPOF 검토**: ArgoCD Hub 장애 시 이미 배포된 워크로드는 정상 동작 (ArgoCD는 reconciler이지 데이터 플레인이 아님).
 >
-> **비용 영향**: Hub 클러스터 컨트롤 플레인 $73/월 + 소형 노드 ~$30/월 (신규). dev/prd ArgoCD 워크로드 제거로 일부 상쇄.
-> Phase 8(중앙 Observability)과 Intra 클러스터를 공유하므로 추가 컨트롤 플레인 비용은 Phase 8에서 분담.
+> **비용 영향**: 신규 클러스터가 없으므로 컨트롤 플레인 추가 비용 없음(monitoring 클러스터는
+> 이미 상시 운영 중). dev/prd 개별 ArgoCD 워크로드 제거로 그쪽 노드 여유가 오히려 늘어난다.
 >
-> **전제 조건**: Phase 4-1 완료 (ArgoCD 설치됨). 단일 계정 구성 가능 — Phase 7 완료 후 Intra 계정 클러스터로 이전.
+> **전제 조건**: Phase 4-1 완료(ArgoCD 설치됨), Phase 5-3 완료(monitoring 클러스터 존재).
 
-- [ ] Hub 클러스터 구성 (`environments/hub/ap-northeast-2/shared/eks/`) — 기존 `modules/eks/1.0.0` 재사용
-- [ ] Hub ArgoCD 설치 (`argocd_ha_enabled = true`) — `modules/eks-addons/1.0.0` 재사용
-- [ ] blueprints 애드온 GitOps 전환: `aws-ia/eks-blueprints-addons` 블록에 `create_kubernetes_resources = false` 추가
-  - Terraform: IAM Role, SQS, EventBridge만 유지 / Helm 설치는 ArgoCD 위임
-- [ ] spoke 클러스터 등록: ArgoCD cluster secret + IAM
-  - [ ] dev/prd EKS access entry에 Hub의 ArgoCD IAM Role 등록
-  - [ ] `aws_eks_access_entry` 패턴 확장 (기존 dev/prd의 `access_entries` 블록 참조)
+**6-1. GitOps Bridge 개념 실습 (monitoring 자기 자신 대상, 위험 낮음) — 완료 (2026-07-17)**
+- [x] ArgoCD `cluster` Secret 구조 이해
+- [x] monitoring 클러스터 자기 자신을 가리키는 `cluster` Secret을 Terraform으로 생성,
+      ArgoCD가 인식하는지 확인
+- [x] `argocd-application-controller`에 IRSA + EKS Access Entry + 읽기 전용 ClusterRole 구성
+      (`gitops-bridge-irsa.tf`)
+- [x] 테스트 Application(devops-manifest 저장소, `gitops-bridge-test`)으로 실제 배포 검증 —
+      읽기 성공, 쓰기 차단 확인(least-privilege 정상 동작). 이 Application은 6-2 이후에도
+      계속 재사용한다.
+
+**6-2. 애드온 1개 파일럿 전환 — 상태 없고 IAM 불필요한 것부터 (metrics-server) — 완료 (2026-07-17)**
+- [x] metrics-server를 Terraform Helm 관리에서 ArgoCD Application(devops-manifest
+      `charts/eks-addons/metrics-server`)으로 무중단 이관 (destination: `in-cluster`)
+- [x] `modules/eks-addons/2.0.0`을 신설해 ArgoCD 전용(`eks_blueprints_addons_argocd`)과 나머지
+      (`eks_blueprints_addons`) 모듈 인스턴스로 분리 — GitOps Bridge 최종 전환
+      (`create_kubernetes_resources`) 구조 확보. `1.0.0`은 원본 그대로 유지해 develop/production에
+      영향 없음(monitoring만 `2.0.0` 참조로 전환)
+
+**6-3. IAM이 필요한 애드온 전환 — 진짜 브릿지 실습 (aws-load-balancer-controller) — 완료 (2026-07-17)**
+- [x] LBC의 IAM Role/Policy는 Terraform 유지, Helm release만 ArgoCD Application(devops-manifest
+      `charts/eks-addons/aws-load-balancer-controller`)으로 무중단 이관 (destination: `in-cluster`)
+- [x] `modules/eks-addons/2.0.0`에 `create_kubernetes_resources=false` 고정된
+      `eks_blueprints_addons_gitops` 인스턴스 신설 — IAM은 유지·Helm만 이관된 addon 전용,
+      6-4 이후 addon들도 재사용
+- [x] Helm chart의 webhook 인증서 비결정성 문제 대응 패턴 확립 — `ignoreDifferences` +
+      `syncPolicy.syncOptions: [RespectIgnoreDifferences=true]` + 배열 전체 커버용
+      `jqPathExpressions` (`temp/gitops-migration-lbc.md`, `temp/gitops-bridge-terraform-notes.md`)
+
+**6-4. 나머지 monitoring 애드온 순차 전환**
+- [ ] Karpenter, ExternalDNS, External Secrets 등 나머지 애드온을 6-3 패턴으로 하나씩 전환
+      (전부 한 커밋/한 세션에 몰아하지 않는다 — 애드온별로 검증 후 다음으로)
+
+**6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록**
+- [ ] dev/prd EKS access entry에 Hub(monitoring) ArgoCD의 IAM Role 등록
+      (`aws_eks_access_entry` 패턴 확장 — 기존 dev/prd `access_entries` 블록 참조)
+- [ ] dev/prd 각각을 가리키는 `cluster` Secret을 monitoring의 ArgoCD 네임스페이스에 생성
 - [ ] dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 4-1 개별 설치 롤백)
 - [ ] Hub ArgoCD에 ApplicationSet `cluster generator` 구성 — spoke 라벨로 dev/prd 자동 타겟팅
-- [ ] `eks-practice-devops-manifest` repo ApplicationSet 작성
+
+**6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
+- [ ] `eks-practice-devops-manifest` repo에 ApplicationSet 작성
   - 저장소: https://github.com/hul0810/eks-practice-devops-manifest
   - 역할: 애드온 Helm values + MSA 애플리케이션 배포 매니페스트 관리
-- [ ] App-of-Apps 또는 ApplicationSet으로 LBC/Karpenter/kube-prometheus-stack을 spoke에 원격 배포
+- [ ] App-of-Apps 또는 ApplicationSet으로 dev/prd 애드온 전체를 6-1~6-4 패턴대로 원격 배포
 - [ ] MSA 애플리케이션(`eks-practice-application-with-claude`) ArgoCD Application 등록
   - 저장소: https://github.com/hul0810/eks-practice-application-with-claude
   - dev 클러스터 배포 → 정상 동작 확인
@@ -441,47 +501,49 @@
 
 ---
 
-### Phase 7. AWS Organizations + 2계정 구조 (Intra / Workload)
+### Phase 7. AWS Organizations 거버넌스 (monitoring / workload 기존 2계정 대상)
 
-> **목표**: 단일 계정을 Intra(공유 서비스) + Workload(dev/prd) 2계정으로 분리하고,
-> SCP 기본 가드레일, IAM Identity Center(SSO), 중앙 로깅의 토대를 마련한다.
+> **목표**: 이미 물리적으로 분리되어 있는 monitoring(공유 서비스) / workload(dev/prd) 2계정을
+> AWS Organizations 아래로 묶고, SCP 기본 가드레일·IAM Identity Center(SSO)·중앙 로깅의
+> 토대를 마련한다. **신규 계정을 만드는 단계가 아니다** — 당초 계획했던 별도 Intra 계정 신설은
+> 취소됐고(위 "참고" 박스 참조), monitoring 계정이 그 역할을 이미 수행 중이므로 이 Phase는
+> "이미 있는 2계정에 거버넌스 계층을 얹는" 작업으로 범위가 좁아졌다.
 >
-> **계정 구조**:
-> - **Intra 계정** (신규): ArgoCD Hub, 중앙 Observability. 공유 서비스 전담.
-> - **Workload 계정** (현재 계정 유지): dev + prd EKS 클러스터. 애플리케이션 워크로드 전담.
+> **계정 구조 (이미 완성됨)**:
+> - **monitoring 계정** (기존): ArgoCD Hub, LGTM 스택 등 공유 서비스 전담.
+> - **workload 계정** (기존): dev + prd EKS 클러스터. 애플리케이션 워크로드 전담.
 >
 > *(실무 표준은 dev/prd를 별도 계정으로 추가 분리하지만, 비용·복잡도 절감을 위해 2계정으로 단순화)*
 >
-> **왜 계정을 분리하는가**:
-> - **격리(Blast Radius)**: Intra 서비스(ArgoCD, Grafana)와 워크로드 EKS를 계정 경계로 격리.
-> - **권한 경계 명확화**: cross-account assume을 명시적으로 허용한 주체만 각 계정에 접근 가능.
-> - **비용 가시성**: 공유 서비스 비용 vs 워크로드 비용을 계정별로 즉시 구분.
+> **왜 거버넌스가 필요한가** (계정 분리는 이미 됐으니 아래는 그 위에 얹는 이유):
+> - **권한 경계 명확화**: cross-account assume을 명시적으로 허용한 주체만 각 계정에 접근 가능하도록 SCP로 강제.
+> - **비용 가시성**: 공유 서비스 비용 vs 워크로드 비용을 계정별로 이미 구분 가능(청구서 분리) — Organizations는 여기에 예산 집계·이상 감지를 더한다.
+> - **중앙 인증**: 계정별 IAM User 난립 대신 IAM Identity Center(SSO) 단일 로그인.
 >
 > **비용 영향**: Organizations·SCP·IAM Identity Center 자체는 무료. 추가 비용은 Org Trail S3 등 월 $5~15 수준.
 >
-> **전제 조건**: Phase 6 완료 권장 (Hub-Spoke 패턴 검증 후 멀티계정 전환).
+> **전제 조건**: Phase 6 완료 권장 (Hub-Spoke 패턴 검증 후 거버넌스 적용).
 > `TerraformExecutionRole`의 trust principal(`account:root`) 재설계 필요 — security-engineer 사전 검토 권장.
 
-- [ ] **멀티 계정 전략 설계** (`docs/multi-account-strategy.md` 신규 작성)
-  - [ ] OU 구조: `Infrastructure`(Intra), `Workloads`(dev/prd 공용) 2 OU
-  - [ ] State backend 전략: 현재 Workload 계정 S3 버킷 유지 + Intra 계정은 동일 버킷에 cross-account 접근
-  - [ ] `TerraformExecutionRole` 재설계: Intra/Workload 계정 각각에 배포 + trust를 Workload 계정 실행 주체로 한정 (`account:root` trust 제거)
-- [ ] `global/organizations/` 신규 root module 생성 — Workload(현재) 계정에서 실행
-  - [ ] `aws_organizations_account` 2개 발급 (Intra 신규, Workload는 현재 계정 import)
+- [ ] **거버넌스 전략 설계** (`docs/multi-account-strategy.md` 신규 작성)
+  - [ ] OU 구조: `Infrastructure`(monitoring), `Workloads`(dev/prd 공용) 2 OU
+  - [ ] State backend 전략: 현재 workload 계정 S3 버킷 유지 + monitoring 계정은 동일 버킷에 cross-account 접근
+  - [ ] `TerraformExecutionRole` 재설계: monitoring/workload 계정 각각에 배포 + trust를 실행 주체로 한정 (`account:root` trust 제거)
+- [ ] `global/organizations/` 신규 root module 생성 — workload 계정에서 실행
+  - [ ] 기존 monitoring/workload 2개 계정을 `aws_organizations_account` 리소스로 **import**(신규 발급 아님 — 이미 존재하는 계정을 Organizations 관리 범위로 편입)
   - [ ] OU 구조 코드화
 - [ ] IAM Identity Center(SSO) 활성화 — 계정별 IAM User 난립 대신 중앙 인증 전환
 - [ ] SCP 기본 가드레일: 루트 리전 강제(`ap-northeast-2` 외 차단), 루트 사용자 사용 차단, CloudTrail 비활성화 차단
-- [ ] Org Trail(중앙 CloudTrail) → Workload 계정 또는 별도 S3 집계
-- [ ] `TerraformExecutionRole` Intra 계정에 배포 (bootstrap 절차 문서화)
+- [ ] Org Trail(중앙 CloudTrail) → workload 계정 또는 별도 S3 집계
+- [ ] `TerraformExecutionRole` monitoring 계정에 맞게 재배포(신뢰 정책 재설계 반영, bootstrap 절차 문서화)
 - [ ] GitHub Actions OIDC → cross-account assume 체인 구성 (IAM User 장기 키 제거)
 - [ ] FinOps 자동화: 계정별 AWS Budget + Cost Anomaly Detection 코드화
-- [ ] Hub 클러스터를 Intra 계정으로 이전 (Phase 6 Hub → Intra 계정 재구성)
 
 ---
 
 ### Phase 8. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
 
-> **목표**: 각 클러스터의 메트릭·로그를 Intra 계정의 중앙 백엔드로 집계하고,
+> **목표**: 각 클러스터의 메트릭·로그를 monitoring 계정의 중앙 백엔드로 집계하고,
 > 단일 Grafana에서 전 환경을 관측한다.
 >
 > **왜 중앙화인가**:
@@ -495,18 +557,20 @@
 > - Thanos: CNCF 표준, 면접 단골이나 컴포넌트 多·무거움. "CNCF 표준 학습" 목표면 선택 가능.
 > - 절충안: Phase 9a VictoriaMetrics 먼저 → 여유 시 Phase 9b Thanos 비교 실습.
 >
-> **비용 영향**: S3 스토리지(소액) + Intra 클러스터 관측 노드(Karpenter Spot으로 절감). Hub 클러스터(Phase 6)와 컨트롤 플레인 공유.
+> **비용 영향**: S3 스토리지(소액) + monitoring 클러스터 관측 노드 증설분(Karpenter Spot으로
+> 절감) — 컨트롤 플레인은 신규 비용 없음(기존 클러스터 재사용, Phase 6 참조).
 >
-> **전제 조건**: Phase 7 완료 (Intra 계정 분리 + Hub 클러스터 이전).
+> **전제 조건**: Phase 7 완료 권장(거버넌스 정착 후 진행). monitoring 계정/클러스터 자체는
+> 이미 Phase 5에서 구축 완료 — 별도 이전 작업 불필요.
 > spoke→hub remote_write 경로는 Phase 5에서 구축한 VPC Peering(수동 관리,
 > `docs/network-design.md`)을 그대로 사용한다 — 별도 네트워크 구축 불필요.
 > Phase 5의 kube-prometheus-stack을 **로컬 수집기 역할로 재배치** (중앙 전송으로 변경).
 
-- [ ] 각 spoke의 kube-prometheus-stack `remoteWrite` 설정 → Intra 중앙 백엔드 전송 (로컬 장기 보존 비활성)
-- [ ] Intra 클러스터에 VictoriaMetrics 배포 (ArgoCD Hub로 배포)
+- [ ] 각 spoke의 kube-prometheus-stack `remoteWrite` 설정 → monitoring 중앙 백엔드 전송 (로컬 장기 보존 비활성)
+- [ ] monitoring 클러스터에 VictoriaMetrics 배포 (ArgoCD Hub로 배포)
   - [ ] S3 백엔드 설정 (장기 메트릭 보존)
   - [ ] remote_write 인증·암호화: VPC Peering 사설 경로 + TLS
-- [ ] Intra 클러스터에 중앙 Grafana 배포
+- [ ] monitoring 클러스터에 중앙 Grafana 배포
   - [ ] 데이터소스 멀티테넌시: 환경 라벨(`cluster=dev/prd`)로 구분
   - [ ] 핵심 대시보드: 클러스터 오버뷰, Karpenter 노드 현황, 서비스별 SLI
 - [ ] Loki 중앙 배포 + 각 클러스터 Alloy(또는 Promtail) → 중앙 Loki

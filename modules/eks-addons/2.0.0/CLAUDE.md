@@ -1,29 +1,50 @@
 # modules/eks-addons 설계 원칙
 
-> **2026-07-17: `2.0.0` 버전 분리 안내.** monitoring 환경은 GitOps Bridge(Phase 6)로
-> `2.0.0`을 참조하도록 전환됐다 — `2.0.0`은 이 모듈이 내부적으로 호출하는
-> `aws-ia/eks-blueprints-addons` 인스턴스를 3개(아직 이관 안 된 addon용 "rest" / ArgoCD
-> 전용 부트스트랩 예외 / GitOps로 이관 완료된 addon의 IAM만 유지하는 인스턴스)로 나눈
-> **파괴적 변경**이라 `1.0.0`을 그대로 두고 새 버전 디렉토리로 분리했다
-> (`docs/terraform-principles.md` "커스텀 모듈 — 디렉토리 기반 버전 관리" 참조).
-> develop/production은 아직 이 `1.0.0`을 그대로 참조하며, 각자 addon을 GitOps Bridge로
-> 이관할 때(6-4 이후) `2.0.0`으로 전환하면 된다. 두 버전의 정확한 차이는
-> `modules/eks-addons/2.0.0/CLAUDE.md` 상단의 "1.0.0 → 2.0.0 변경 사항" 참조.
+## 1.0.0 → 2.0.0 변경 사항 (2026-07-17)
+
+`1.0.0`을 그대로 두고 새 버전으로 분리한 이유는 이 변경이 **파괴적**이기 때문이다 —
+아래 변경은 호출자(환경 root module)가 자신의 변수 값을 하나도 안 바꿔도 기존 ArgoCD·LBC
+Helm release의 Terraform state 주소가 바뀌어 destroy→recreate를 유발한다(review-terraform에서
+Critical로 발견).
+
+| 항목 | 1.0.0 | 2.0.0 |
+|------|-------|-------|
+| 내부 `aws-ia/eks-blueprints-addons` 호출 개수 | 1개 (`eks_blueprints_addons`) | 3개 — `eks_blueprints_addons`(rest) / `eks_blueprints_addons_argocd`(ArgoCD 전용) / `eks_blueprints_addons_gitops`(GitOps 이관 완료 addon, IAM만 유지) |
+| ArgoCD | `eks_blueprints_addons` 안에서 다른 addon과 함께 관리 | `eks_blueprints_addons_argocd`로 분리 — GitOps Bridge 최종 전환 스위치(`create_kubernetes_resources`)와 무관하게 항상 Helm까지 Terraform이 관리 (부트스트랩 예외) |
+| aws-load-balancer-controller | `eks_blueprints_addons` 안에서 IAM+Helm 모두 관리 | `eks_blueprints_addons_gitops`로 분리 — IAM(IRSA)만 Terraform 유지, Helm release는 ArgoCD(devops-manifest)가 관리 |
+| 신규 변수 | — | `create_kubernetes_resources`(기본 `true`, "rest" 인스턴스 전용 — GitOps Bridge로 이관 안 된 addon 전체의 Helm 생성을 한 번에 끄는 최종 전환 스위치) |
+| `outputs.lbc_role_arn` | `module.eks_blueprints_addons.aws_load_balancer_controller.iam_role_arn` 참조 | `module.eks_blueprints_addons_gitops.aws_load_balancer_controller.iam_role_arn` 참조로 변경 |
+
+**전환 절차**(develop/production이 나중에 `2.0.0`으로 옮길 때): 아래 "GitOps Bridge: 모듈
+인스턴스 3분할" 절의 "addon을 이관할 때 state 이전 절차"를 그대로 따른다 — LBC/ArgoCD를
+ArgoCD Application으로 먼저 sync 검증한 뒤, `terraform state mv`/`state rm`으로 정리하고
+source를 `2.0.0`으로 바꾼다. LBC/ArgoCD 둘 다 손대지 않은 환경이라면 `state` 작업 없이
+source만 바꿔도 되는지는 **반드시 `terraform plan`으로 destroy 항목이 없는지 먼저 확인** —
+1.0.0의 `enable_argocd`/`enable_aws_load_balancer_controller`가 `true`인 상태로 그대로
+`2.0.0`을 가리키면 이 표의 인스턴스 재배치 때문에 여전히 destroy→recreate가 발생한다.
+
+---
 
 ## 이 모듈이 관리하는 애드온 (10종)
 
 | 애드온 | 설치 방법 | IAM 방식 | 활성화 조건 |
 |--------|-----------|---------|------------|
-| aws-load-balancer-controller | Helm (eks-blueprints-addons) | IRSA | 기본 활성 |
+| aws-load-balancer-controller | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-3)**, IAM만 Terraform 유지 | IRSA | 기본 활성 |
 | external-dns | Helm (eks-blueprints-addons) | IRSA | 기본 활성 |
-| metrics-server | Helm (eks-blueprints-addons) | 없음 | 기본 활성 |
+| metrics-server | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-2)** | 없음 | 기본 활성 |
 | external-secrets | Helm (eks-blueprints-addons) | IRSA(스코프는 호출자가 명시, 미지정 시 blueprints 기본 와일드카드) | `enable_external_secrets=true` |
 | karpenter | Helm (eks-blueprints-addons) | IRSA | 기본 활성 |
-| argocd | Helm (eks-blueprints-addons) | 없음 | 기본 활성 |
+| argocd | Helm (eks-blueprints-addons) — **GitOps Bridge 대상에서 영구 제외**(부트스트랩 예외, 아래 참조) | 없음 | 기본 활성 |
 | argo-rollouts | Helm (eks-blueprints-addons) | 없음 | `enable_argo_rollouts=true` |
 | opentelemetry-operator | Helm (직접) | 없음 | `enable_otel_spoke_collector=true` |
 | otel-spoke-node (DaemonSet) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
 | otel-spoke-singleton (Deployment) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
+
+> **"Helm (eks-blueprints-addons)"의 실제 의미(Phase 6 이후)**: 아직 GitOps Bridge로 이관되지
+> 않은 addon만 이 모듈이 Helm release까지 직접 설치한다. "ArgoCD(GitOps Bridge)"로 표시된
+> addon은 이 모듈이 IAM(필요한 경우)만 유지하고 실제 Helm release는
+> `eks-practice-devops-manifest` 저장소의 ArgoCD Application이 관리한다 — 아래 "GitOps Bridge:
+> 모듈 인스턴스 3분할" 절 참조.
 
 > **External Secrets Operator(2026-07-02 기준)**: AWS EKS 관리형 add-on 카탈로그와 커뮤니티 add-on
 > 카탈로그 어디에도 ESO가 없어 Bootstrap(`aws_eks_addon`)으로 관리할 수 없다 —
@@ -38,7 +59,93 @@
 
 ---
 
+## GitOps Bridge: 모듈 인스턴스 3분할 (Phase 6, 2026-07-17~)
+
+`aws-ia/terraform-aws-eks-blueprints-addons`는 addon마다 별도 스위치(`enable_metrics_server`
+등)를 두면서도, "Kubernetes 리소스(Helm release)를 실제로 만들지 여부"를 결정하는
+`create_kubernetes_resources` 변수는 그 모듈 **인스턴스 전체**에 걸쳐 단 하나뿐이다 — 소스를
+직접 확인한 결과 argocd/metrics_server/aws_load_balancer_controller 등 26개 addon 서브모듈이
+전부 `create_release = var.create_kubernetes_resources`로 예외 없이 같은 변수를 참조한다.
+addon마다 다르게 줄 수 있는 여지가 소스에 없다.
+
+이 프로젝트는 GitOps Bridge(Phase 6)로 addon을 ArgoCD 관리로 하나씩 이관하는데, 요구사항이
+addon마다 다르다 — 그래서 `module "eks_blueprints_addons"`를 3개 인스턴스로 나눴다
+(`main.tf` 참조):
+
+| 인스턴스 | `create_kubernetes_resources` | 담는 addon | 존재 이유 |
+|---|---|---|---|
+| `eks_blueprints_addons` | `var.create_kubernetes_resources`(기본 `true`) | 아직 이관 안 된 addon 전부 | "rest" — 남은 addon이 없어지면 이 값을 `false`로 바꿔 최종 정리 |
+| `eks_blueprints_addons_argocd` | 전달 안 함(항상 `true`) | ArgoCD만 | **부트스트랩 예외** — ArgoCD가 자기 자신을 GitOps로 관리할 수 없으므로 영원히 Terraform이 Helm까지 관리 |
+| `eks_blueprints_addons_gitops` | 항상 `false`로 고정 | GitOps Bridge로 이관 완료된 addon(LBC 등) | IAM은 유지하되 Helm release는 절대 만들지 않음 — ArgoCD가 그 자리를 대신함 |
+
+### addon을 이관할 때 state 이전 절차
+
+**`moved` 블록은 이 상황에 안 맞는다** — vendor 모듈 소스가 `enable_x` 값과 무관하게
+`module "x" {...}`를 항상 선언해두므로(내부적으로 `create = var.enable_x`만 조건부),
+addon을 다른 인스턴스로 옮겨도 Terraform은 원래 위치의 `module.x` 호출이 "여전히
+선언되어 있다"고 판단해 `moved`를 `Error: Moved object still exists`로 거부한다.
+명령형 `terraform state mv`/`state rm`으로 직접 옮겨야 한다.
+
+**IAM이 필요 없는 addon(metrics-server 등)** — Terraform이 완전히 손을 뗀다:
+```bash
+terraform state rm 'module.eks_addons.module.eks_blueprints_addons.module.<addon>.helm_release.this[0]'
+# 그리고 locals.tf에서 enable_<addon> = false 로 변경
+```
+
+**IAM이 필요한 addon(LBC 등)** — IAM은 유지, Helm만 이관:
+```bash
+# 1. IAM 리소스는 새 gitops 인스턴스로 이전 (실제 AWS 리소스 불변)
+terraform state mv \
+  'module.eks_addons.module.eks_blueprints_addons.module.<addon>.aws_iam_role.this[0]' \
+  'module.eks_addons.module.eks_blueprints_addons_gitops.module.<addon>.aws_iam_role.this[0]'
+terraform state mv \
+  'module.eks_addons.module.eks_blueprints_addons.module.<addon>.aws_iam_policy.this[0]' \
+  'module.eks_addons.module.eks_blueprints_addons_gitops.module.<addon>.aws_iam_policy.this[0]'
+terraform state mv \
+  'module.eks_addons.module.eks_blueprints_addons.module.<addon>.aws_iam_role_policy_attachment.this[0]' \
+  'module.eks_addons.module.eks_blueprints_addons_gitops.module.<addon>.aws_iam_role_policy_attachment.this[0]'
+# 2. Helm release는 Terraform 추적에서만 제거 (destroy 아님 — ArgoCD가 이미 인수한 뒤에만 실행)
+terraform state rm \
+  'module.eks_addons.module.eks_blueprints_addons.module.<addon>.helm_release.this[0]'
+# 3. modules/eks-addons/1.0.0/main.tf에서 해당 addon 블록을
+#    "rest" 인스턴스 → eks_blueprints_addons_gitops 인스턴스로 옮긴다
+```
+
+**순서가 중요하다 — 반드시 "ArgoCD sync 검증 → Terraform state 정리" 순서를 지킨다.**
+Terraform 모듈 분리(2번 mv/rm)를 ArgoCD sync 전에 먼저 하면, "rest" 인스턴스에서 그 addon
+블록이 사라지는 순간 Terraform이 기존 helm_release를 destroy하려 시도한다(ArgoCD가 아직
+인수하기 전인데 `helm uninstall`이 실행되는 것) — 실제 다운타임으로 이어진다. sync 전 diff가
+tracking annotation뿐인지 확인 → sync → 파드/ALB 등 정상 확인 → 그 다음에만 state 정리.
+
+### Helm chart의 비결정적 필드 대응 (webhook 인증서 등)
+
+일부 chart(예: aws-load-balancer-controller)는 `helm template`을 실행할 때마다 매번 새
+자체서명 인증서(Secret + webhook `caBundle`)를 생성한다. Terraform의 `helm_release`는 입력값이
+안 바뀌면 재렌더링을 안 해서 이 비결정성이 드러나지 않지만, ArgoCD는 sync할 때마다 항상
+재렌더링하므로 매번 인증서가 바뀌어버린다 — 실제 사례로 다른 프로젝트에서 이 문제로
+`connection reset by peer`가 반복 발생해 pod 재시작으로만 복구된 보고가 있다
+(https://github.com/Twingate/kubernetes-operator/issues/893).
+
+chart 자체의 `keepTLSSecret` 같은 옵션은 Helm `lookup` 함수에 의존하는데, **ArgoCD는 `lookup`을
+지원하지 않는다**(공식 미해결 이슈: argoproj/argo-cd#5202, #21745) — 즉 chart 옵션으로는
+해결이 안 된다. ArgoCD Application의 `ignoreDifferences` + `syncPolicy.syncOptions:
+[RespectIgnoreDifferences=true]`로 해당 필드를 sync 대상에서 제외해야 한다.
+`ignoreDifferences`만 설정하면 OutOfSync 판단에만 반영되고 실제 sync 시엔 그대로
+덮어써지므로, `RespectIgnoreDifferences=true`를 빠뜨리면 문제가 그대로 재현된다.
+
+webhook처럼 배열(`webhooks[]`)에 여러 항목이 있는 경우 `jsonPointers`는 특정 인덱스만
+지정 가능해 배열 전체를 커버하지 못한다(예: LBC는 MutatingWebhookConfiguration에 6개,
+ValidatingWebhookConfiguration에 3개 항목이 있어 `/webhooks/0/...`만으로는 부족했다) —
+배열 전체를 커버하려면 `jqPathExpressions: ['.webhooks[]?.clientConfig.caBundle']`를 쓴다.
+
+---
+
 ## 고정 버전 (2026-06-17 기준)
+
+> **GitOps Bridge로 이관된 addon(metrics-server, aws-load-balancer-controller)의 chart
+> 버전은 이 표가 아니라 `eks-practice-devops-manifest` 저장소가 실제 기준이다.** 아래 표의
+> 값은 Terraform이 마지막으로 설치했던 시점의 기록이며, 이관 이후 devops-manifest에서
+> 버전을 올려도 이 표는 자동으로 갱신되지 않는다.
 
 | 애드온 | 고정 버전 |
 |--------|-----------|

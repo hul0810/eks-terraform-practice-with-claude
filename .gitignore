@@ -38,3 +38,6 @@ Thumbs.db
 
 # infracost 가격 캐시 (자동 생성 바이너리 — 커밋 불필요)
 .infracost/
+
+# GitOps Bridge 마이그레이션 작업 기록 (Phase 6) — 실무 트러블슈팅/과정 기록, 결과는 TODO_LIST.md에만 반영
+temp/

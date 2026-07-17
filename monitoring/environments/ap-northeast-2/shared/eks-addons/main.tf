@@ -30,7 +30,12 @@ resource "terraform_data" "validate_tags" {
 }
 
 module "eks_addons" {
-  source = "../../../../../modules/eks-addons/1.0.0"
+  # GitOps Bridge(Phase 6) 모듈 3분할(rest/argocd/gitops)은 develop/production이 여전히
+  # 참조하는 1.0.0과 호환되지 않는 파괴적 변경이라 2.0.0으로 분리했다(공유 모듈이라
+  # in-place 수정 시 develop/production의 다음 plan에서 ArgoCD/LBC가 destroy→recreate됨 —
+  # docs/terraform-principles.md "커스텀 모듈 — 디렉토리 기반 버전 관리" 참조).
+  # develop/production은 각자 LBC/ArgoCD GitOps 이관(state mv/rm)을 마친 뒤 이 경로로 전환한다.
+  source = "../../../../../modules/eks-addons/2.0.0"
 
   cluster_name      = local.cluster_name
   cluster_endpoint  = local.cluster_endpoint
@@ -73,6 +78,12 @@ module "eks_addons" {
   argo_rollouts_chart_version               = local.eks_addons.argo_rollouts_chart_version
   argo_rollouts_notifications_slack_enabled = local.eks_addons.argo_rollouts_notifications_slack_enabled
   argocd_notifications_slack_enabled        = local.eks_addons.argocd_notifications_slack_enabled
+  # GitOps Bridge Hub(Phase 6-1): ArgoCD application-controller가 awsAuthConfig로 클러스터를
+  # 명시 등록할 때 필요한 IRSA Role ARN. 다른 local.eks_addons.xxx 참조와 달리 이 값은
+  # 리터럴이 아니라 같은 root의 다른 리소스 참조다 — notifications_secret_store_argo_rollouts가
+  # kubernetes_service_account_v1.notifications_eso_argo_rollouts를 참조하는 것과 같은 방식
+  # (gitops-bridge-irsa.tf 참조).
+  argocd_controller_irsa_role_arn = aws_iam_role.argocd_application_controller.arn
 
   # monitoring 클러스터는 OTel Hub — spoke collector 미설치
   enable_otel_spoke_collector = local.eks_addons.enable_otel_spoke_collector
