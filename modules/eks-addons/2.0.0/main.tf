@@ -24,6 +24,14 @@ locals {
   # 배포된 아티팩트가 바뀌는 상태가 된다. 업그레이드 시 이 값만 변경한다.
   rollout_extension_version = "v0.4.0"
 
+  # var.argo_rollouts_extension_enabled가 null이면 기존 동작(enable_argo_rollouts를 그대로 따름)을
+  # 유지한다 — variables.tf의 "GitOps Bridge 이관 후 enable_argo_rollouts의 의미 변화" 주석 참조.
+  argo_rollouts_extension_enabled = (
+    var.argo_rollouts_extension_enabled != null
+    ? var.argo_rollouts_extension_enabled
+    : var.enable_argo_rollouts
+  )
+
   # Argo Rollouts Notifications — Slack 알림 서비스(notifiers) + 공식 기본 templates/triggers
   # 9종씩(argoproj/argo-rollouts 공식 저장소 manifests/notifications-install.yaml 기준, email
   # notifier용 항목은 이 프로젝트가 이메일 알림을 쓰지 않으므로 제외)을 함께 구성한다.
@@ -456,13 +464,15 @@ locals {
         }
       } : {},
       # Argo Rollouts UI Extension: argocd-server initContainer로 정적 파일을 받아와 UI에 canary/bluegreen
-      # 진행 상황을 표시한다. Argo Rollouts 자체가 꺼진 환경에서는 표시할 대상이 없으므로
-      # enable_argo_rollouts에 종속시켜 무의미한 initContainer가 뜨지 않도록 한다.
+      # 진행 상황을 표시한다. Argo Rollouts 자체가 클러스터에 없는 환경에서는 표시할 대상이
+      # 없으므로 local.argo_rollouts_extension_enabled에 종속시켜 무의미한 initContainer가
+      # 뜨지 않도록 한다 — enable_argo_rollouts를 직접 쓰지 않는 이유는 variables.tf의
+      # "GitOps Bridge 이관 후 enable_argo_rollouts의 의미 변화" 주석 참조.
       # 릴리스 자산 실제 파일명은 extension.tar(.gz 아님) — v0.4.0 기준 GitHub Releases에서 확인.
       # EXTENSION_CHECKSUM_URL 미설정: rollout-extension 릴리스에 체크섬 파일 자체가 게시되지 않아
       # (v0.4.0 자산은 extension.tar 단일 파일) 검증 대상 URL이 없다. 버전 태그 고정이 현재
       # 확보 가능한 무결성 보장의 전부다.
-      var.enable_argo_rollouts ? {
+      local.argo_rollouts_extension_enabled ? {
         extensions = {
           enabled = true
           extensionList = [{
@@ -538,33 +548,6 @@ module "eks_blueprints_addons" {
   # 받지 않는다(module "eks_blueprints_addons_argocd"는 별도 인스턴스).
   create_kubernetes_resources = var.create_kubernetes_resources
 
-  # ── ExternalDNS ───────────────────────────────────────────────────────────────
-  # Route53 zone 설정 등 Helm values 커스터마이징이 필요하여 Helm으로 관리한다.
-  # blueprints가 IRSA 자동 처리.
-  # IRSA Role은 external_dns_route53_zone_arns 가 비어있으면 blueprints가 생성하지 않는다.
-  # zone ARNs 설정 시 고정 이름으로 생성되도록 role_name을 미리 선언한다.
-  enable_external_dns            = var.enable_external_dns
-  external_dns_route53_zone_arns = var.external_dns_route53_zone_arns
-  external_dns = {
-    chart_version        = var.external_dns_chart_version
-    role_name            = "${var.cluster_name}-external-dns-irsa"
-    role_name_use_prefix = false
-    # external_dns_assume_role_arn이 설정된 경우 --aws-assume-role 인자를 추가한다.
-    # 실제 external-dns 바이너리 플래그는 --aws-assume-role이다 (--aws-assume-role-arn 아님).
-    # concat 패턴: 빈 리스트와 병합하여 조건부로 extraArgs를 주입한다.
-    set = concat(
-      [
-        { name = "replicaCount", value = tostring(var.replica_counts.external_dns) },
-        { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
-        { name = "tolerations[0].operator", value = "Exists" },
-        { name = "tolerations[0].effect", value = "NoSchedule" },
-      ],
-      var.external_dns_assume_role_arn != "" ? [
-        { name = "extraArgs[0]", value = "--aws-assume-role=${var.external_dns_assume_role_arn}" }
-      ] : []
-    )
-  }
-
   # ── Metrics Server ────────────────────────────────────────────────────────────
   # 순수 오픈소스. IAM 불필요.
   enable_metrics_server = var.enable_metrics_server
@@ -578,109 +561,6 @@ module "eks_blueprints_addons" {
       { name = "tolerations[0].operator", value = "Exists" },
       { name = "tolerations[0].effect", value = "NoSchedule" },
     ]
-  }
-
-  # ── External Secrets Operator ────────────────────────────────────────────────
-  # AWS SSM Parameter Store/Secrets Manager의 값을 K8s Secret으로 동기화한다.
-  # blueprints가 IRSA 자동 처리. IAM 정책은 blueprints 내부에서
-  # `length(var.external_secrets_ssm_parameter_arns) > 0 ? [statement] : []` 패턴의
-  # dynamic block으로 생성되므로, 이 모듈의 변수에 빈 리스트를 그대로 전달하면
-  # blueprints의 기본 와일드카드 대신 "정책 문(statement) 자체가 생성되지 않아 권한 없음"으로
-  # 귀결된다. 따라서 빈 리스트일 때는 blueprints 기본값과 동일한 와일드카드를 명시적으로
-  # 전달해 "미지정 시 동작"을 그대로 재현한다.
-  # SecretStore/ClusterSecretStore, ExternalSecret CR은 이 모듈의 관리 범위가 아니다
-  # (환경 root module에서 관리 — 예: monitoring/.../eks-addons/main.tf).
-  enable_external_secrets = var.enable_external_secrets
-  external_secrets_ssm_parameter_arns = (
-    length(var.external_secrets_ssm_parameter_arns) > 0
-    ? var.external_secrets_ssm_parameter_arns
-    : ["arn:aws:ssm:*:*:parameter/*"] # blueprints 기본값과 동일
-  )
-  external_secrets_kms_key_arns = (
-    length(var.external_secrets_kms_key_arns) > 0
-    ? var.external_secrets_kms_key_arns
-    : ["arn:aws:kms:*:*:key/*"] # blueprints 기본값과 동일
-  )
-  external_secrets = {
-    chart_version = var.external_secrets_chart_version
-    # 다른 addon(LBC/ExternalDNS/Karpenter)과 동일하게 고정 이름 사용 — 멀티 클러스터 환경에서 식별 용이
-    role_name            = "${var.cluster_name}-external-secrets-irsa"
-    role_name_use_prefix = false
-    set = [
-      { name = "replicaCount", value = tostring(var.replica_counts.external_secrets) },
-      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
-      { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect", value = "NoSchedule" },
-    ]
-  }
-
-  # ── Karpenter ─────────────────────────────────────────────────────────────────
-  # blueprints가 컨트롤러 IAM Role, SQS 인터럽션 큐, EventBridge Rule, Helm chart를 통합 처리.
-  # NodeClass / NodePool은 Kubernetes 리소스이므로 별도 관리한다.
-  #
-  # [배포 주의] 클러스터를 새로 생성한 직후 이 모듈을 처음 apply하면, karpenter
-  # helm_release가 아래 오류로 실패할 수 있다:
-  #   "failed calling webhook \"mservice.elbv2.k8s.aws\": ... no endpoints
-  #    available for service \"aws-load-balancer-webhook-service\""
-  # 원인: helm_release 리소스 간 명시적 순서가 없어 LBC와 karpenter가 동시에
-  # 배포되는데, karpenter 차트가 생성하는 Service를 LBC의 mutating webhook이
-  # 가로채려 하지만 LBC pod가 아직 Ready 상태가 아니다 (webhook Service에
-  # endpoint 없음).
-  # 해결: LBC pod가 Running이 될 때까지 대기 후 `terraform apply`를 재실행하면
-  # 실패한 karpenter release만 tainted 상태로 재생성되며 정상 완료된다.
-  enable_karpenter = var.enable_karpenter
-  karpenter = {
-    chart_version        = var.karpenter_chart_version
-    role_name            = "${var.cluster_name}-karpenter-controller-irsa"
-    role_name_use_prefix = false
-    # Policy도 고정 이름 사용 — 미설정 시 Role 이름을 prefix로 random suffix가 붙는다
-    policy_name            = "${var.cluster_name}-karpenter-controller-irsa"
-    policy_name_use_prefix = false
-    # blueprints가 생성하는 기본 정책에는 iam:CreateServiceLinkedRole이 빠져있다.
-    # spot capacity-type을 쓰는 NodePool에서 EC2 Spot 서비스 연결 역할
-    # (AWSServiceRoleForEC2Spot)이 계정에 아직 없으면 Karpenter가 CreateFleet 시점에
-    # 직접 생성을 시도하는데, 이 권한이 없어 AuthFailure.ServiceLinkedRoleCreationNotPermitted로
-    # 계속 실패하고 spot Pod이 "no instance type has the required offering"이라는
-    # (원인과 무관한) 메시지를 남긴 채 Pending 상태로 멈춘다. 서비스 연결 역할 자체는
-    # 계정당 1회만 생성되면 되므로(관리자 권한으로 `aws iam create-service-linked-role
-    # --aws-service-name spot.amazonaws.com` 1회 실행), 이 statement는 그 역할이 아직
-    # 없는 새 계정에서도 Karpenter가 스스로 만들 수 있도록 하는 방어적 최소 권한이다.
-    policy_statements = [
-      {
-        sid       = "AllowScopedEC2SpotServiceLinkedRoleCreation"
-        actions   = ["iam:CreateServiceLinkedRole"]
-        resources = ["arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"]
-        conditions = [{
-          test     = "StringEquals"
-          variable = "iam:AWSServiceName"
-          values   = ["spot.amazonaws.com"]
-        }]
-      }
-    ]
-    set = [
-      # 기본값 2 — dev는 replica_counts.karpenter=1로 낮춰 시스템 노드 Pending 해소
-      { name = "replicas", value = tostring(var.replica_counts.karpenter) },
-      # 시스템 노드에 스케줄 — Karpenter 자체가 앱 노드에서 실행되면 부트스트랩 문제 발생
-      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
-      { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect", value = "NoSchedule" },
-    ]
-  }
-
-  # Karpenter 노드 IAM Role / Instance Profile
-  # blueprints 기본값은 "karpenter-{cluster_name}-{random}" 형태.
-  # 고정 이름으로 변경하여 멀티 클러스터 환경에서 식별이 쉽도록 한다.
-  karpenter_node = {
-    iam_role_name            = "${var.cluster_name}-karpenter-node"
-    iam_role_use_name_prefix = false
-  }
-
-  # Karpenter SQS 인터럽션 큐 고정 이름
-  # blueprints 기본값은 "karpenter-{cluster_name}" (prefix 역전).
-  # {cluster_name}-karpenter 로 통일하여 다른 리소스와 네이밍 패턴을 맞춘다.
-  karpenter_sqs = {
-    queue_name = "${var.cluster_name}-karpenter"
   }
 
   # ── Argo Rollouts ─────────────────────────────────────────────────────────────
@@ -792,6 +672,77 @@ module "eks_blueprints_addons_gitops" {
     role_name_use_prefix = false
   }
 
+  # ── ExternalDNS (Phase 6-4, GitOps Bridge 이관 완료) ──────────────────────────
+  # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/external-dns)이
+  # 관리한다. 여기서는 IRSA만 유지.
+  enable_external_dns            = var.enable_external_dns
+  external_dns_route53_zone_arns = var.external_dns_route53_zone_arns
+  external_dns = {
+    chart_version        = var.external_dns_chart_version
+    role_name            = "${var.cluster_name}-external-dns-irsa"
+    role_name_use_prefix = false
+  }
+
+  # ── External Secrets Operator (Phase 6-4, GitOps Bridge 이관 완료) ───────────
+  # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/external-secrets)이
+  # 관리한다. 여기서는 IRSA만 유지 — IAM 스코프(ssm_parameter_arns/kms_key_arns)는 원래
+  # 빈 리스트일 때 blueprints 기본 와일드카드를 재현하는 로직을 그대로 가져온다(main.tf
+  # "rest" 인스턴스였을 때와 동일한 이유).
+  enable_external_secrets = var.enable_external_secrets
+  external_secrets_ssm_parameter_arns = (
+    length(var.external_secrets_ssm_parameter_arns) > 0
+    ? var.external_secrets_ssm_parameter_arns
+    : ["arn:aws:ssm:*:*:parameter/*"] # blueprints 기본값과 동일
+  )
+  external_secrets_kms_key_arns = (
+    length(var.external_secrets_kms_key_arns) > 0
+    ? var.external_secrets_kms_key_arns
+    : ["arn:aws:kms:*:*:key/*"] # blueprints 기본값과 동일
+  )
+  external_secrets = {
+    chart_version        = var.external_secrets_chart_version
+    role_name            = "${var.cluster_name}-external-secrets-irsa"
+    role_name_use_prefix = false
+  }
+
+  # ── Karpenter (Phase 6-4, GitOps Bridge 이관 완료) ────────────────────────────
+  # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/karpenter)이
+  # 관리한다. 여기서는 컨트롤러 IRSA + 노드 IAM Role/Instance Profile + SQS 인터럽션 큐를
+  # 유지한다 — 전부 AWS 리소스라 Helm 이관 여부와 무관하게 계속 Terraform이 관리해야 한다.
+  # EventBridge Rule/Target(SQS 인터럽션 큐 연동)은 vendor 모듈이 enable_karpenter=true일 때
+  # 자동으로 함께 생성한다 — 별도 선언 불필요.
+  enable_karpenter = var.enable_karpenter
+  karpenter = {
+    chart_version          = var.karpenter_chart_version
+    role_name              = "${var.cluster_name}-karpenter-controller-irsa"
+    role_name_use_prefix   = false
+    policy_name            = "${var.cluster_name}-karpenter-controller-irsa"
+    policy_name_use_prefix = false
+    # blueprints 기본 정책에 iam:CreateServiceLinkedRole이 빠져있는 문제 대응.
+    # 상세 사유: modules/eks-addons/2.0.0/CLAUDE.md "Karpenter Spot capacity-type" 절 참조.
+    policy_statements = [
+      {
+        sid       = "AllowScopedEC2SpotServiceLinkedRoleCreation"
+        actions   = ["iam:CreateServiceLinkedRole"]
+        resources = ["arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"]
+        conditions = [{
+          test     = "StringEquals"
+          variable = "iam:AWSServiceName"
+          values   = ["spot.amazonaws.com"]
+        }]
+      }
+    ]
+  }
+
+  karpenter_node = {
+    iam_role_name            = "${var.cluster_name}-karpenter-node"
+    iam_role_use_name_prefix = false
+  }
+
+  karpenter_sqs = {
+    queue_name = "${var.cluster_name}-karpenter"
+  }
+
   tags = var.additional_tags
 }
 
@@ -809,7 +760,7 @@ resource "aws_eks_access_entry" "karpenter_node" {
   count = var.enable_karpenter ? 1 : 0
 
   cluster_name  = var.cluster_name
-  principal_arn = module.eks_blueprints_addons.karpenter.node_iam_role_arn
+  principal_arn = module.eks_blueprints_addons_gitops.karpenter.node_iam_role_arn
   type          = "EC2_LINUX"
 
   tags = var.additional_tags

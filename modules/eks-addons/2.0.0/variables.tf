@@ -152,6 +152,21 @@ variable "enable_argo_rollouts" {
   default     = false
 }
 
+# [GitOps Bridge 이관 후 enable_argo_rollouts의 의미 변화 — Phase 6-4에서 발견]
+# ArgoCD Helm values의 rollout-extension(UI에 canary/bluegreen 진행 상황 표시)은 원래
+# enable_argo_rollouts를 "Argo Rollouts가 클러스터에 실제로 있는가"의 신호로 재사용했다.
+# 그런데 Argo Rollouts의 Helm 설치가 ArgoCD로 이관되면(enable_argo_rollouts=false로 Terraform이
+# 손을 떼도) 클러스터에는 Argo Rollouts가 계속 존재한다 — "Terraform이 설치하는가"와 "클러스터에
+# 있는가"가 더 이상 같은 뜻이 아니게 됐다. 이 변수를 null(기본값)로 두면 기존 동작(1.0.0 등
+# 이관 전 환경과 호환)을 그대로 유지하고, GitOps Bridge로 이관된 환경(monitoring)만 명시적으로
+# true를 지정해 extension을 계속 켜둔다.
+variable "argo_rollouts_extension_enabled" {
+  description = "ArgoCD UI의 Argo Rollouts rollout-extension 활성화 여부. null이면 enable_argo_rollouts를 그대로 따른다(기본 동작) — GitOps Bridge로 Argo Rollouts의 Helm 설치만 ArgoCD로 넘어가고 Terraform은 enable_argo_rollouts=false로 손을 뗀 환경(클러스터엔 Argo Rollouts가 여전히 존재)에서는 true를 명시해야 extension이 계속 표시된다."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
 variable "argo_rollouts_chart_version" {
   description = "Argo Rollouts Helm chart 버전 (예: \"2.38.1\"). enable_argo_rollouts=false이면 미사용 — null 허용"
   type        = string
