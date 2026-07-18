@@ -477,8 +477,64 @@
       `jqPathExpressions` (`temp/gitops-migration-lbc.md`, `temp/gitops-bridge-terraform-notes.md`)
 
 **6-4. 나머지 monitoring 애드온 순차 전환**
-- [ ] Karpenter, ExternalDNS, External Secrets 등 나머지 애드온을 6-3 패턴으로 하나씩 전환
+- [x] argo-rollouts — IAM 불필요, 6-2 패턴으로 완전 이관 (2026-07-17). CRD 5개(150~200KB)가
+      `kubectl apply`의 256KB annotation 제한에 걸릴 수 있어 `ServerSideApply=true` 필요함을
+      확인. CRD의 `preserveUnknownFields` 필드는 API 서버가 저장을 거부하는 v1 CRD 고유 특성이라
+      `ignoreDifferences` 필요 (`temp/gitops-migration-argo-rollouts.md`)
+- [x] karpenter — 6-3 패턴, 컨트롤러 IRSA·노드 IAM Role/Instance Profile·SQS 인터럽션 큐·
+      EventBridge Rule까지 전부 `eks_blueprints_addons_gitops`로 이전 (2026-07-18)
+- [x] external-dns — 6-3 패턴, cross-account assume-role 유지 (2026-07-18)
+- [x] external-secrets — 6-3 패턴, CRD 24개 중 2개(658KB) `ServerSideApply=true`로 대응
+      (2026-07-18)
+- [x] **부수 발견 — ArgoCD 자신의 부트스트랩 순환 의존성 해소**: `argocd-github-app-repo-creds`가
+      ESO(`ExternalSecret`)를 거쳐 생성되던 구조였는데, "완전 재구축" 시나리오를 가정해보니
+      ArgoCD 부트스트랩 → ESO 필요 → ESO도 GitOps 관리 대상이면 ArgoCD가 먼저 떠야 함 →
+      순환되는 문제를 발견했다. Terraform이 SSM을 `data "aws_ssm_parameter"`로 직접 읽어
+      `kubernetes_secret_v1`로 만드는 방식으로 전환해 ESO 의존을 제거했다
+      (`docs/addon-strategy.md` "GitOps 관리 경계" 원칙 그대로 적용). Image Updater의
+      git-creds는 이 순환에 해당하지 않아 ESO 경유 그대로 둔다.
+- [x] **부수 발견 — ArgoCD UI rollout-extension 회귀**: `enable_argo_rollouts=false`(6-4에서
+      Terraform이 손을 뗀 것)가 ArgoCD Helm values의 rollout-extension 표시 여부에도
+      재사용되고 있어, 이관 후 조용히 꺼질 뻔했다. `argo_rollouts_extension_enabled` 변수를
+      신설해 "Terraform 설치 여부"와 "클러스터에 실제로 있는지"를 분리했다.
+- [x] **부수 발견 — Karpenter `clusterEndpoint` 하드코딩으로 인한 신규 노드 조인 불가**:
+      monitoring teardown/재구축 후 Karpenter가 새 EC2 노드를 계속 만들었지만 전부
+      `kubectl get nodes`에 나타나지 않는 채로 멈췄다(nodeclaim `Registered: Unknown` 무한
+      대기). 근본 원인은 `charts/eks-addons/karpenter/values-override.yaml`의
+      `settings.clusterEndpoint`가 이전 클러스터의 EKS API 엔드포인트 해시를 그대로 가리키고
+      있어, Karpenter가 신규 노드의 nodeadm 부트스트랩 설정에 존재하지 않는 호스트명을 주입해
+      kubelet이 DNS 조회부터 실패(`no such host`)한 것이었다(SSM Session Manager로
+      `journalctl -u kubelet` 직접 확인, IAM/SG/라우팅/NACL은 전부 정상이었음). `clusterEndpoint`를
+      비우고 `settings.eksControlPlane=true`로 전환해 Karpenter가 시작 시 `eks:DescribeCluster`
+      API로 스스로 엔드포인트를 조회하도록 근본 수정했다 — 필요한 IAM 권한은 blueprints 모듈
+      기본 정책에 이미 포함되어 있어 추가 변경 불필요. teardown/재구축이 잦은 실습 환경
+      특성상 이 클래스의 값(클러스터 고유 ID가 박히는 값)은 전부 정적 오버라이드보다 런타임
+      자동 탐지를 우선 검토해야 한다는 일반 원칙을 확인했다.
+- [ ] argocd-image-updater — blueprints 밖에서 별도 `helm_release`로 관리 중(ECR 접근용 IRSA
+      보유, 6-3 패턴 후보). 아직 작업 요청서 미작성 — 다음 착수 대상
       (전부 한 커밋/한 세션에 몰아하지 않는다 — 애드온별로 검증 후 다음으로)
+      - [ ] `kubernetes_manifest.argocd_image_updater_git_creds`(ExternalSecret)도 함께 이관 검토 —
+            ArgoCD 자신의 repo-creds와 달리 ESO·ArgoCD가 이미 뜬 뒤에만 소비되는 하위 리소스라
+            순환 의존이 없음을 확인함(6-4 argocd-github-app-repo-creds 순환 해소 작업 때 함께 검토)
+- [ ] **ClusterSecretStore/ExternalSecret GitOps 이관 검토** (2026-07-18 식별) — 아래는 전부
+      ESO·ArgoCD가 이미 뜬 뒤에만 소비되는 하위 리소스라 `argocd_github_app_repo_creds`(영구
+      Terraform 예외)와 달리 순환 의존 문제가 없어 이관 후보다. 각각 담당 addon 컨트롤러
+      이관 작업에 묶어서 진행한다 — 별도 작업으로 분리하지 않는다:
+      - [ ] `notifications_secret_store_argo_rollouts` / `argo_rollouts_notification_secret` —
+            argo-rollouts는 이미 이관 완료 상태이므로 이 둘만 후속으로 이관 가능
+      - [ ] `notifications_secret_store_argocd` / `argocd_notification_secret` — ArgoCD Helm
+            release 자체는 부트스트랩 영구 예외로 남지만, 이 Secret/ClusterSecretStore는
+            ArgoCD 재조정 대상과 무관한 별개 K8s 오브젝트라 독립적으로 이관 가능한지 검토
+      - [ ] `aws_parameterstore_secret_store`(범용 ClusterSecretStore) — 특정 addon에 종속되지
+            않은 플랫폼 레벨 리소스라 이관 시점·소유 Application을 별도로 정해야 함
+- [ ] **Karpenter NodeClass/NodePool GitOps 이관 검토** (2026-07-18 식별) — `karpenter.tf`의
+      `kubernetes_manifest.karpenter_ec2_node_class` / `karpenter_node_pool`. 위 ClusterSecretStore와
+      동일한 패턴이다 — Karpenter 컨트롤러가 이미 ArgoCD 관리 대상이라 그 CRD가 등록돼야 이
+      리소스들의 plan이 가능하고(3-B-4 apply 때 실제로 이 순서로 성공 확인함), Karpenter가
+      이미 뜬 뒤에만 소비되는 하위 리소스라 순환 의존이 없다. karpenter 컨트롤러 이관 작업에
+      묶어서 검토(이미 6-4에서 컨트롤러 자체는 이관 완료 상태이므로 이 둘만 후속 이관 대상).
+      (`argocd_cluster_self`(`gitops-bridge-irsa.tf`)는 검토 결과 후보 아님 — ArgoCD 자신의
+      클러스터 등록 정보라 repo-creds와 같은 영구 Terraform 예외로 남는다.)
 
 **6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록**
 - [ ] dev/prd EKS access entry에 Hub(monitoring) ArgoCD의 IAM Role 등록

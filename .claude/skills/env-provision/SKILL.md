@@ -140,7 +140,20 @@ aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profil
 
 ### Step 3: eks-addons 생성
 
-**3-1. 선행 CRD 설치 — 항상 먼저 실행 (전체 apply를 바로 시도하지 않는다)**
+**먼저 이 환경이 GitOps Bridge 구조인지 확인한다** (Phase 6 기준 monitoring만 해당,
+develop/production은 아직 레거시):
+
+```bash
+grep "source" {root}/eks-addons/main.tf | grep "modules/eks-addons"
+```
+
+`modules/eks-addons/1.0.0`이면 **3-A(레거시)**를, `2.0.0` 이상이면 **3-B(GitOps Bridge)**를 따른다.
+
+---
+
+#### 3-A. 레거시 절차 (`modules/eks-addons/1.0.0` — 예: develop/production)
+
+**3-A-1. 선행 CRD 설치 — 항상 먼저 실행 (전체 apply를 바로 시도하지 않는다)**
 
 `{root}/eks-addons/main.tf` 상단 주석(`⚠️ 첫 배포 또는 Karpenter 재설치 시 2단계 apply 필수`)이
 이미 명시하듯, Step 2에서 클러스터를 새로 만든 직후에는 Karpenter/external-secrets CRD가
@@ -161,48 +174,105 @@ cd {root}/eks-addons && terraform apply -auto-approve -target=module.eks_addons
 > karpenter/external_secrets helm_release 2개만이 아니라 `module.eks_addons` 전체로
 > 넓혀, LBC/ArgoCD/external-dns/argo-rollouts 등 CRD와 무관한 나머지 애드온도 이
 > 1단계에서 함께 설치되게 한다 — 단, ArgoCD의 Ingress는 이 module 안에 포함되므로
-> 3-3의 LBC 웹훅 경쟁은 이 1단계에서도 여전히 발생할 수 있다(아래 참고).
+> 3-A-3의 LBC 웹훅 경쟁은 이 1단계에서도 여전히 발생할 수 있다(아래 참고).
 
-**3-2. 전체 apply**
+**3-A-2. 전체 apply**
 
 ```bash
 cd {root}/eks-addons && terraform apply -auto-approve
 ```
 
-**3-3. LBC 웹훅 경쟁 상태 감지 시 (3-1, 3-2 어느 단계에서 발생해도 동일하게 처리)**
+**3-A-3. LBC 웹훅 경쟁 상태 감지 시 (3-A-1, 3-A-2 어느 단계에서 발생해도 동일하게 처리)**
 
 아래 패턴이 있으면 LBC와 ArgoCD(Ingress 포함)가 병렬 생성되며 LBC 웹훅이 아직 뜨기 전에
-ArgoCD Ingress 생성이 시도된 것이다 (일시적 — `module.eks_addons` 안에서 병렬 생성되므로
-3-1 단계에서도 나타날 수 있다):
+ArgoCD Ingress 생성이 시도된 것이다 (일시적):
 
 - `no endpoints available for service "aws-load-balancer-webhook-service"`
 
 `kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로
-LBC 파드가 `Running`인지 확인 후 **직전에 실패한 단계(3-1 또는 3-2)를 그대로 재실행**한다
+LBC 파드가 `Running`인지 확인 후 **직전에 실패한 단계(3-A-1 또는 3-A-2)를 그대로 재실행**한다
 (최대 2회).
 
-**3-4. external-secrets 웹훅 미기동 감지 시**
-
-아래 패턴이 있으면 external-secrets-webhook 파드가 아직 뜨지 않은 것이다.
-초기 부트스트랩 시 Karpenter가 새 노드를 프로비저닝하는 데 1~2분 걸릴 수 있어
-파드가 `Pending` 상태로 남아있을 수 있다:
+**3-A-4. external-secrets 웹훅 미기동 감지 시**
 
 - `no endpoints available for service "external-secrets-webhook"`
 
 `kubectl get pods -n external-secrets`로 3개 파드(`external-secrets`,
 `external-secrets-cert-controller`, `external-secrets-webhook`)가 모두 `Running`인지 확인
-(최대 3분 polling) 후 **3-2의 전체 apply를 재실행**한다.
+(최대 3분 polling) 후 **3-A-2의 전체 apply를 재실행**한다.
 
-**3-5. 그럼에도 CRD 순환 의존 에러가 나타나는 경우** (3-1이 어떤 이유로 생략됐거나 module
-구조 변경으로 target 범위가 CRD 설치를 커버하지 못하게 된 경우의 대비책):
+**3-A-5. 그럼에도 CRD 순환 의존 에러가 나타나는 경우**:
 
 - `no matches for kind "EC2NodeClass" in group "karpenter.k8s.aws"`
 - `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`
 
-3-1을 그대로 재실행해 CRD 설치를 확인한 뒤 (`kubectl get crd | grep -E "karpenter|external-secrets"`),
-3-2를 재실행한다.
+3-A-1을 그대로 재실행해 CRD 설치를 확인한 뒤 (`kubectl get crd | grep -E "karpenter|external-secrets"`),
+3-A-2를 재실행한다.
 
-**3-6.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
+**3-A-6.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
+
+---
+
+#### 3-B. GitOps Bridge 절차 (`modules/eks-addons/2.0.0` 이상 — 예: monitoring)
+
+**핵심 차이**: Terraform은 이제 ArgoCD 자신과, GitOps로 이관된 addon(LBC/Karpenter/
+ExternalDNS/ExternalSecrets 등, 이관 목록은 `TODO_LIST.md` Phase 6-4 참조)의 **IAM/AWS
+리소스만** 만든다. addon의 실제 Helm release(파드)는 ArgoCD가 devops-manifest를 sync해야
+생긴다. 그런데 이 root의 `kubernetes_manifest` 리소스 중 일부(ESO의 ClusterSecretStore/
+ExternalSecret, Karpenter의 NodeClass/NodePool)는 **그 CRD를 주는 addon(ESO, Karpenter)이
+ArgoCD로 설치되기 전까지는 plan 자체가 실패**한다 — CRD 제공 주체가 Terraform 밖으로 나갔기
+때문에, 3-A의 "2단계 apply"만으로는 이제 부족하고 그 사이에 ArgoCD sync가 껴야 한다.
+
+**3-B-1. ArgoCD 부트스트랩 + addon IAM만 선행 apply**
+
+`-target=module.eks_addons`는 이 root의 `module.eks_addons` **안**의 리소스만 적용하고,
+바깥에 있는 `kubernetes_manifest`(ESO ClusterSecretStore/ExternalSecret, Karpenter
+NodeClass/NodePool 등)는 원래도 건드리지 않으므로 3-A-1과 동일한 명령을 그대로 쓴다:
+
+```bash
+cd {root}/eks-addons && terraform apply -auto-approve -target=module.eks_addons
+```
+
+이 시점에 ArgoCD 자체(Helm)와 LBC/Karpenter/ExternalDNS/ExternalSecrets의 IAM Role/Policy,
+Karpenter의 SQS 인터럽션 큐·EventBridge Rule, `argocd-github-app-repo-creds` Secret(SSM에서
+직접 읽어 Terraform이 만듦 — ESO 비의존)까지 전부 준비된다. ArgoCD는 이 시점부터 자기
+저장소(devops-manifest)를 정상적으로 sync할 수 있다.
+
+**3-B-2. ArgoCD로 addon 등록 — 순서 중요**
+
+devops-manifest 저장소의 `argocd/eks-addons/*.yaml`을 가져와 `kubectl apply -f`로 등록한 뒤
+`argocd app sync <name> --core`로 sync한다(`--core`는 kubeconfig 권한으로 로그인 없이
+동작 — `docs/`나 이전 세션 기록 참고). **addon 전용 ApplicationSet이 devops-manifest에
+아직 없다면**(`argocd/applicationsets/`에 eks-addons용 파일이 있는지로 확인) 이 등록은
+매번 수동이다 — 있다면 git push만으로 자동 반영되므로 이 단계는 건너뛴다.
+
+순서:
+1. **LBC를 가장 먼저** sync하고 `kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로 `Running` 확인 (다른 addon의 Service 생성이 LBC의 mutating webhook을 거치는데, LBC가 안 뜬 상태면 아래 3-B-3과 같은 웹훅 경쟁이 재발한다)
+2. 나머지(Karpenter, ExternalDNS, ExternalSecrets, metrics-server, argo-rollouts)를 순서 무관하게 sync
+
+**3-B-3. sync 중 LBC 웹훅 경쟁 감지 시**
+
+- `no endpoints available for service "aws-load-balancer-webhook-service"`
+
+LBC 파드가 `Running`인지 재확인 후 실패한 addon의 sync만 재실행한다(최대 2회).
+
+**3-B-4. ESO/Karpenter가 뜬 뒤 나머지 Terraform 리소스 apply**
+
+3-B-2에서 ExternalSecrets와 Karpenter의 sync가 `Healthy`인지 확인한 뒤:
+
+```bash
+cd {root}/eks-addons && terraform apply -auto-approve
+```
+
+이 시점에야 ESO의 ClusterSecretStore/ExternalSecret(image-updater git-creds, notifications
+Slack 토큰 등)과 Karpenter의 NodeClass/NodePool이 plan 가능해진다. 아래 에러가 나오면 해당
+addon(ESO 또는 Karpenter)의 sync가 아직 `Healthy`가 아니라는 뜻이니 `argocd app get <name>
+--core`로 상태를 재확인한 뒤 재시도한다:
+
+- `no matches for kind "EC2NodeClass" in group "karpenter.k8s.aws"`
+- `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`
+
+**3-B-5.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
 
 ### Step 4: cross-account ExternalDNS 신뢰 정책 갱신 (조건부)
 
@@ -235,8 +305,12 @@ Step 5로 진행.
 ### Step 5: 검증
 
 1. `kubectl get pods -A`로 `Running`/`Completed`가 아닌 파드가 있는지 확인, 있으면 경고 출력
-2. `kubectl get ingress -A`로 각 Ingress에 ALB 주소(ADDRESS)가 할당됐는지 확인
-3. Ingress가 있으면 `external-dns.alpha.kubernetes.io/hostname` 값을 각각 확인하고,
+2. **3-B(GitOps Bridge) 절차를 탔다면 추가로** `argocd app list --core`로 3-B-2에서 등록한
+   addon Application들의 `SYNC STATUS`/`HEALTH STATUS`가 모두 `Synced`/`Healthy`인지 확인한다.
+   `OutOfSync`나 `Degraded`가 있으면 `argocd app get <name> --core`로 원인을 확인 후 보고한다
+   (3-A 절차만 탄 환경은 이 항목을 건너뛴다 — addon이 전부 Terraform Helm이라 별도 확인 불필요).
+3. `kubectl get ingress -A`로 각 Ingress에 ALB 주소(ADDRESS)가 할당됐는지 확인
+4. Ingress가 있으면 `external-dns.alpha.kubernetes.io/hostname` 값을 각각 확인하고,
    `{root}/eks-addons/locals.tf`에서 `external_dns_route53_zone_arns`를 Grep해 zone ID를 추출한 뒤:
 
    ```bash
@@ -247,7 +321,7 @@ Step 5로 진행.
    A 레코드의 `AliasTarget.DNSName`이 현재 Ingress의 ALB 주소와 일치하는지 확인
    (최대 2분 polling — ExternalDNS 반영 지연 감안).
 
-4. 완료 안내를 출력한다.
+5. 완료 안내를 출력한다.
 
 ```
 [완료] <환경> 리소스 생성 완료

@@ -325,10 +325,17 @@ kubectl delete validatingwebhookconfigurations externalsecret-validate secretsto
 
 > **WHY**: eks-addons destroy 그래프에서 `null_resource.karpenter_nodeclaims_drainer`가
 > Karpenter 노드를 조기에 삭제하면서 external-secrets-webhook 파드도 함께 사라진다. 이후
-> `kubernetes_manifest.argocd_github_app_repo_creds` / `argocd_github_app_secret_store` 등
-> ExternalSecret·ClusterSecretStore 삭제가 webhook 호출 실패(`no endpoints available for
-> service "external-secrets-webhook"`)로 멈춘다. 클러스터 전체를 지우는 중이므로 검증
-> webhook을 미리 제거해도 안전하다 — 재시도 없이 한 번에 destroy가 끝난다.
+> `kubernetes_manifest.aws_parameterstore_secret_store`(ClusterSecretStore) /
+> `argocd_image_updater_git_creds` 등 ESO 의존 ExternalSecret·ClusterSecretStore 삭제가
+> webhook 호출 실패(`no endpoints available for service "external-secrets-webhook"`)로
+> 멈춘다. 클러스터 전체를 지우는 중이므로 검증 webhook을 미리 제거해도 안전하다 — 재시도
+> 없이 한 번에 destroy가 끝난다.
+>
+> **참고 (GitOps Bridge 이관 후 갱신)**: ArgoCD 자신의 repo-creds
+> (`kubernetes_secret_v1.argocd_github_app_repo_creds`)는 순환 의존 문제로 ESO를 거치지
+> 않고 SSM Parameter Store를 직접 읽는 Terraform 네이티브 리소스로 바뀌어(`main.tf` 참고)
+> 더 이상 이 webhook에 의존하지 않는다 — 이 단계가 필요한 이유는 여전히 ESO 기반으로 남은
+> 나머지 ExternalSecret/ClusterSecretStore 때문이다.
 
 ### Step 7: eks-addons destroy
 
@@ -345,6 +352,51 @@ kubectl patch <kind> <name> -n <namespace> --type=merge -p '{"metadata":{"finali
 ```
 
 제거 후 destroy를 재시도한다. 그 외 에러는 사용자에게 보고 후 중단한다.
+
+### Step 7.5: eks-addons destroy 사후 검증 — Terraform state 및 AWS API 이중 확인
+
+Step 7이 `Destroy complete!`로 끝났다는 출력만으로 완료 처리하지 않는다. GitOps Bridge
+이관 여부(`modules/eks-addons/1.0.0` vs `2.0.0` 이상)와 무관하게, LBC/Karpenter/
+ExternalDNS/ExternalSecrets의 IAM Role·Policy와 Karpenter의 SQS 인터럽션 큐·EventBridge
+Rule은 **항상** 이 root(`eks-addons`)의 Terraform state가 관리해왔다 — GitOps Bridge는
+이 addon들의 Helm 설치 주체를 Terraform에서 ArgoCD로 옮겼을 뿐, IAM/AWS 리소스는 이관
+여부와 무관하게 계속 Terraform 소관이다. 따라서 이 검증은 addon별 표를 따로 유지할
+필요 없이 아래 두 방식으로 충분하다:
+
+**1. Terraform state 자체 확인 (구조적 검증 — addon이 늘어나도 자동으로 커버)**
+
+```bash
+cd {root}/eks-addons && terraform state list
+```
+
+`terraform destroy`가 성공했다면 이 출력은 **반드시 비어있어야 한다**. 무엇이든 남아있으면
+Step 7이 일부만 destroy된 것이므로, 남은 리소스 주소를 사용자에게 보고하고 원인을 확인한다
+(재시도로 넘어가지 않는다 — 부분 destroy 상태에서 재시도하면 의도치 않은 순서로 나머지가
+지워질 수 있다).
+
+**2. AWS API로 실제 리소스 소멸 재확인 (state가 비어도 전파 지연 가능성 대비)**
+
+```bash
+aws iam list-roles --profile <profile> --query "Roles[?contains(RoleName, '<cluster_name>')].RoleName" --output text
+aws sqs list-queues --region ap-northeast-2 --profile <profile> --queue-name-prefix <cluster_name>
+aws events list-rules --region ap-northeast-2 --profile <profile> --name-prefix <cluster_name>
+```
+
+첫 번째 명령 결과에 `lbc`/`load-balancer`, `karpenter`, `external-dns`, `external-secrets`
+문자열이 포함된 role이 남아있거나, 두 번째·세 번째 명령 결과가 비어있지 않으면 AWS 쪽
+전파가 아직 안 끝난 것이니 최대 2분 polling 후 재확인한다. 그래도 남아있으면 Step 7 destroy
+결과와 모순되는 것이므로 재시도 없이 사용자에게 보고한다.
+
+> **WHY (2026-07-18 GitOps Bridge 이관 후 도입)**: monitoring이 `modules/eks-addons/2.0.0`로
+> 이관되며 Terraform이 더 이상 addon의 Helm release를 직접 만들지 않게 됐다 — Step 7의
+> `terraform destroy` 출력만 보고 "addon이 다 지워졌다"고 판단하면, 실제로는 Terraform이
+> 애초에 관리하지 않는(ArgoCD가 설치한) 부분과 Terraform이 여전히 관리하는 IAM/AWS 부분을
+> 혼동하기 쉽다. addon 이름별로 "이건 Terraform 관리, 이건 ArgoCD 관리"를 표로 유지하는
+> 방식은 addon이 추가로 이관될 때마다 갱신을 깜빡할 위험이 있으므로, 대신 `terraform state
+> list`가 비어있는지를 1차 기준으로 삼는다 — state는 코드가 실제로 무엇을 관리하는지를
+> 그 자체로 보여주므로 이관 목록이 바뀌어도 이 검증 절차 자체는 고칠 필요가 없다. AWS API
+> 조회는 state가 비어도 IAM/SQS/EventBridge의 실제 삭제 전파가 늦어질 수 있는 경우를 잡기
+> 위한 보조 확인이다.
 
 ### Step 8: EKS 클러스터 destroy — VPC NAT Gateway 비활성화와 병렬 시작
 
@@ -474,7 +526,7 @@ aws ec2 describe-nat-gateways --region ap-northeast-2 --profile <profile> \
 ```
 [완료] <환경> 비용 발생 리소스 삭제 완료
 - ArgoCD Application/ApplicationSet: 삭제 완료
-- eks-addons: 삭제 완료
+- eks-addons: 삭제 완료 (Terraform state 비어있음 + IAM/SQS/EventBridge AWS API 확인 완료)
 - EKS 클러스터: 삭제 완료
 - kubeconfig: context/cluster/user 정리 완료
 - NAT Gateway: 비활성화
