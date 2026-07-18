@@ -85,6 +85,12 @@ module "eks_addons" {
   # (gitops-bridge-irsa.tf 참조).
   argocd_controller_irsa_role_arn = aws_iam_role.argocd_application_controller.arn
 
+  # Phase 6-4: Argo Rollouts의 Helm 설치가 ArgoCD로 이관되며 enable_argo_rollouts=false로
+  # Terraform이 손을 뗐지만, 클러스터에는 Argo Rollouts가 계속 존재한다(ArgoCD가 관리).
+  # 명시하지 않으면 ArgoCD UI의 rollout-extension이 enable_argo_rollouts=false를 따라 조용히
+  # 꺼진다 — modules/eks-addons/2.0.0/variables.tf 참조.
+  argo_rollouts_extension_enabled = true
+
   # monitoring 클러스터는 OTel Hub — spoke collector 미설치
   enable_otel_spoke_collector = local.eks_addons.enable_otel_spoke_collector
 
@@ -222,66 +228,63 @@ resource "kubernetes_manifest" "aws_parameterstore_secret_store" {
   depends_on = [module.eks_addons]
 }
 
+# [정정 — ExternalSecret(ESO) 대신 Terraform이 SSM을 직접 읽어 Secret을 만드는 이유]
+# 원래는 위 aws_parameterstore_secret_store(ClusterSecretStore)를 거치는 ExternalSecret이었다.
+# 그런데 ClusterSecretStore/ExternalSecret은 ESO가 설치하는 CRD라, "완전 재구축"(클러스터를
+# 처음부터 새로 만드는) 시나리오를 가정해보면 순환 의존이 생긴다는 게 뒤늦게 드러났다:
+#   1. ArgoCD가 devops-manifest를 sync하려면 이 repo-creds Secret이 필요
+#   2. 그 Secret은 ExternalSecret(ESO CRD)이 만듦 → ESO의 CRD+controller가 먼저 떠 있어야 함
+#   3. ESO 자신도 GitOps(devops-manifest)로 관리하려는 게 Phase 6-4 계획인데, ESO를 설치하려면
+#      ArgoCD가 devops-manifest를 먼저 읽어야 하고, 그러려면 1번의 Secret이 필요 → 순환
+# docs/addon-strategy.md "GitOps 관리 경계"의 "ArgoCD 자신의 부트스트랩에 필요한 리소스"
+# 원칙은 애초에 ArgoCD Helm 설치뿐 아니라 이 repo-creds Secret에도 동일하게 적용됐어야
+# 했다 — ESO(추이 ExternalSecret)를 거치는 한 이 Secret도 사실상 ESO에 종속되어 똑같이
+# 순환 의존 사슬에 걸리기 때문이다. 그래서 ESO(ExternalSecret)를 완전히 우회하고 Terraform이
+# SSM에서 직접 값을 읽어(아래 data 블록) 평범한 K8s Secret으로 만든다 — 이러면 ESO가 아직
+# 없어도(심지어 GitOps로 이관되어 ArgoCD sync 이후에나 설치되어도) 이 Secret은 항상 먼저
+# 존재하고, ArgoCD 부트스트랩이 ESO 존재 여부와 완전히 무관해진다.
+# Image Updater의 git-creds(아래 argocd_image_updater_git_creds)는 이 순환에 해당하지
+# 않는다 — Image Updater는 ArgoCD가 이미 떠 있어야 동작하는 컴포넌트라 의존 방향이 반대다.
+# 그래서 그쪽은 계속 ESO(ExternalSecret)를 그대로 쓴다.
+#
 # ArgoCD 공식 repo-creds Secret 스펙(argocd.argoproj.io/secret-type: repo-creds 라벨 +
 # type/url/githubAppID/githubAppInstallationID/githubAppPrivateKey 키)을 그대로 따른다.
 # https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-repo-creds-yaml/
-#
-# [template.mergePolicy = Merge를 사용하는 이유]
-# ESO는 target.template이 설정되면 기본적으로 template에서 참조하지 않은 spec.data 키를
-# 결과 Secret에서 제외한다(https://external-secrets.io/latest/guides/templating/).
-# mergePolicy: Merge로 전환하면 template.data의 리터럴 값(type, url)과 spec.data로 가져온
-# 키(githubAppID 등, secretKey를 최종 Secret 키 이름과 동일하게 지정)가 함께 병합된다.
-resource "kubernetes_manifest" "argocd_github_app_repo_creds" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "ExternalSecret"
-    metadata = {
-      name      = "argocd-github-app-repo-creds"
-      namespace = "argocd"
-    }
-    spec = {
-      secretStoreRef = {
-        name = kubernetes_manifest.aws_parameterstore_secret_store.manifest.metadata.name
-        kind = "ClusterSecretStore"
-      }
-      refreshInterval = "1h"
-      target = {
-        name           = "argocd-github-app-repo-creds"
-        creationPolicy = "Owner"
-        template = {
-          mergePolicy = "Merge"
-          metadata = {
-            labels = {
-              "argocd.argoproj.io/secret-type" = "repo-creds"
-            }
-          }
-          data = {
-            type = "git"
-            url  = "https://github.com/hul0810"
-          }
-        }
-      }
-      data = [
-        {
-          secretKey = "githubAppID"
-          remoteRef = { key = "/eks-practice/monitoring/argocd/github-app/app-id" }
-        },
-        {
-          secretKey = "githubAppInstallationID"
-          remoteRef = { key = "/eks-practice/monitoring/argocd/github-app/installation-id" }
-        },
-        {
-          secretKey = "githubAppPrivateKey"
-          remoteRef = { key = "/eks-practice/monitoring/argocd/github-app/private-key" }
-        },
-      ]
+data "aws_ssm_parameter" "argocd_github_app_id" {
+  name            = "/eks-practice/monitoring/argocd/github-app/app-id"
+  with_decryption = true
+}
+
+data "aws_ssm_parameter" "argocd_github_app_installation_id" {
+  name            = "/eks-practice/monitoring/argocd/github-app/installation-id"
+  with_decryption = true
+}
+
+data "aws_ssm_parameter" "argocd_github_app_private_key" {
+  name            = "/eks-practice/monitoring/argocd/github-app/private-key"
+  with_decryption = true
+}
+
+resource "kubernetes_secret_v1" "argocd_github_app_repo_creds" {
+  metadata {
+    name      = "argocd-github-app-repo-creds"
+    namespace = "argocd"
+    labels = {
+      "argocd.argoproj.io/secret-type" = "repo-creds"
     }
   }
 
-  depends_on = [
-    module.eks_addons,
-    kubernetes_manifest.aws_parameterstore_secret_store,
-  ]
+  data = {
+    type                    = "git"
+    url                     = "https://github.com/hul0810"
+    githubAppID             = data.aws_ssm_parameter.argocd_github_app_id.value
+    githubAppInstallationID = data.aws_ssm_parameter.argocd_github_app_installation_id.value
+    githubAppPrivateKey     = data.aws_ssm_parameter.argocd_github_app_private_key.value
+  }
+
+  type = "Opaque"
+
+  depends_on = [module.eks_addons]
 }
 
 # ArgoCD Image Updater가 이미지 태그 갱신 커밋에 사용할 GitHub App 인증 정보.
