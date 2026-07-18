@@ -147,86 +147,10 @@ resource "aws_iam_role_policy" "external_dns_assume_cross_account_role" {
 #          → ClusterSecretStore / ExternalSecret 생성
 ################################################################################
 
-# ── ClusterSecretStore — AWS Parameter Store 연결 (ESO, GitHub App/Image Updater 전용) ──
-#
-# SSM Parameter Store(SecureString)에 등록된 시크릿을 External Secrets Operator(ESO)로
-# 읽어오기 위한 ClusterSecretStore다. ArgoCD GitHub App 인증 정보(아래 repo-creds,
-# Image Updater git-creds) 전용이다.
-#
-# [이력 — 한때 Slack Bot Token도 함께 서빙했다가 다시 좁힌 이유]
-# Argo Rollouts/ArgoCD Notifications의 Slack Bot Token ExternalSecret이 한때 이 Store를
-# conditions.namespaces=["argocd","argo-rollouts"]로 확장해 공유했으나, 보안 리뷰에서
-# 이 Store 뒤 IAM Role이 GitHub App Private Key(조직 전체 저장소 쓰기 권한) 경로까지
-# 읽을 수 있어 argo-rollouts 네임스페이스의 ExternalSecret이 그 경로를 remoteRef로
-# 지정하면 그대로 읽어갈 수 있는 문제가 지적되어, Slack Bot Token 전용 신뢰 경계
-# (notifications-irsa.tf)로 분리했다. 상세 사유는 notifications-irsa.tf 상단 주석 참조.
-#
-# [왜 GitOps(devops-manifest 저장소)가 아니라 Terraform이 이 리소스를 관리하는가]
-# ArgoCD 자신의 부트스트랩에 필요한 리소스(순환 의존성)이기 때문이다.
-# 일반 원칙과 판단 기준은 docs/addon-strategy.md "GitOps 관리 경계" 참조.
-#
-# [ClusterSecretStore를 선택한 이유 — 크로스 네임스페이스 ServiceAccount 참조]
-# ESO controller의 ServiceAccount(external-secrets-sa)는 external-secrets 네임스페이스에 있고
-# IRSA Role 신뢰 정책의 OIDC sub 조건이 system:serviceaccount:external-secrets:external-secrets-sa로
-# 고정되어 있다(modules/eks-addons가 blueprints를 통해 생성 — 수동 변경 금지 대상).
-# 반면 이 Store를 참조하는 Secret들은 argocd·argo-rollouts 등 다른 네임스페이스에 생성되어야 한다.
-#
-# 네임스페이스 스코프의 SecretStore는 spec.provider.aws.auth.jwt.serviceAccountRef.namespace를
-# 무시하고 항상 SecretStore 자신과 같은 네임스페이스의 ServiceAccount만 참조할 수 있다
-# (공식 이슈: external-secrets/external-secrets#366 "Enable Auth.JWTAuth.ServiceAccountRef.Namespace
-# in kind SecretStore" — 아직 미지원). ClusterSecretStore는 클러스터 스코프라 이 제약이 없고
-# serviceAccountRef.namespace를 그대로 존중한다(공식 문서: https://external-secrets.io/latest/api/clustersecretstore/).
-# 따라서 IAM Role 신뢰 정책을 건드리지 않고도 크로스 네임스페이스 참조가 가능한
-# ClusterSecretStore를 사용한다.
-#
-# [리소스 이름 변경 — moved 블록]
-# 이 리소스는 원래 ArgoCD GitHub App 전용으로 만들어져 argocd_github_app_secret_store로
-# 명명되었으나, Argo Rollouts Slack Bot Token도 함께 서빙하도록 스코프가 넓어지면서
-# 이름이 더 이상 실체를 반영하지 못한다. kubernetes_manifest는 K8s 오브젝트 identity
-# (apiVersion/kind/metadata.name)로 식별되고 metadata.name(aws-parameterstore)은 그대로
-# 유지되므로, Terraform 리소스 라벨만 옮기는 이 변경은 재생성을 유발하지 않는다.
-moved {
-  from = kubernetes_manifest.argocd_github_app_secret_store
-  to   = kubernetes_manifest.aws_parameterstore_secret_store
-}
-
-resource "kubernetes_manifest" "aws_parameterstore_secret_store" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "ClusterSecretStore"
-    metadata = {
-      name = "aws-parameterstore"
-    }
-    spec = {
-      provider = {
-        aws = {
-          service = "ParameterStore"
-          region  = "ap-northeast-2"
-          auth = {
-            jwt = {
-              serviceAccountRef = {
-                name      = "external-secrets-sa"
-                namespace = "external-secrets"
-              }
-            }
-          }
-        }
-      }
-      # conditions.namespaces는 "어느 네임스페이스가 이 Store를 아예 참조 시도할 수
-      # 있는가"만 제한하는 defense-in-depth 계층이다(예: default/kube-system 등 무관한
-      # 네임스페이스의 시도 자체를 차단). 실제 어떤 SSM 경로를 읽을 수 있는지는 이 Store를
-      # 쓰는 모든 네임스페이스가 공유하는 IAM 정책(external_secrets_ssm_parameter_arns,
-      # 이 파일 상단 module.eks_addons 호출부 참조)이 결정한다 — 이 목록만으로는
-      # GitHub App Private Key에 대한 실제 접근을 네임스페이스별로 격리하지 못한다.
-      # argo-rollouts는 더 이상 이 Store를 쓰지 않는다(notifications-irsa.tf로 분리).
-      conditions = [
-        { namespaces = ["argocd"] }
-      ]
-    }
-  }
-
-  depends_on = [module.eks_addons]
-}
+# aws-parameterstore ClusterSecretStore — GitOps Bridge(Phase 6-4)로 이관 완료.
+# eks-practice-devops-manifest 저장소의 ArgoCD Application이 관리한다. IAM Role
+# (external-secrets-sa IRSA, modules/eks-addons가 blueprints를 통해 생성)은 계속
+# Terraform이 관리한다. 판단 기준은 docs/addon-strategy.md "GitOps 관리 경계" 참조.
 
 # [정정 — ExternalSecret(ESO) 대신 Terraform이 SSM을 직접 읽어 Secret을 만드는 이유]
 # 원래는 위 aws_parameterstore_secret_store(ClusterSecretStore)를 거치는 ExternalSecret이었다.
@@ -287,53 +211,5 @@ resource "kubernetes_secret_v1" "argocd_github_app_repo_creds" {
   depends_on = [module.eks_addons]
 }
 
-# ArgoCD Image Updater가 이미지 태그 갱신 커밋에 사용할 GitHub App 인증 정보.
-# argocd-github-app-repo-creds(ArgoCD 레포 접근, 조직 전체 읽기 전용)와는 별도 GitHub App —
-# Image Updater는 매니페스트 저장소에 커밋(쓰기)해야 하므로 권한 범위가 다르다.
-#
-# [repo-creds와 달리 argocd.argoproj.io/secret-type 라벨이 불필요한 이유]
-# argocd-github-app-repo-creds는 ArgoCD server가 "repo-creds"로 라벨링된 Secret을 자동으로
-# 스캔해 레포 인증에 쓴다(ArgoCD 자체 컨벤션). Image Updater는 그런 자동 탐색 없이
-# Application(또는 전역 config)의 git.credentials 설정에서 Secret 이름을 직접 참조하므로,
-# 이 라벨도 template/mergePolicy도 필요 없다 — 3개 키를 그대로 담은 평범한 Secret이면 충분하다.
-resource "kubernetes_manifest" "argocd_image_updater_git_creds" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "ExternalSecret"
-    metadata = {
-      name      = "argocd-image-updater-git-creds"
-      namespace = "argocd"
-    }
-    spec = {
-      refreshInterval = "1h"
-      secretStoreRef = {
-        kind = "ClusterSecretStore"
-        name = kubernetes_manifest.aws_parameterstore_secret_store.manifest.metadata.name
-      }
-      target = {
-        name           = "argocd-image-updater-git-creds"
-        creationPolicy = "Owner"
-        deletionPolicy = "Retain"
-      }
-      data = [
-        {
-          secretKey = "githubAppID"
-          remoteRef = { key = "/eks-practice/monitoring/argocd-image-updater/app-id" }
-        },
-        {
-          secretKey = "githubAppInstallationID"
-          remoteRef = { key = "/eks-practice/monitoring/argocd-image-updater/installation-id" }
-        },
-        {
-          secretKey = "githubAppPrivateKey"
-          remoteRef = { key = "/eks-practice/monitoring/argocd-image-updater/private-key" }
-        },
-      ]
-    }
-  }
-
-  depends_on = [
-    module.eks_addons,
-    kubernetes_manifest.aws_parameterstore_secret_store,
-  ]
-}
+# ArgoCD Image Updater의 GitHub App git-creds(ExternalSecret) — GitOps Bridge(Phase 6-4)로
+# 이관 완료. eks-practice-devops-manifest 저장소의 ArgoCD Application이 관리한다.

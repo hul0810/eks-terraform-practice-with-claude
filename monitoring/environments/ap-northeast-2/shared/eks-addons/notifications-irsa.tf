@@ -111,67 +111,7 @@ resource "kubernetes_service_account_v1" "notifications_eso_argocd" {
   depends_on = [module.eks_addons]
 }
 
-# 네임스페이스 스코프 SecretStore는 conditions 필드가 없다 — 애초에 자기 네임스페이스
-# 밖에서 참조 자체가 불가능하므로 "어떤 네임스페이스가 이 Store를 참조할 수 있는가"를
-# 제한하는 defense-in-depth 계층(ClusterSecretStore의 conditions.namespaces)이 의미가 없다.
-resource "kubernetes_manifest" "notifications_secret_store_argo_rollouts" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "SecretStore"
-    metadata = {
-      name      = "aws-parameterstore-notifications"
-      namespace = "argo-rollouts"
-    }
-    spec = {
-      provider = {
-        aws = {
-          service = "ParameterStore"
-          region  = "ap-northeast-2"
-          auth = {
-            jwt = {
-              serviceAccountRef = {
-                name = kubernetes_service_account_v1.notifications_eso_argo_rollouts.metadata[0].name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  depends_on = [
-    module.eks_addons,
-    kubernetes_service_account_v1.notifications_eso_argo_rollouts,
-  ]
-}
-
-resource "kubernetes_manifest" "notifications_secret_store_argocd" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "SecretStore"
-    metadata = {
-      name      = "aws-parameterstore-notifications"
-      namespace = "argocd"
-    }
-    spec = {
-      provider = {
-        aws = {
-          service = "ParameterStore"
-          region  = "ap-northeast-2"
-          auth = {
-            jwt = {
-              serviceAccountRef = {
-                name = kubernetes_service_account_v1.notifications_eso_argocd.metadata[0].name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  depends_on = [
-    module.eks_addons,
-    kubernetes_service_account_v1.notifications_eso_argocd,
-  ]
-}
+# SecretStore(aws-parameterstore-notifications, argo-rollouts/argocd 네임스페이스 각 1개)와
+# 그걸 참조하는 ExternalSecret은 GitOps Bridge(Phase 6-4)로 이관 완료 —
+# eks-practice-devops-manifest 저장소의 ArgoCD Application이 관리한다. IAM Role +
+# ServiceAccount(위)는 계속 Terraform이 관리한다.

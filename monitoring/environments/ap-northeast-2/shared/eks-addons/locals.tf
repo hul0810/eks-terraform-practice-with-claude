@@ -63,9 +63,8 @@ locals {
     metrics_server_chart_version   = "3.12.2"
     karpenter_chart_version        = "1.12.1"
     external_secrets_chart_version = "2.7.0"
-    # 2026-07-04 기준 최신 stable 버전 (appVersion v1.2.2) — eks-blueprints-addons 미지원으로
-    # argocd-image-updater.tf에서 helm_release로 직접 관리 (monitoring 전용, 상세 사유는 해당 파일 참조)
-    argocd_image_updater_chart_version = "1.2.4"
+    # argocd_image_updater_chart_version — GitOps Bridge(Phase 6-4)로 이관 완료. 버전은 이제
+    # eks-practice-devops-manifest 저장소의 Application이 관리한다.
 
     # [LBC/ExternalDNS/Karpenter/External Secrets — GitOps Bridge 이관 완료 addon 공통 주의]
     # 이 4개는 IAM(IRSA)이 있는 addon이라 metrics-server/argo-rollouts와 달리 enable_*를
@@ -146,54 +145,7 @@ locals {
     argocd_admin_password_mtime  = "2026-07-01T00:00:00Z"
   }
 
-  karpenter_node_pools = {
-    general = {
-      capacity_types       = ["spot", "on-demand"]
-      instance_families    = ["c", "m", "r"]
-      architectures        = ["amd64"]
-      instance_gen_min     = "2"
-      weight               = 10
-      taints               = []
-      labels               = {}
-      limits               = { cpu = "50", memory = "200Gi" }
-      consolidation_policy = "WhenEmptyOrUnderutilized"
-      consolidate_after    = "30s"
-      disruption_budgets   = [{ nodes = "20%" }]
-    }
-
-    # Prometheus/Loki 등 EBS PVC를 사용하는 유상태 컴포넌트 전용 풀 (Phase 6 LGTM 배포 대비).
-    # - capacity_types를 on-demand로 고정: spot 회수는 강제 종료라 karpenter.sh/do-not-disrupt
-    #   annotation으로도 막을 수 없다. Phase 6 기준 Prometheus/Loki가 단일 replica라 회수 시
-    #   수집 공백이 생긴다.
-    # - taints로 무상태 워크로드를 밀어내고, labels로 유상태 파드가 nodeSelector로 이 풀이 만든
-    #   노드만 명시적으로 선택하게 한다. taint는 "밀어내기"만 할 뿐 이 풀로 "끌어오지"는 못하므로
-    #   (toleration만 있으면 general 풀의 무taint 노드에도 스케줄될 수 있음) labels가 필요하다.
-    # - consolidationPolicy=WhenEmpty + consolidateAfter=10m: general의
-    #   WhenEmptyOrUnderutilized+30s는 부하가 낮다는 이유만으로 30초 만에 노드를 교체 시도해
-    #   PVC 재연결 지연·수집 공백을 유발할 수 있어 유상태 워크로드에는 과도하다.
-    #
-    # devops-manifest 저장소의 Helm values(Phase 6)에서 아래 값을 참조해 파드에 설정해야 한다:
-    #   nodeSelector: { "eks-practice.io/workload-type" = "observability-stateful" }
-    #   tolerations: [{ key = "observability-stateful", operator = "Equal", value = "true", effect = "NoSchedule" }]
-    observability-stateful = {
-      capacity_types    = ["on-demand"]
-      instance_families = ["m", "r"]
-      architectures     = ["amd64"]
-      instance_gen_min  = "2"
-      weight            = 10
-      taints = [
-        { key = "observability-stateful", value = "true", effect = "NoSchedule" }
-      ]
-      labels = {
-        "eks-practice.io/workload-type" = "observability-stateful"
-      }
-      limits               = { cpu = "20", memory = "80Gi" }
-      consolidation_policy = "WhenEmpty"
-      consolidate_after    = "10m"
-      # "20%"는 이 풀 규모(1~2노드)에서 내림 처리로 0이 되어 자발적 disruption 자체가
-      # 영구 차단된다(WhenEmpty 정리도, AMI drift에 의한 노드 교체도 실행되지 않음).
-      # 노드 수 기준 절대값으로 최소 1대는 항상 교체 가능하도록 보장한다.
-      disruption_budgets = [{ nodes = "1" }]
-    }
-  }
+  # karpenter_node_pools — GitOps Bridge(Phase 6-4)로 이관 완료. NodePool/EC2NodeClass 스펙은
+  # 이제 eks-practice-devops-manifest 저장소의 charts/eks-addons/karpenter-resources/에서
+  # 관리한다 — 값을 바꾸려면 이 저장소가 아니라 그쪽 저장소를 수정한다.
 }
