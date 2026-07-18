@@ -510,31 +510,28 @@
       기본 정책에 이미 포함되어 있어 추가 변경 불필요. teardown/재구축이 잦은 실습 환경
       특성상 이 클래스의 값(클러스터 고유 ID가 박히는 값)은 전부 정적 오버라이드보다 런타임
       자동 탐지를 우선 검토해야 한다는 일반 원칙을 확인했다.
-- [ ] argocd-image-updater — blueprints 밖에서 별도 `helm_release`로 관리 중(ECR 접근용 IRSA
-      보유, 6-3 패턴 후보). 아직 작업 요청서 미작성 — 다음 착수 대상
-      (전부 한 커밋/한 세션에 몰아하지 않는다 — 애드온별로 검증 후 다음으로)
-      - [ ] `kubernetes_manifest.argocd_image_updater_git_creds`(ExternalSecret)도 함께 이관 검토 —
-            ArgoCD 자신의 repo-creds와 달리 ESO·ArgoCD가 이미 뜬 뒤에만 소비되는 하위 리소스라
-            순환 의존이 없음을 확인함(6-4 argocd-github-app-repo-creds 순환 해소 작업 때 함께 검토)
-- [ ] **ClusterSecretStore/ExternalSecret GitOps 이관 검토** (2026-07-18 식별) — 아래는 전부
-      ESO·ArgoCD가 이미 뜬 뒤에만 소비되는 하위 리소스라 `argocd_github_app_repo_creds`(영구
-      Terraform 예외)와 달리 순환 의존 문제가 없어 이관 후보다. 각각 담당 addon 컨트롤러
-      이관 작업에 묶어서 진행한다 — 별도 작업으로 분리하지 않는다:
-      - [ ] `notifications_secret_store_argo_rollouts` / `argo_rollouts_notification_secret` —
-            argo-rollouts는 이미 이관 완료 상태이므로 이 둘만 후속으로 이관 가능
-      - [ ] `notifications_secret_store_argocd` / `argocd_notification_secret` — ArgoCD Helm
-            release 자체는 부트스트랩 영구 예외로 남지만, 이 Secret/ClusterSecretStore는
-            ArgoCD 재조정 대상과 무관한 별개 K8s 오브젝트라 독립적으로 이관 가능한지 검토
-      - [ ] `aws_parameterstore_secret_store`(범용 ClusterSecretStore) — 특정 addon에 종속되지
-            않은 플랫폼 레벨 리소스라 이관 시점·소유 Application을 별도로 정해야 함
-- [ ] **Karpenter NodeClass/NodePool GitOps 이관 검토** (2026-07-18 식별) — `karpenter.tf`의
-      `kubernetes_manifest.karpenter_ec2_node_class` / `karpenter_node_pool`. 위 ClusterSecretStore와
-      동일한 패턴이다 — Karpenter 컨트롤러가 이미 ArgoCD 관리 대상이라 그 CRD가 등록돼야 이
-      리소스들의 plan이 가능하고(3-B-4 apply 때 실제로 이 순서로 성공 확인함), Karpenter가
-      이미 뜬 뒤에만 소비되는 하위 리소스라 순환 의존이 없다. karpenter 컨트롤러 이관 작업에
-      묶어서 검토(이미 6-4에서 컨트롤러 자체는 이관 완료 상태이므로 이 둘만 후속 이관 대상).
+- [x] argocd-image-updater — `helm_release`를 devops-manifest
+      `charts/eks-addons/argocd-image-updater`로 이관 완료(2026-07-18). ECR ext: 스크립트
+      인증(Alpine initContainer로 docker-credential-ecr-login 주입)까지 전부 무중단 인수.
+      IAM(ECR 인증/read 정책)은 계속 Terraform 유지
+      - [x] `kubernetes_manifest.argocd_image_updater_git_creds`(ExternalSecret)도 함께 이관 완료
+- [x] **ClusterSecretStore/ExternalSecret GitOps 이관 완료** (2026-07-18) — notification
+      secrets 4개(argo-rollouts/argocd SecretStore+ExternalSecret)와 범용
+      `aws_parameterstore_secret_store`(ClusterSecretStore) 전부 devops-manifest Application으로
+      이관, sync 검증(파드 재시작 0회) 후 Terraform state 정리 완료. IAM Role/ServiceAccount는
+      계속 Terraform 유지
+- [x] **Karpenter NodeClass/NodePool GitOps 이관 완료** (2026-07-18) — devops-manifest
+      `charts/eks-addons/karpenter-resources`(plain-manifest Application, 이 저장소 최초의
+      non-Helm 소스)로 이관. `limits.cpu` 등 순수 숫자 Quantity 필드는 YAML에서 quote 없이
+      써야 한다는 함정 발견(`temp/gitops-migration-karpenter-nodeclass-nodepool.md`).
       (`argocd_cluster_self`(`gitops-bridge-irsa.tf`)는 검토 결과 후보 아님 — ArgoCD 자신의
       클러스터 등록 정보라 repo-creds와 같은 영구 Terraform 예외로 남는다.)
+
+**6-4 완료 — GitOps Bridge로 이관된 monitoring 애드온**: aws-load-balancer-controller,
+metrics-server, argo-rollouts, karpenter(+NodeClass/NodePool), external-dns,
+external-secrets, argocd-image-updater(+git-creds), notification secrets(argo-rollouts/
+argocd), 범용 ClusterSecretStore. **영구 Terraform 예외**: ArgoCD 자신(Helm release),
+ArgoCD repo-creds, ArgoCD 자신의 cluster Secret(`argocd_cluster_self`).
 
 **6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록**
 - [ ] dev/prd EKS access entry에 Hub(monitoring) ArgoCD의 IAM Role 등록
