@@ -240,11 +240,23 @@ Karpenter의 SQS 인터럽션 큐·EventBridge Rule, `argocd-github-app-repo-cre
 
 **3-B-2. ArgoCD로 addon 등록 — 순서 중요**
 
-devops-manifest 저장소의 `argocd/eks-addons/*.yaml`을 가져와 `kubectl apply -f`로 등록한 뒤
-`argocd app sync <name> --core`로 sync한다(`--core`는 kubeconfig 권한으로 로그인 없이
-동작 — `docs/`나 이전 세션 기록 참고). **addon 전용 ApplicationSet이 devops-manifest에
-아직 없다면**(`argocd/applicationsets/`에 eks-addons용 파일이 있는지로 확인) 이 등록은
-매번 수동이다 — 있다면 git push만으로 자동 반영되므로 이 단계는 건너뛴다.
+> **갱신(2026-07-19, devops-manifest 커밋 0d0929c 이후)**: `argocd/eks-addons/*.yaml` 10개를
+> devops-manifest가 `argocd/applicationsets/eks-addons/`로 옮기고 `root-app.yaml`에
+> `directory.recurse: true`를 추가해, 이 10개 Application **객체 자체의 생성/유지는 이제
+> root-app이 자동으로 한다** — 파일을 가져와 `kubectl apply -f`로 등록하는 절차는 더 이상
+> 필요 없다(root-app이 없는 상태라면 `argocd/root-app.yaml` 1개만 최초 1회 수동
+> `kubectl apply`하면 된다 — devops-manifest의 `argocd/CLAUDE.md`가 "App of Apps 진입점,
+> 유일하게 수동 kubectl apply가 필요한 리소스"라고 명시한 그 파일이다).
+>
+> 다만 이 10개 Application은 `syncPolicy`가 여전히 `Manual`이다(라이브에서
+> `argocd app list --core`의 SYNCPOLICY 컬럼으로 직접 확인 — automated로 바뀐 게 아니다).
+> 즉 root-app이 Application **객체**는 자동으로 만들어주지만, 그 안의 실제 Helm release를
+> 클러스터에 반영하는 것(`argocd app sync`)은 여전히 아래 절차대로 수동이다 — "파일 등록"만
+> 사라졌을 뿐 "sync 순서" 자체는 그대로 유효하다.
+
+`root-app`이 없다면 `kubectl apply -f argocd/root-app.yaml`로 최초 1회 부트스트랩한다.
+그 후 `argocd app sync <name> --core`로 sync한다(`--core`는 kubeconfig 권한으로 로그인 없이
+동작 — `docs/`나 이전 세션 기록 참고).
 
 순서:
 1. **LBC를 가장 먼저** sync하고 `kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로 `Running` 확인 (다른 addon의 Service 생성이 LBC의 mutating webhook을 거치는데, LBC가 안 뜬 상태면 아래 3-B-3과 같은 웹훅 경쟁이 재발한다)
@@ -264,10 +276,16 @@ LBC 파드가 `Running`인지 재확인 후 실패한 addon의 sync만 재실행
 cd {root}/eks-addons && terraform apply -auto-approve
 ```
 
-이 시점에야 ESO의 ClusterSecretStore/ExternalSecret(image-updater git-creds, notifications
-Slack 토큰 등)과 Karpenter의 NodeClass/NodePool이 plan 가능해진다. 아래 에러가 나오면 해당
-addon(ESO 또는 Karpenter)의 sync가 아직 `Healthy`가 아니라는 뜻이니 `argocd app get <name>
---core`로 상태를 재확인한 뒤 재시도한다:
+> **참고 (2026-07-18 Phase 6-4 완료 후 갱신)**: monitoring은 ESO의 ClusterSecretStore/
+> ExternalSecret(image-updater git-creds, notifications Slack 토큰 등)과 Karpenter의
+> NodeClass/NodePool까지 전부 GitOps Bridge로 이관 완료되어, 이 root에는 더 이상 ArgoCD
+> 관리 CRD에 의존하는 Terraform 리소스가 없다 — 이 apply는 통상 `0 to add, 0 to change,
+> 0 to destroy`(no-op)로 끝난다. 이 단계는 앞으로 새 addon이 추가되거나 develop/
+> production이 GitOps Bridge로 전환되어 같은 패턴(CRD 의존 리소스)이 다시 생길 경우를
+> 대비해 절차만 남겨둔다.
+
+아래 에러가 나오면 해당 addon(ESO 또는 Karpenter)의 sync가 아직 `Healthy`가 아니라는
+뜻이니 `argocd app get <name> --core`로 상태를 재확인한 뒤 재시도한다:
 
 - `no matches for kind "EC2NodeClass" in group "karpenter.k8s.aws"`
 - `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`

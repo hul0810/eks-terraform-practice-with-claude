@@ -138,8 +138,8 @@ variable "enable_argocd" {
 # GitOps Bridge(Phase 6)로 addon을 하나씩 ArgoCD 관리로 이관하는 동안은 true로 유지한다.
 # ArgoCD를 제외한 나머지 addon이 전부 이관 완료되면 이 값을 false로 바꿔 한 번에
 # 이 모듈의 Helm 관리 범위를 ArgoCD 하나만 남긴다 — main.tf의 module
-# "eks_blueprints_addons"(ArgoCD 제외)에만 전달되고 module "eks_blueprints_addons_argocd"에는
-# 전달되지 않는 이유는 그 파일 상단 주석 참조.
+# "eks_blueprints_addons"(ArgoCD 제외)에만 전달되고 ArgoCD를 설치하는 module
+# "gitops_bridge_bootstrap"에는 이 변수 자체가 없는(전달 대상이 아닌) 이유는 그 파일 상단 주석 참조.
 variable "create_kubernetes_resources" {
   description = "ArgoCD와 GitOps Bridge로 이미 이관 완료된 addon(LBC 등, eks_blueprints_addons_gitops 인스턴스)을 제외한 나머지 addon(ExternalDNS/Metrics Server/External Secrets/Karpenter/Argo Rollouts 중 아직 이관 안 된 것)의 Helm release 생성 여부. false로 바꾸면 이 addon들의 Kubernetes 리소스 생성을 한 번에 중단한다(AWS 쪽 IAM Role 등은 유지) — GitOps Bridge 최종 전환 시점에만 사용. LBC처럼 이미 이관 완료된 addon은 eks_blueprints_addons_gitops에서 항상 비활성이라 이 변수의 영향을 받지 않는다."
   type        = bool
@@ -347,6 +347,24 @@ variable "external_dns_assume_role_arn" {
 variable "argocd_controller_irsa_role_arn" {
   description = "ArgoCD application-controller ServiceAccount(argocd-application-controller)에 붙일 IRSA Role ARN. GitOps Bridge 패턴에서 ArgoCD가 다른/자기 자신 클러스터를 awsAuthConfig로 명시 등록할 때 필요. null이면 이 값을 주입하지 않는다(기존 in-cluster 암묵 등록만 쓰는 환경은 불필요)."
   type        = string
+  nullable    = true
+  default     = null
+}
+
+# [WHY — Hub 여부를 코드 위치가 아니라 변수의 null 여부로 가르는 이유]
+# 이 프로젝트는 실무 투입을 목표로 하는 개인 학습 프로젝트라, 실제 회사에서 여러 클러스터를
+# 관리하며 검증된 설계를 참고했다(사용자가 이전 직장에서 실제 운영하던 Terraform 코드 —
+# terraform-aws-modules/eks 공용 모듈이 gitops_bridge_bootstrap_hub를 for_each 키의
+# 존재 여부로 opt-in시키는 패턴). 처음엔 "Hub 전용 로직(cluster Secret 등)은 공유 모듈이 아니라
+# root에 둬야 한다"고 생각했었다 — Hub만 갖는 데이터(image-updater Role ARN 등)가 root에만
+# 있었기 때문이다. 하지만 그건 "코드가 어디 있는가"와 "이 클러스터가 Hub인가"를 혼동한
+# 것이었다 — 데이터는 root에서 계산해 변수로 넘기면 그만이고, "Hub냐 아니냐"라는 판단 자체는
+# 이 변수 하나(null이면 spoke, 값이 있으면 Hub)로 표현하는 게 재사용성 측면에서 더 낫다.
+# develop/production이 나중에 이 모듈(2.0.0)로 이관되어 spoke가 되어도, 이 변수를 안 넘기기만
+# 하면 코드 수정 없이 자연스럽게 spoke로 동작한다.
+variable "gitops_bridge_hub" {
+  description = "GitOps Bridge Hub 전용 설정(cluster/apps). null이면 이 클러스터는 Hub 역할을 하지 않는다 — module.gitops_bridge_bootstrap의 cluster Secret·App-of-Apps 리소스가 생성되지 않는다. 스키마는 gitops-bridge-dev/gitops-bridge/helm 모듈 자체의 cluster/apps 변수를 그대로 따른다(별도 스키마를 새로 정의하지 않음 — 벤더 모듈의 인터페이스를 그대로 노출)."
+  type        = any
   nullable    = true
   default     = null
 }

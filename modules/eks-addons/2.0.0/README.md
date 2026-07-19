@@ -19,8 +19,8 @@ No requirements.
 | Name | Source | Version |
 |------|--------|---------|
 | <a name="module_eks_blueprints_addons"></a> [eks\_blueprints\_addons](#module\_eks\_blueprints\_addons) | aws-ia/eks-blueprints-addons/aws | ~> 1.23.0 |
-| <a name="module_eks_blueprints_addons_argocd"></a> [eks\_blueprints\_addons\_argocd](#module\_eks\_blueprints\_addons\_argocd) | aws-ia/eks-blueprints-addons/aws | ~> 1.23.0 |
 | <a name="module_eks_blueprints_addons_gitops"></a> [eks\_blueprints\_addons\_gitops](#module\_eks\_blueprints\_addons\_gitops) | aws-ia/eks-blueprints-addons/aws | ~> 1.23.0 |
+| <a name="module_gitops_bridge_bootstrap"></a> [gitops\_bridge\_bootstrap](#module\_gitops\_bridge\_bootstrap) | gitops-bridge-dev/gitops-bridge/helm | ~> 0.1 |
 
 ## Resources
 
@@ -69,6 +69,7 @@ No requirements.
 | <a name="input_external_secrets_chart_version"></a> [external\_secrets\_chart\_version](#input\_external\_secrets\_chart\_version) | External Secrets Operator Helm chart 버전 (예: "2.7.0"). enable\_external\_secrets=false이면 미사용 — null 허용 | `string` | `null` | no |
 | <a name="input_external_secrets_kms_key_arns"></a> [external\_secrets\_kms\_key\_arns](#input\_external\_secrets\_kms\_key\_arns) | External Secrets Operator가 SecureString 파라미터 복호화에 사용할 KMS Key ARN 목록. 빈 리스트이면 blueprints 기본값(모든 KMS 키 와일드카드 arn:aws:kms:*:*:key/*)을 사용 — 운영 환경에서는 반드시 명시할 것 | `list(string)` | `[]` | no |
 | <a name="input_external_secrets_ssm_parameter_arns"></a> [external\_secrets\_ssm\_parameter\_arns](#input\_external\_secrets\_ssm\_parameter\_arns) | External Secrets Operator가 읽을 수 있는 SSM Parameter ARN 목록. 빈 리스트이면 blueprints 기본값(모든 파라미터 와일드카드 arn:aws:ssm:*:*:parameter/*)을 사용 — 운영 환경에서는 반드시 명시할 것 | `list(string)` | `[]` | no |
+| <a name="input_gitops_bridge_hub"></a> [gitops\_bridge\_hub](#input\_gitops\_bridge\_hub) | GitOps Bridge Hub 전용 설정(cluster/apps). null이면 이 클러스터는 Hub 역할을 하지 않는다 — module.gitops\_bridge\_bootstrap의 cluster Secret·App-of-Apps 리소스가 생성되지 않는다. 스키마는 gitops-bridge-dev/gitops-bridge/helm 모듈 자체의 cluster/apps 변수를 그대로 따른다(별도 스키마를 새로 정의하지 않음 — 벤더 모듈의 인터페이스를 그대로 노출). | `any` | `null` | no |
 | <a name="input_karpenter_chart_version"></a> [karpenter\_chart\_version](#input\_karpenter\_chart\_version) | Karpenter Helm chart 버전 (예: "1.3.3") | `string` | n/a | yes |
 | <a name="input_lbc_chart_version"></a> [lbc\_chart\_version](#input\_lbc\_chart\_version) | AWS Load Balancer Controller Helm chart 버전 (예: "3.4.0") | `string` | n/a | yes |
 | <a name="input_metrics_server_chart_version"></a> [metrics\_server\_chart\_version](#input\_metrics\_server\_chart\_version) | Metrics Server Helm chart 버전 (예: "3.12.2") | `string` | n/a | yes |
@@ -84,6 +85,7 @@ No requirements.
 |------|-------------|
 | <a name="output_external_dns_role_arn"></a> [external\_dns\_role\_arn](#output\_external\_dns\_role\_arn) | ExternalDNS IRSA IAM Role ARN. blueprints가 생성한다. external\_dns\_route53\_zone\_arns가 비면 빈 문자열 반환 |
 | <a name="output_external_secrets_role_arn"></a> [external\_secrets\_role\_arn](#output\_external\_secrets\_role\_arn) | External Secrets Operator IRSA IAM Role ARN. blueprints가 생성한다. Role 신뢰 정책의 OIDC sub 조건은 system:serviceaccount:external-secrets:external-secrets-sa로 고정된다 |
+| <a name="output_gitops_bridge_addon_metadata"></a> [gitops\_bridge\_addon\_metadata](#output\_gitops\_bridge\_addon\_metadata) | ArgoCD cluster Secret annotation에 그대로 병합해 넣을 수 있는 addon 메타데이터 map. aws-ia/eks-blueprints-addons 벤더 모듈의 공식 gitops\_metadata output을 그대로 노출한다(직접 조립하지 않음 — addon이 추가/변경되면 벤더가 자동으로 갱신). |
 | <a name="output_karpenter_node_iam_role_name"></a> [karpenter\_node\_iam\_role\_name](#output\_karpenter\_node\_iam\_role\_name) | Karpenter 노드 IAM Role 이름. EC2NodeClass의 role 필드에 사용한다 |
 | <a name="output_karpenter_role_arn"></a> [karpenter\_role\_arn](#output\_karpenter\_role\_arn) | Karpenter 컨트롤러 IRSA IAM Role ARN. blueprints가 생성한다 |
 | <a name="output_lbc_role_arn"></a> [lbc\_role\_arn](#output\_lbc\_role\_arn) | AWS Load Balancer Controller IRSA IAM Role ARN. blueprints가 생성한다 |

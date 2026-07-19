@@ -150,7 +150,7 @@ resource "kubernetes_cluster_role_binding" "argocd_read_all" {
   depends_on = [aws_eks_access_entry.argocd_hub_self]
 }
 
-# monitoring 자기 자신을 가리키는 cluster Secret — GitOps Bridge 실습(6-1)용.
+# monitoring 자기 자신을 가리키는 cluster Secret 데이터 — GitOps Bridge 실습(6-1)용.
 # ArgoCD는 파드가 뜬 클러스터를 "in-cluster"로 암묵 등록하지만(server=https://kubernetes.default.svc),
 # 그건 K8s 자체 ServiceAccount 토큰 인증이라 awsAuthConfig 경로를 타지 않는다. 여기서는 일부러
 # 같은 클러스터를 별도 이름(monitoring-self)으로 "명시 등록"해서, 위에서 만든 IRSA+Access
@@ -163,18 +163,43 @@ resource "kubernetes_cluster_role_binding" "argocd_read_all" {
 # 6-5에서 workload 계정 dev/prd를 등록할 때 필요해진다).
 #
 # 스키마 근거: https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
-resource "kubernetes_secret_v1" "argocd_cluster_self" {
-  metadata {
-    name      = "monitoring-self"
-    namespace = "argocd"
-    labels = {
-      "argocd.argoproj.io/secret-type" = "cluster"
-    }
-  }
-
-  data = {
-    name   = "monitoring-self"
-    server = local.cluster_endpoint
+#
+# [metadata — ApplicationSet cluster generator용 메타데이터 브릿지]
+# 공식 gitops-bridge-dev 패턴(https://github.com/gitops-bridge-dev/gitops-bridge)이 쓰는
+# 방식 그대로: Terraform이 만든 addon IAM Role ARN 등을 이 Secret의 K8s object
+# metadata.annotations로 기록해두면, ApplicationSet의 `clusters` generator가 이 Secret을
+# 순회하며 `{{metadata.annotations.lbc_role_arn}}` 같은 템플릿 표현식으로 각 Application에
+# 주입할 수 있다. 이전에는 이 annotation이 비어 있어서(awsAuthConfig만 있었음) devops-manifest의
+# 각 addon values-override.yaml에 ARN을 직접 하드코딩했는데, 이건 monitoring처럼 클러스터가
+# 1개뿐이고 이름이 고정(role_name_use_prefix=false)이라 우연히 문제가 안 됐을 뿐 구조적으로
+# 안전한 방식이 아니었다(Karpenter clusterEndpoint 하드코딩 사고가 그 증거 — 값이 우연히
+# 안정적이지 않으면 바로 깨진다). 6-5(dev/prd를 spoke로 등록)부터는 클러스터마다 값이
+# 달라지므로 이 브릿지가 필수가 된다 — 지금 미리 갖춰서 그때 가서 10개 Application을 통째로
+# 다시 쓰는 일을 피한다.
+#
+# [WHY — 이 local이 kubernetes_secret_v1 리소스가 아니라 module.eks_addons에 넘길 변수인 이유]
+# 원래는 여기서 직접 kubernetes_secret_v1을 선언했지만, ArgoCD 설치 주체를
+# gitops-bridge-dev/gitops-bridge/helm으로 바꾸면서 그 모듈이 cluster Secret 생성까지
+# 전담하게 됐다(modules/eks-addons/2.0.0/main.tf의 module "gitops_bridge_bootstrap" 참고).
+# 그래서 이 root는 이제 리소스를 직접 만들지 않고, "Hub 전용 값(root에서만 계산 가능한 것)"만
+# 조립해 module.eks_addons의 gitops_bridge_hub 변수로 넘긴다. addon별 IRSA Role ARN처럼
+# 그 모듈 스스로 이미 계산해둔 값(gitops_metadata)까지 여기서 미리 합쳐 넣지 않는 이유는,
+# 그러면 "module.eks_addons의 출력을 같은 module.eks_addons의 입력으로 되먹이는" 순환
+# 참조가 되기 때문이다(직접 겪은 실수 — 상세는 modules/eks-addons/2.0.0/main.tf의 module
+# "gitops_bridge_bootstrap" 상단 주석 참고). 그 merge는 공유 모듈 내부(형제 module 참조)에서
+# 이뤄진다.
+locals {
+  gitops_bridge_hub_cluster = {
+    cluster_name = "monitoring-self"
+    # [리뷰에서 발견 — environment 누락 시 벤더 기본값 "dev"로 라벨링됨]
+    # gitops-bridge-dev/gitops-bridge/helm은 이 값을 생략하면 내부 기본값 "dev"를 cluster
+    # Secret의 labels/annotations에 그대로 찍는다(모듈 소스: `environment = try(var.cluster.
+    # environment, "dev")`). 지금은 apps={}라 ApplicationSet cluster generator가 이 라벨을
+    # 셀렉터로 안 쓰고 있어 드러나지 않지만, 6-5(dev/prd를 spoke로 등록하며 label 셀렉터를
+    # 실사용하기 시작하는 단계)에서는 monitoring이 dev 전용 템플릿에 잘못 매칭될 수 있다 —
+    # 그 전에 명시해 이 클래스의 버그를 원천 차단한다.
+    environment = "monitoring"
+    server      = local.cluster_endpoint
     config = jsonencode({
       awsAuthConfig = {
         clusterName = local.cluster_name
@@ -183,12 +208,19 @@ resource "kubernetes_secret_v1" "argocd_cluster_self" {
         caData = local.cluster_certificate_authority_data
       }
     })
+    metadata = {
+      aws_cluster_name              = local.cluster_name
+      aws_region                    = "ap-northeast-2"
+      aws_account_id                = data.aws_caller_identity.current.account_id
+      vpc_id                        = local.vpc_id
+      argocd_image_updater_role_arn = aws_iam_role.argocd_image_updater.arn
+      # workload 계정은 "클러스터마다 달라지는 값"은 아니지만(2계정 토폴로지 자체가
+      # 프로젝트 상수), 이 값도 Terraform이 소유한 값을 devops-manifest에 하드코딩하는
+      # 대신 동일한 브릿지로 전달하는 게 "동적으로 받아올 수 있으면 하드코딩하지 않는다"
+      # 원칙에 맞다 — workload 계정이 바뀌거나(계정 이전 등) 제3의 계정이 추가되는
+      # 경우에도 이 값 하나만 갱신하면 되고 devops-manifest 쪽 코드는 안 건드려도 된다.
+      workload_account_id                 = local.workload_account_id
+      external_dns_cross_account_role_arn = local.external_dns_cross_account_role_arn
+    }
   }
-
-  type = "Opaque"
-
-  depends_on = [
-    module.eks_addons,
-    kubernetes_cluster_role_binding.argocd_read_all,
-  ]
 }

@@ -43,6 +43,14 @@ module "eks_addons" {
   oidc_provider_arn = local.oidc_provider_arn
   vpc_id            = local.vpc_id
 
+  # "rest" 인스턴스(eks_blueprints_addons)에 실제로 연결된 addon은 enable_metrics_server/
+  # enable_argo_rollouts 2개뿐인데 monitoring은 둘 다 false다 — 즉 이 인스턴스에 Helm으로
+  # 설치할 addon이 하나도 안 남았다. modules/eks-addons/2.0.0/CLAUDE.md가 예고한 "남은 addon이
+  # 없어지면 이 값을 false로 바꿔 최종 정리" 시점이라 명시적으로 false로 고정한다 — 지금
+  # 당장은 no-op이지만(어차피 활성 addon이 없음), 향후 이 인스턴스에 새 addon이 실수로
+  # 추가되어도 Helm이 조용히 다시 뜨는 걸 막는 안전장치 역할을 한다.
+  create_kubernetes_resources = false
+
   enable_aws_load_balancer_controller = local.eks_addons.enable_aws_load_balancer_controller
   lbc_chart_version                   = local.eks_addons.lbc_chart_version
 
@@ -94,8 +102,28 @@ module "eks_addons" {
   # monitoring 클러스터는 OTel Hub — spoke collector 미설치
   enable_otel_spoke_collector = local.eks_addons.enable_otel_spoke_collector
 
+  # GitOps Bridge Hub(Phase 6-1): monitoring이 자기 자신을 spoke로 명시 등록하는 cluster
+  # Secret + (추후) App-of-Apps 데이터. develop/production은 이 변수를 안 넘기면(기본값 null)
+  # spoke로 동작한다 — gitops-bridge-irsa.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.
+  gitops_bridge_hub = {
+    cluster = local.gitops_bridge_hub_cluster
+    apps    = {}
+  }
+
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags
+
+  # gitops_bridge_hub.cluster에 담긴 IAM Role ARN들이 실제로 유효하려면 Access Entry+RBAC
+  # 체인이 먼저 성립해 있어야 한다 — 원래 root가 직접 만들던 kubernetes_secret_v1에 걸려있던
+  # depends_on을 이 module 호출로 그대로 옮긴 것이다(gitops-bridge-irsa.tf 참고).
+  #
+  # [review-terraform 지적 — 이 depends_on의 실제 범위] 이 RBAC 바인딩이 필요한 건 모듈
+  # 내부의 gitops_bridge_bootstrap.cluster Secret 하나뿐인데, 모듈 경계상 그 리소스 하나만
+  # 겨냥해 depends_on을 줄 방법이 없어 module.eks_addons 전체(Karpenter/LBC/ExternalDNS 등
+  # 이 RBAC와 무관한 리소스까지)가 이 뒤로 직렬화된다. 실습 규모에서는 apply 시간 영향이
+  # 미미해 감수하지만, 이 RBAC 바인딩을 재생성해야 하는 상황이 생기면 전체 addon apply가
+  # 불필요하게 대기한다는 걸 알고 있어야 한다.
+  depends_on = [kubernetes_cluster_role_binding.argocd_read_all]
 }
 
 # ExternalDNS IRSA Role에 크로스 계정 assume 권한 추가
