@@ -4,9 +4,9 @@ description: >
   develop/monitoring/production 실습 환경의 비용 발생 리소스(eks-addons, EKS 클러스터, VPC NAT Gateway)를
   역순으로 삭제한다. terraform destroy만으로는 정리되지 않는 잔여 리소스
   (ArgoCD Application/ApplicationSet가 재조정 중인 Ingress·ALB, workload 계정 Route53에
-  ExternalDNS가 만든 레코드, karpenter 노드 조기 drain으로 발생하는 external-secrets 웹훅 교착과
-  VPC CNI secondary ENI 잔존, 삭제된 클러스터를 가리키는 ~/.kube/config 잔여 context/cluster/user
-  항목)까지 함께 관리한다.
+  ExternalDNS가 만든 레코드, VPC CNI secondary ENI 잔존, 삭제된 클러스터를 가리키는
+  ~/.kube/config 잔여 context/cluster/user 항목, Terraform state가 영향을 받는 addon
+  IAM/AWS 리소스 사후 검증)까지 함께 관리한다.
   VPC 자체·서브넷·파라미터 스토어 등 비용이 없는 리소스는 삭제하지 않는다. 3개 환경 모두
   실습용이므로 production도 대상이다.
 disable-model-invocation: false
@@ -67,7 +67,7 @@ allowed-tools:
 
 > **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
 > `environments/production` 경로의 `terraform apply`를 기본적으로 차단한다
-> (`terraform destroy`는 정규식 대상이 아니므로 차단되지 않는다). 즉 Step 7~8의
+> (`terraform destroy`는 정규식 대상이 아니므로 차단되지 않는다). 즉 Step 6·8의
 > `terraform destroy`는 그대로 진행되지만, Step 10의 NAT Gateway 비활성화(`terraform apply`)는
 > 훅에 막힌다. production teardown도 실습 예외 대상이므로, Step 10에서는 명령 앞에
 > `ALLOW_PRODUCTION_TEARDOWN_APPLY=1` 마커를 붙여 실행한다 (`docs/environment-teardown.md`
@@ -250,7 +250,7 @@ aws elbv2 describe-load-balancers --region ap-northeast-2 --profile <profile> \
 ```
 
 Step 3에서 기록한 모든 ALB가 빈 결과(`[]`)가 될 때까지 대기한다.
-3분 초과 시 경고를 출력하고 계속 진행한다 (Step 7에서 다시 확인 기회가 있음을 안내).
+3분 초과 시 경고를 출력하고 계속 진행한다 (Step 6에서 다시 확인 기회가 있음을 안내).
 Step 2에서 Application을 이미 제거했으므로 이 시점에는 ArgoCD가 Ingress를 재생성할 수
 없다 — 그래도 최종 확인은 Step 11에서 한 번 더 이뤄진다.
 
@@ -315,36 +315,13 @@ aws route53 change-resource-record-sets --hosted-zone-id <zone-id> --profile ter
 > 생성까지 함께 막힌다). Ingress 하나에 A 1개 + TXT 2개가 세트로 생긴다는 점을 항상 함께
 > 고려해야 한다.
 
-### Step 6: external-secrets ValidatingWebhookConfiguration 사전 제거
-
-클러스터가 연결 가능하면 아래를 실행한다 (없으면 조용히 스킵):
-
-```bash
-kubectl delete validatingwebhookconfigurations externalsecret-validate secretstore-validate --ignore-not-found
-```
-
-> **WHY**: eks-addons destroy 그래프에서 `null_resource.karpenter_nodeclaims_drainer`가
-> Karpenter 노드를 조기에 삭제하면서 external-secrets-webhook 파드도 함께 사라진다. 이후
-> `kubernetes_manifest.aws_parameterstore_secret_store`(ClusterSecretStore) /
-> `argocd_image_updater_git_creds` 등 ESO 의존 ExternalSecret·ClusterSecretStore 삭제가
-> webhook 호출 실패(`no endpoints available for service "external-secrets-webhook"`)로
-> 멈춘다. 클러스터 전체를 지우는 중이므로 검증 webhook을 미리 제거해도 안전하다 — 재시도
-> 없이 한 번에 destroy가 끝난다.
->
-> **참고 (GitOps Bridge 이관 후 갱신)**: ArgoCD 자신의 repo-creds
-> (`kubernetes_secret_v1.argocd_github_app_repo_creds`)는 순환 의존 문제로 ESO를 거치지
-> 않고 SSM Parameter Store를 직접 읽는 Terraform 네이티브 리소스로 바뀌어(`main.tf` 참고)
-> 더 이상 이 webhook에 의존하지 않는다 — 이 단계가 필요한 이유는 여전히 ESO 기반으로 남은
-> 나머지 ExternalSecret/ClusterSecretStore 때문이다.
-
-### Step 7: eks-addons destroy
+### Step 6: eks-addons destroy
 
 ```bash
 cd {root}/eks-addons && terraform destroy -auto-approve
 ```
 
-**`Timed out when waiting for resource ... to be deleted` 에러 시** (finalizer 잔존 —
-Step 6으로 대부분 예방되지만 다른 리소스에서 발생 가능):
+**`Timed out when waiting for resource ... to be deleted` 에러 시** (finalizer 잔존):
 
 ```bash
 kubectl get <kind> <name> -n <namespace> -o jsonpath='{.metadata.finalizers}'
@@ -353,9 +330,19 @@ kubectl patch <kind> <name> -n <namespace> --type=merge -p '{"metadata":{"finali
 
 제거 후 destroy를 재시도한다. 그 외 에러는 사용자에게 보고 후 중단한다.
 
-### Step 7.5: eks-addons destroy 사후 검증 — Terraform state 및 AWS API 이중 확인
+> **참고 (2026-07-18 갱신 — external-secrets webhook 사전 제거 단계 제거됨)**: 예전에는 이
+> Step 앞에 `externalsecret-validate`/`secretstore-validate` ValidatingWebhookConfiguration을
+> 미리 지우는 단계가 있었다 — Karpenter 노드 조기 drain으로 external-secrets-webhook 파드가
+> 먼저 사라지면, Terraform이 소유하던 ExternalSecret/ClusterSecretStore(`aws_parameterstore_secret_store`,
+> `argocd_image_updater_git_creds` 등) 삭제가 webhook 호출 실패로 멈추는 문제 때문이었다.
+> Phase 6-4 GitOps Bridge 이관으로 이 리소스들이 전부 devops-manifest(ArgoCD Application)로
+> 옮겨가면서, monitoring/develop/production 어디에도 Terraform이 직접 소유하는 ExternalSecret/
+> ClusterSecretStore/SecretStore가 더 이상 없다 — 이 문제 자체가 발생할 수 없어졌으므로
+> 단계를 완전히 제거했다.
 
-Step 7이 `Destroy complete!`로 끝났다는 출력만으로 완료 처리하지 않는다. GitOps Bridge
+### Step 7: eks-addons destroy 사후 검증 — Terraform state 및 AWS API 이중 확인
+
+Step 6이 `Destroy complete!`로 끝났다는 출력만으로 완료 처리하지 않는다. GitOps Bridge
 이관 여부(`modules/eks-addons/1.0.0` vs `2.0.0` 이상)와 무관하게, LBC/Karpenter/
 ExternalDNS/ExternalSecrets의 IAM Role·Policy와 Karpenter의 SQS 인터럽션 큐·EventBridge
 Rule은 **항상** 이 root(`eks-addons`)의 Terraform state가 관리해왔다 — GitOps Bridge는
@@ -370,7 +357,7 @@ cd {root}/eks-addons && terraform state list
 ```
 
 `terraform destroy`가 성공했다면 이 출력은 **반드시 비어있어야 한다**. 무엇이든 남아있으면
-Step 7이 일부만 destroy된 것이므로, 남은 리소스 주소를 사용자에게 보고하고 원인을 확인한다
+Step 6이 일부만 destroy된 것이므로, 남은 리소스 주소를 사용자에게 보고하고 원인을 확인한다
 (재시도로 넘어가지 않는다 — 부분 destroy 상태에서 재시도하면 의도치 않은 순서로 나머지가
 지워질 수 있다).
 
@@ -384,11 +371,11 @@ aws events list-rules --region ap-northeast-2 --profile <profile> --name-prefix 
 
 첫 번째 명령 결과에 `lbc`/`load-balancer`, `karpenter`, `external-dns`, `external-secrets`
 문자열이 포함된 role이 남아있거나, 두 번째·세 번째 명령 결과가 비어있지 않으면 AWS 쪽
-전파가 아직 안 끝난 것이니 최대 2분 polling 후 재확인한다. 그래도 남아있으면 Step 7 destroy
+전파가 아직 안 끝난 것이니 최대 2분 polling 후 재확인한다. 그래도 남아있으면 Step 6 destroy
 결과와 모순되는 것이므로 재시도 없이 사용자에게 보고한다.
 
 > **WHY (2026-07-18 GitOps Bridge 이관 후 도입)**: monitoring이 `modules/eks-addons/2.0.0`로
-> 이관되며 Terraform이 더 이상 addon의 Helm release를 직접 만들지 않게 됐다 — Step 7의
+> 이관되며 Terraform이 더 이상 addon의 Helm release를 직접 만들지 않게 됐다 — Step 6의
 > `terraform destroy` 출력만 보고 "addon이 다 지워졌다"고 판단하면, 실제로는 Terraform이
 > 애초에 관리하지 않는(ArgoCD가 설치한) 부분과 Terraform이 여전히 관리하는 IAM/AWS 부분을
 > 혼동하기 쉽다. addon 이름별로 "이건 Terraform 관리, 이건 ArgoCD 관리"를 표로 유지하는
@@ -405,7 +392,7 @@ cd {root}/eks && terraform destroy -auto-approve
 ```
 
 이 destroy를 시작하는 즉시(완료를 기다리지 않고) **Step 10의 VPC NAT Gateway 비활성화도
-병렬로 시작한다.** eks-addons가 이미 Step 7에서 삭제되어 클러스터 안에 아웃바운드가 필요한
+병렬로 시작한다.** eks-addons가 이미 Step 6에서 삭제되어 클러스터 안에 아웃바운드가 필요한
 워크로드가 남아있지 않으므로, EKS 클러스터 destroy 자체(컨트롤 플레인·노드그룹·SG 삭제는
 AWS API 호출이지 고객 VPC 경유 아웃바운드가 아니다)는 NAT Gateway 유무와 무관하게 안전하게
 동시 진행할 수 있다 (2026-07-04 확인 — provision 쪽 Step 1/2 병렬화와 같은 근거).

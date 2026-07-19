@@ -104,7 +104,7 @@ Helm values `serviceAccount.annotations` 주입을 내부에서 자동 처리한
 | Karpenter | IRSA (blueprints 자동 처리) | `enable_karpenter = false`로 비활성화 가능 |
 | ArgoCD | 없음 | GitOps 전환(Phase 5) 시작점. AWS API 미호출로 IAM 불필요 |
 | Argo Rollouts | 없음 | Canary·Blue-Green 배포 전략 구현. AWS API 미호출로 IAM 불필요 |
-| External Secrets Operator | IRSA(blueprints 자동 처리, 이번 단계에서는 스코프 미지정) | `enable_external_secrets = false`로 비활성화 가능. ArgoCD repo-creds는 ESO를 거치지 않고 Terraform이 SSM을 직접 읽어 만든다(아래 "GitOps 관리 경계" 참조) — image-updater git-creds 등 나머지는 여전히 ESO(`ClusterSecretStore/aws-parameterstore`) 경유, `monitoring/environments/ap-northeast-2/shared/eks-addons/main.tf`에서 구성 완료 |
+| External Secrets Operator | IRSA(blueprints 자동 처리, 이번 단계에서는 스코프 미지정) | `enable_external_secrets = false`로 비활성화 가능. ArgoCD repo-creds는 ESO를 거치지 않고 Terraform이 SSM을 직접 읽어 만든다(아래 "GitOps 관리 경계" 참조). monitoring은 나머지 SecretStore/ClusterSecretStore/ExternalSecret(image-updater git-creds, notifications 등)도 전부 GitOps Bridge(Phase 6-4, 2026-07-18)로 devops-manifest 저장소의 ArgoCD Application으로 이관 완료 — Terraform은 ESO 컨트롤러 자체의 IAM(IRSA)만 유지한다 |
 
 ### Secrets Store CSI Driver 대신 External Secrets Operator를 쓰는 이유 (2026-07-02 결정)
 
