@@ -55,9 +55,19 @@ variable "enable_aws_load_balancer_controller" {
   default     = true
 }
 
-variable "lbc_chart_version" {
-  description = "AWS Load Balancer Controller Helm chart 버전 (예: \"3.4.0\")"
-  type        = string
+# [WHY — chart_version/role_name을 각각 변수로 안 두고 객체 통째로 받는 이유]
+# role_name 하나만 변수로 빼는 방식도 가능하지만, 그러면 "이 addon 설정 중 어디까지가 root
+# 책임이고 어디부터가 모듈 책임인가"의 경계가 애매해진다. aws-ia/eks-blueprints-addons가
+# 받는 aws_load_balancer_controller 객체 전체(chart_version, role_name,
+# role_name_use_prefix 등)를 이 모듈은 내용을 전혀 들여다보지 않고 그대로 vendor에
+# 전달한다 — enable_aws_load_balancer_controller(켜고 끄기)만 이 모듈이 알고, 나머지는 전부
+# root가 결정한다(재사용 가능한 Terraform 모듈에서 흔히 쓰는 패턴:
+# `aws_load_balancer_controller = try(each.value.aws_load_balancer_controller, ...)`
+# 형태로 addon 설정 객체를 그대로 pass-through). 기본값이 없는 이유도 같다 — 네이밍 정책이
+# 바뀌어도 이 공유 모듈은 절대 안 건드리고 root 값만 바꾸면 되게 하기 위함이다.
+variable "lbc_config" {
+  description = "aws-ia/eks-blueprints-addons의 aws_load_balancer_controller 객체를 그대로 전달한다(chart_version/role_name/role_name_use_prefix 등). 이 모듈은 내용을 모른다 — 전부 호출자가 결정"
+  type        = any
 }
 
 variable "enable_external_dns" {
@@ -72,37 +82,27 @@ variable "external_dns_route53_zone_arns" {
   default     = []
 }
 
-variable "external_dns_chart_version" {
-  description = "ExternalDNS Helm chart 버전 (예: \"1.14.5\")"
-  type        = string
-}
-
-variable "enable_metrics_server" {
-  description = "Metrics Server 설치 여부"
-  type        = bool
-  default     = true
-}
-
-variable "metrics_server_chart_version" {
-  description = "Metrics Server Helm chart 버전 (예: \"3.12.2\")"
-  type        = string
+# 기본값 없음 — lbc_config와 동일한 이유(위 참고).
+variable "external_dns_config" {
+  description = "aws-ia/eks-blueprints-addons의 external_dns 객체를 그대로 전달한다(chart_version/role_name 등). 이 모듈은 내용을 모른다 — 전부 호출자가 결정"
+  type        = any
 }
 
 variable "enable_external_secrets" {
   description = "External Secrets Operator 설치 여부"
   type        = bool
-  default     = false # 신규 애드온이므로 opt-in (enable_argo_rollouts, enable_otel_spoke_collector와 동일한 정책)
+  default     = false # 신규 애드온이므로 opt-in (enable_otel_spoke_collector와 동일한 정책)
 }
 
-variable "external_secrets_chart_version" {
-  description = "External Secrets Operator Helm chart 버전 (예: \"2.7.0\"). enable_external_secrets=false이면 미사용 — null 허용"
-  type        = string
-  nullable    = true
-  default     = null
+# 기본값 없음 — lbc_config와 동일한 이유(위 참고). validation은 nested key(chart_version)를
+# try()로 방어적으로 확인한다 — type=any라 존재하지 않는 키 접근은 plan 단계에서 에러가 나므로.
+variable "external_secrets_config" {
+  description = "aws-ia/eks-blueprints-addons의 external_secrets 객체를 그대로 전달한다(chart_version/role_name 등). 이 모듈은 내용을 모른다 — 전부 호출자가 결정"
+  type        = any
 
   validation {
-    condition     = !var.enable_external_secrets || (var.external_secrets_chart_version != null && length(var.external_secrets_chart_version) > 0)
-    error_message = "enable_external_secrets=true일 때 external_secrets_chart_version은 설정되어야 합니다."
+    condition     = !var.enable_external_secrets || (try(var.external_secrets_config.chart_version, null) != null && length(var.external_secrets_config.chart_version) > 0)
+    error_message = "enable_external_secrets=true일 때 external_secrets_config.chart_version은 설정되어야 합니다."
   }
 }
 
@@ -118,15 +118,32 @@ variable "external_secrets_kms_key_arns" {
   default     = []
 }
 
+
 variable "enable_karpenter" {
   description = "Karpenter 설치 여부. false이면 blueprints가 관련 IAM Role, SQS, EventBridge Rule, Helm release를 생성하지 않는다"
   type        = bool
   default     = true
 }
 
-variable "karpenter_chart_version" {
-  description = "Karpenter Helm chart 버전 (예: \"1.3.3\")"
-  type        = string
+# [WHY — policy_statements는 이 객체 스키마에서 root가 채울 필드가 아니다]
+# main.tf에서 이 값을 merge()로 강제 병합한다(iam:CreateServiceLinkedRole — blueprints 기본
+# 정책 결함에 대한 정합성 fix, 정책적 선택이 아니라 Karpenter+Spot이 정상 동작하기 위한
+# 고정 요구사항). root가 이 필드를 깜빡해도 항상 포함되도록 모듈이 강제한다 — root가
+# 추가 정책을 더 넣고 싶으면 이 객체에 policy_statements를 포함해도 되고(모듈이 concat으로
+# 합침), 안 넣어도 무방하다.
+variable "karpenter_config" {
+  description = "aws-ia/eks-blueprints-addons의 karpenter 객체를 그대로 전달한다(chart_version/role_name/policy_name 등). policy_statements는 이 모듈이 정합성 fix를 강제 병합하므로 root가 안 채워도 된다"
+  type        = any
+}
+
+variable "karpenter_node_config" {
+  description = "aws-ia/eks-blueprints-addons의 karpenter_node 객체를 그대로 전달한다(iam_role_name 등). 이 모듈은 내용을 모른다 — 전부 호출자가 결정"
+  type        = any
+}
+
+variable "karpenter_sqs_config" {
+  description = "aws-ia/eks-blueprints-addons의 karpenter_sqs 객체를 그대로 전달한다(queue_name). 이 모듈은 내용을 모른다 — 전부 호출자가 결정"
+  type        = any
 }
 
 variable "enable_argocd" {
@@ -135,49 +152,17 @@ variable "enable_argocd" {
   default     = true
 }
 
-# GitOps Bridge(Phase 6)로 addon을 하나씩 ArgoCD 관리로 이관하는 동안은 true로 유지한다.
-# ArgoCD를 제외한 나머지 addon이 전부 이관 완료되면 이 값을 false로 바꿔 한 번에
-# 이 모듈의 Helm 관리 범위를 ArgoCD 하나만 남긴다 — main.tf의 module
-# "eks_blueprints_addons"(ArgoCD 제외)에만 전달되고 ArgoCD를 설치하는 module
-# "gitops_bridge_bootstrap"에는 이 변수 자체가 없는(전달 대상이 아닌) 이유는 그 파일 상단 주석 참조.
-variable "create_kubernetes_resources" {
-  description = "ArgoCD와 GitOps Bridge로 이미 이관 완료된 addon(LBC 등, eks_blueprints_addons_gitops 인스턴스)을 제외한 나머지 addon(ExternalDNS/Metrics Server/External Secrets/Karpenter/Argo Rollouts 중 아직 이관 안 된 것)의 Helm release 생성 여부. false로 바꾸면 이 addon들의 Kubernetes 리소스 생성을 한 번에 중단한다(AWS 쪽 IAM Role 등은 유지) — GitOps Bridge 최종 전환 시점에만 사용. LBC처럼 이미 이관 완료된 addon은 eks_blueprints_addons_gitops에서 항상 비활성이라 이 변수의 영향을 받지 않는다."
-  type        = bool
-  default     = true
-}
-
-variable "enable_argo_rollouts" {
-  description = "Argo Rollouts 설치 여부. Canary·Blue-Green 배포 전략을 Kubernetes에서 구현한다"
-  type        = bool
-  default     = false
-}
-
-# [GitOps Bridge 이관 후 enable_argo_rollouts의 의미 변화 — Phase 6-4에서 발견]
-# ArgoCD Helm values의 rollout-extension(UI에 canary/bluegreen 진행 상황 표시)은 원래
-# enable_argo_rollouts를 "Argo Rollouts가 클러스터에 실제로 있는가"의 신호로 재사용했다.
-# 그런데 Argo Rollouts의 Helm 설치가 ArgoCD로 이관되면(enable_argo_rollouts=false로 Terraform이
-# 손을 떼도) 클러스터에는 Argo Rollouts가 계속 존재한다 — "Terraform이 설치하는가"와 "클러스터에
-# 있는가"가 더 이상 같은 뜻이 아니게 됐다. 이 변수를 null(기본값)로 두면 기존 동작(1.0.0 등
-# 이관 전 환경과 호환)을 그대로 유지하고, GitOps Bridge로 이관된 환경(monitoring)만 명시적으로
-# true를 지정해 extension을 계속 켜둔다.
+# [WHY — Argo Rollouts는 이 모듈이 전혀 관여하지 않는데 이 변수가 왜 필요한가]
+# Argo Rollouts는 처음부터 ArgoCD가 Helm으로 설치·관리한다(devops-manifest) — Terraform은
+# IAM도 Helm도 관여하지 않는다. 하지만 ArgoCD 자신의 UI에는 Argo Rollouts 진행 상황을 보여주는
+# rollout-extension이 있고, 그건 ArgoCD Helm values(이 모듈이 관리)의 일부라서 "Argo Rollouts가
+# 클러스터에 실제로 있는가"를 이 모듈에 알려줘야 한다. 이 모듈은 그걸 스스로 알 방법이 없으므로
+# (Argo Rollouts에 전혀 관여하지 않으니) root가 직접 알려준다 — 기본값을 두지 않는 이유도
+# 다른 *_config 변수와 동일: false로 잘못 추정했다가 UI extension이 조용히 꺼지는 것보다,
+# root가 명시적으로 결정하게 강제하는 편이 안전하다.
 variable "argo_rollouts_extension_enabled" {
-  description = "ArgoCD UI의 Argo Rollouts rollout-extension 활성화 여부. null이면 enable_argo_rollouts를 그대로 따른다(기본 동작) — GitOps Bridge로 Argo Rollouts의 Helm 설치만 ArgoCD로 넘어가고 Terraform은 enable_argo_rollouts=false로 손을 뗀 환경(클러스터엔 Argo Rollouts가 여전히 존재)에서는 true를 명시해야 extension이 계속 표시된다."
+  description = "ArgoCD UI의 Argo Rollouts rollout-extension 활성화 여부. Argo Rollouts가 클러스터에 실제로 존재하는지는 이 모듈이 알 수 없으므로 root가 직접 결정한다"
   type        = bool
-  default     = null
-  nullable    = true
-}
-
-variable "argo_rollouts_chart_version" {
-  description = "Argo Rollouts Helm chart 버전 (예: \"2.38.1\"). enable_argo_rollouts=false이면 미사용 — null 허용"
-  type        = string
-  nullable    = true
-  default     = null
-}
-
-variable "argo_rollouts_notifications_slack_enabled" {
-  description = "Argo Rollouts Notifications의 Slack 알림 서비스(notifications.notifiers[\"service.slack\"]) 활성화 여부. true로 설정하는 환경은 대상 네임스페이스(argo-rollouts)에 argo-rollouts-notification-secret Secret(키 slack-token)이 미리 준비되어 있어야 한다(예: External Secrets Operator)."
-  type        = bool
-  default     = false
 }
 
 variable "argocd_notifications_slack_enabled" {
@@ -277,16 +262,14 @@ variable "argocd_admin_password_mtime" {
   default     = ""
 }
 
+# lbc/karpenter/external_dns/metrics_server/argo_rollouts/external_secrets 필드는 없다 —
+# 그 addon들의 Helm release는 ArgoCD가 관리해서 replica 수도 devops-manifest의
+# values-override.yaml이 결정한다. 이 모듈이 Helm을 직접 만드는 건 ArgoCD 자신뿐이라
+# argocd_server만 의미가 있다.
 variable "replica_counts" {
-  description = "애드온별 Pod replica 수. 환경별로 HA/비용 요구사항에 맞게 조정한다. 기본값은 프로덕션 권장 최솟값"
+  description = "ArgoCD server/repoServer/applicationSet의 HA 모드 replica 수"
   type = object({
-    lbc              = optional(number, 2) # LBC: replicaCount 기본 2
-    karpenter        = optional(number, 2) # Karpenter: replicas 기본 2
-    external_dns     = optional(number, 1) # ExternalDNS: 기본 1 (단일 인스턴스로 충분)
-    metrics_server   = optional(number, 1) # MetricsServer: replicas 기본 1
-    argocd_server    = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수
-    argo_rollouts    = optional(number, 1) # Argo Rollouts controller: 기본 1. 시스템 노드 HA(min>=2) 확보 후 2로 증설
-    external_secrets = optional(number, 1) # External Secrets Operator: replicaCount 기본 1
+    argocd_server = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수
   })
   default = {}
 
@@ -352,10 +335,9 @@ variable "argocd_controller_irsa_role_arn" {
 }
 
 # [WHY — Hub 여부를 코드 위치가 아니라 변수의 null 여부로 가르는 이유]
-# 이 프로젝트는 실무 투입을 목표로 하는 개인 학습 프로젝트라, 실제 회사에서 여러 클러스터를
-# 관리하며 검증된 설계를 참고했다(사용자가 이전 직장에서 실제 운영하던 Terraform 코드 —
-# terraform-aws-modules/eks 공용 모듈이 gitops_bridge_bootstrap_hub를 for_each 키의
-# 존재 여부로 opt-in시키는 패턴). 처음엔 "Hub 전용 로직(cluster Secret 등)은 공유 모듈이 아니라
+# 여러 클러스터를 관리하는 실무 Terraform 모듈에서 흔히 쓰는 opt-in 패턴을 참고했다
+# (예: 공용 EKS 모듈이 Hub 전용 부트스트랩 서브모듈을 for_each 키의 존재 여부로
+# opt-in시키는 구조). 처음엔 "Hub 전용 로직(cluster Secret 등)은 공유 모듈이 아니라
 # root에 둬야 한다"고 생각했었다 — Hub만 갖는 데이터(image-updater Role ARN 등)가 root에만
 # 있었기 때문이다. 하지만 그건 "코드가 어디 있는가"와 "이 클러스터가 Hub인가"를 혼동한
 # 것이었다 — 데이터는 root에서 계산해 변수로 넘기면 그만이고, "Hub냐 아니냐"라는 판단 자체는

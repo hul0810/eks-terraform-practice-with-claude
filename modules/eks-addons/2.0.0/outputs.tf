@@ -1,8 +1,6 @@
 output "lbc_role_arn" {
   description = "AWS Load Balancer Controller IRSA IAM Role ARN. blueprints가 생성한다"
-  # Phase 6-3: Helm release는 ArgoCD로 이관되고 IAM만 Terraform이 유지 —
-  # module.eks_blueprints_addons_gitops(main.tf 참고)로 이동
-  value = module.eks_blueprints_addons_gitops.aws_load_balancer_controller.iam_role_arn
+  value       = module.eks_blueprints_addons_gitops.aws_load_balancer_controller.iam_role_arn
 }
 
 output "karpenter_role_arn" {
@@ -34,7 +32,7 @@ output "external_secrets_role_arn" {
 # GitOps Bridge 메타데이터 번들 — 직접 map을 조립하지 않고 aws-ia/eks-blueprints-addons
 # 벤더 모듈이 이미 제공하는 공식 output을 그대로 통과시킨다.
 #
-# [2026-07-18 정정] 처음엔 이 output을 lbc_role_arn 등 4개를 손으로 나열해 만들었으나,
+# 처음엔 이 output을 lbc_role_arn 등 4개를 손으로 나열해 만들었으나,
 # 벤더 모듈 소스(.terraform/modules/eks_blueprints_addons/outputs.tf)를 직접 확인해보니
 # "gitops_metadata"라는 output이 이미 있었다 — 모듈 자체 주석: "This output is intended
 # to be used with GitOps... We guarantee that this output will be maintained any time a

@@ -1,11 +1,16 @@
 ################################################################################
-# EKS Addons 모듈 — Helm (blueprints) 전용
+# EKS Addons 모듈 — GitOps Bridge 패턴 전용
 #
-# 관리 범위: AWS LB Controller, ExternalDNS, Metrics Server, External Secrets Operator,
-#            Karpenter, ArgoCD, Argo Rollouts
+# 관리 범위: AWS LB Controller, ExternalDNS, External Secrets Operator, Karpenter(IAM만),
+#            ArgoCD(설치 + Hub 부트스트랩)
 #
-# 이 모듈은 EKS 관리형 addon API(aws_eks_addon)가 없거나 Helm values 커스터마이징이
-# 필요한 애드온을 aws-ia/eks-blueprints-addons 모듈로 관리한다.
+# GitOps Bridge 패턴을 쓴다는 것 자체가 addon의 Helm release는 ArgoCD가 관리한다는 뜻이다 —
+# 이 모듈은 addon을 Terraform-Helm으로 먼저 들여왔다가 나중에 ArgoCD로 옮기는 "과도기 상태"를
+# 더 이상 지원하지 않는다(과거엔 그런 인스턴스가 있었으나, 이 프로젝트의 모든 addon이
+# ArgoCD 이관을 마친 뒤 제거했다 — 새 addon도 처음부터 ArgoCD가 Helm을 관리하고, 이 모듈은
+# 필요한 경우(AWS API를 직접 호출하는 addon) IAM만 유지한다). IAM이 필요 없는 addon
+# (metrics-server, argo-rollouts 등)은 이 모듈이 아예 관여하지 않는다 — devops-manifest의
+# ArgoCD Application이 처음부터 전담한다.
 #
 # [EBS CSI Driver를 여기서 관리하지 않는 이유]
 # EBS CSI는 Bootstrap 애드온으로 분류되어 modules/eks에서 관리한다.
@@ -17,572 +22,10 @@
 # Helm values serviceAccount.annotations 주입을 자동 처리한다.
 ################################################################################
 
-locals {
-  # Argo Rollouts UI Extension 버전 고정. 이 프로젝트의 모든 Helm chart 버전 고정 원칙과 동일하게
-  # "latest"가 아닌 특정 태그를 명시한다 — argocd-server pod 재시작(노드 교체, HPA 등 코드 변경과
-  # 무관한 이벤트)마다 initContainer가 매번 새로 다운로드하므로, latest를 쓰면 git diff 없이도
-  # 배포된 아티팩트가 바뀌는 상태가 된다. 업그레이드 시 이 값만 변경한다.
-  rollout_extension_version = "v0.4.0"
-
-  # var.argo_rollouts_extension_enabled가 null이면 기존 동작(enable_argo_rollouts를 그대로 따름)을
-  # 유지한다 — variables.tf의 "GitOps Bridge 이관 후 enable_argo_rollouts의 의미 변화" 주석 참조.
-  argo_rollouts_extension_enabled = (
-    var.argo_rollouts_extension_enabled != null
-    ? var.argo_rollouts_extension_enabled
-    : var.enable_argo_rollouts
-  )
-
-  # Argo Rollouts Notifications — Slack 알림 서비스(notifiers) + 공식 기본 templates/triggers
-  # 9종씩(argoproj/argo-rollouts 공식 저장소 manifests/notifications-install.yaml 기준, email
-  # notifier용 항목은 이 프로젝트가 이메일 알림을 쓰지 않으므로 제외)을 함께 구성한다.
-  # notifiers만으로는 알림이 발송되지 않는다 — trigger가 어떤 이벤트에서 어떤 template으로 보낼지
-  # 정의하고, template이 실제 Slack 메시지 포맷을 정의해야 한다. 이 9개 trigger가 여기 준비되어
-  # 있어야 GitOps 저장소(eks-practice-devops-manifest)에서 Rollout 리소스에
-  # notifications.argoproj.io/subscriptions annotation을 붙였을 때 실제로 발송된다
-  # (subscriptions 자체는 여전히 GitOps 저장소에서 Rollout annotation으로 관리 — Terraform 범위 밖).
-  # $slack-token은 실제 토큰이 아니라 같은 네임스페이스의 argo-rollouts-notification-secret
-  # Secret의 slack-token 키를 가리키는 notifications-engine 참조 문법이다.
-  argo_rollouts_values = var.argo_rollouts_notifications_slack_enabled ? {
-    notifications = {
-      notifiers = {
-        "service.slack" = <<-EOT
-          token: $slack-token
-        EOT
-      }
-      templates = {
-        "template.analysis-run-error"     = <<-EOT
-          message: Rollout {{.rollout.metadata.name}}'s analysis run is in error state.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#ECB22E",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.analysis-run-failed"    = <<-EOT
-          message: Rollout {{.rollout.metadata.name}}'s analysis run failed.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#E01E5A",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.analysis-run-running"   = <<-EOT
-          message: Rollout {{.rollout.metadata.name}}'s analysis run is running.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#18be52",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.rollout-aborted"        = <<-EOT
-          message: Rollout {{.rollout.metadata.name}} has been aborted.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#E01E5A",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.rollout-completed"      = <<-EOT
-          message: Rollout {{.rollout.metadata.name}} has been completed.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#18be52",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.rollout-paused"         = <<-EOT
-          message: Rollout {{.rollout.metadata.name}} has been paused.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#18be52",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.rollout-step-completed" = <<-EOT
-          message: Rollout {{.rollout.metadata.name}} step number {{ add .rollout.status.currentStepIndex 1}}/{{len .rollout.spec.strategy.canary.steps}} has been completed.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#18be52",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  },
-                  {
-                    "title": "Step completed",
-                    "value": "{{add .rollout.status.currentStepIndex 1}}/{{len .rollout.spec.strategy.canary.steps}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.rollout-updated"        = <<-EOT
-          message: Rollout {{.rollout.metadata.name}} has been updated.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#18be52",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-        "template.scaling-replicaset"     = <<-EOT
-          message: Scaling Rollout {{.rollout.metadata.name}}'s replicaset to {{.rollout.spec.replicas}}.
-          slack:
-            attachments: |
-                [{
-                  "title": "{{ .rollout.metadata.name}}",
-                  "color": "#18be52",
-                  "fields": [
-                  {
-                    "title": "Strategy",
-                    "value": "{{if .rollout.spec.strategy.blueGreen}}BlueGreen{{end}}{{if .rollout.spec.strategy.canary}}Canary{{end}}",
-                    "short": true
-                  },
-                  {
-                    "title": "Desired replica",
-                    "value": "{{.rollout.spec.replicas}}",
-                    "short": true
-                  },
-                  {
-                    "title": "Updated replicas",
-                    "value": "{{.rollout.status.updatedReplicas}}",
-                    "short": true
-                  }
-                  {{range $index, $c := .rollout.spec.template.spec.containers}}
-                    {{if not $index}},{{end}}
-                    {{if $index}},{{end}}
-                    {
-                      "title": "{{$c.name}}",
-                      "value": "{{$c.image}}",
-                      "short": true
-                    }
-                  {{end}}
-                  ]
-                }]
-        EOT
-      }
-      triggers = {
-        "trigger.on-analysis-run-error"     = <<-EOT
-          - send: [analysis-run-error]
-        EOT
-        "trigger.on-analysis-run-failed"    = <<-EOT
-          - send: [analysis-run-failed]
-        EOT
-        "trigger.on-analysis-run-running"   = <<-EOT
-          - send: [analysis-run-running]
-        EOT
-        "trigger.on-rollout-aborted"        = <<-EOT
-          - send: [rollout-aborted]
-        EOT
-        "trigger.on-rollout-completed"      = <<-EOT
-          - send: [rollout-completed]
-        EOT
-        "trigger.on-rollout-paused"         = <<-EOT
-          - send: [rollout-paused]
-        EOT
-        "trigger.on-rollout-step-completed" = <<-EOT
-          - send: [rollout-step-completed]
-        EOT
-        "trigger.on-rollout-updated"        = <<-EOT
-          - send: [rollout-updated]
-        EOT
-        "trigger.on-scaling-replica-set"    = <<-EOT
-          - send: [scaling-replicaset]
-        EOT
-      }
-    }
-  } : {}
-
-  # ArgoCD Application Notifications — Slack. 3종만 구성한다(app-health-degraded/app-sync-failed/
-  # app-sync-status-unknown) — "정상 동작은 알림 불필요" 원칙으로 on-deployed/on-sync-running/
-  # on-sync-succeeded/on-created/on-deleted는 의도적으로 제외. templates는 공식 카탈로그
-  # (argoproj/argo-cd notifications_catalog)와 구조가 달라 message+slack만 담은 경량 버전으로
-  # 별도 작성했고, triggers는 공식 카탈로그의 when/oncePer/send/description을 그대로 사용한다
-  # (ArgoCD Application은 이벤트가 아니라 상태를 계속 재평가하는 구조라 when 조건이 필수).
-  argocd_notifications_values = var.argocd_notifications_slack_enabled ? {
-    notifiers = {
-      "service.slack" = <<-EOT
-        token: $slack-token
-      EOT
-    }
-    templates = {
-      "template.app-health-degraded"     = <<-EOT
-        message: Application {{.app.metadata.name}} is Degraded.
-        slack:
-          attachments: |
-            [{
-              "title": "{{.app.metadata.name}}",
-              "color": "#E01E5A",
-              "fields": [
-                {"title": "Sync Status", "value": "{{.app.status.sync.status}}", "short": true},
-                {"title": "Health Status", "value": "{{.app.status.health.status}}", "short": true},
-                {"title": "Repository", "value": "{{.app.spec.source.repoURL}}", "short": false}
-              ]
-            }]
-      EOT
-      "template.app-sync-failed"         = <<-EOT
-        message: Application {{.app.metadata.name}} sync has failed.
-        slack:
-          attachments: |
-            [{
-              "title": "{{.app.metadata.name}}",
-              "color": "#E01E5A",
-              "fields": [
-                {"title": "Sync Status", "value": "{{.app.status.sync.status}}", "short": true},
-                {"title": "Revision", "value": "{{.app.status.sync.revision}}", "short": true}
-              ]
-            }]
-      EOT
-      "template.app-sync-status-unknown" = <<-EOT
-        message: Application {{.app.metadata.name}}'s sync status is Unknown.
-        slack:
-          attachments: |
-            [{
-              "title": "{{.app.metadata.name}}",
-              "color": "#ECB22E",
-              "fields": [
-                {"title": "Sync Status", "value": "{{.app.status.sync.status}}", "short": true}
-              ]
-            }]
-      EOT
-    }
-    triggers = {
-      "trigger.on-health-degraded"     = <<-EOT
-        - description: Application has degraded
-          oncePer: app.status.operationState?.syncResult?.revision
-          send:
-          - app-health-degraded
-          when: app.status.health.status == 'Degraded'
-      EOT
-      "trigger.on-sync-failed"         = <<-EOT
-        - description: Application syncing has failed
-          oncePer: app.status.operationState?.syncResult?.revision
-          send:
-          - app-sync-failed
-          when: app.status.operationState != nil and app.status.operationState.phase in ['Error',
-            'Failed']
-      EOT
-      "trigger.on-sync-status-unknown" = <<-EOT
-        - description: Application status is 'Unknown'
-          oncePer: app.status.operationState?.syncResult?.revision
-          send:
-          - app-sync-status-unknown
-          when: app.status.sync.status == 'Unknown'
-      EOT
-    }
-  } : {}
-
-  argocd_values = {
-    global = {
-      tolerations = [{
-        key      = "CriticalAddonsOnly"
-        operator = "Exists"
-        effect   = "NoSchedule"
-      }]
-    }
-    dex = { enabled = false }
-    # GitOps Bridge 패턴: ArgoCD가 클러스터를 awsAuthConfig로 명시 등록하려면
-    # application-controller ServiceAccount에 IRSA Role이 붙어 있어야 AWS IAM 인증이 가능하다.
-    # 이 값이 Helm chart의 controller.serviceAccount.annotations 경로에 정확히 대응한다는 것을
-    # `helm show values argo/argo-cd --version 9.5.21`로 직접 확인했다. null이면(기본값) 이
-    # 블록 자체를 생략해 기존 in-cluster 암묵 등록만 쓰는 환경(dev/prd)에는 영향이 없다.
-    controller = var.argocd_controller_irsa_role_arn != null ? {
-      serviceAccount = {
-        annotations = {
-          "eks.amazonaws.com/role-arn" = var.argocd_controller_irsa_role_arn
-        }
-      }
-    } : {}
-    # secret.create=false가 필요한 이유: argo-cd Helm chart의 notifications.secret.create 기본값이
-    # true라 이대로 두면 Helm이 argocd-notifications-secret을 직접 생성하려 시도하고, 우리 쪽
-    # ExternalSecret(argocd-notifications.tf)도 같은 이름의 Secret을 만들려 해서 소유권이 충돌한다.
-    # false로 명시해 ESO(External Secrets Operator)가 전담하도록 한다.
-    notifications = merge(
-      {
-        enabled = var.argocd_notifications_slack_enabled
-        secret  = { create = false }
-      },
-      local.argocd_notifications_values
-    )
-    "redis-ha" = {
-      enabled = var.argocd_ha_enabled
-      tolerations = [{
-        key      = "CriticalAddonsOnly"
-        operator = "Exists"
-        effect   = "NoSchedule"
-      }]
-    }
-    server = merge(
-      { replicas = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 },
-      # ALB Ingress: ACM 인증서로 TLS 종료, 백엔드는 server.insecure=true로 평문 HTTP.
-      # ExternalDNS가 external-dns 어노테이션을 보고 argo-develop.pyhtest.com 레코드를 자동 생성한다
-      # (external_dns_route53_zone_arns에 pyhtest.com zone ARN이 포함되어 있어야 함).
-      var.argocd_ingress_enabled ? {
-        ingress = {
-          enabled          = true
-          ingressClassName = "alb"
-          hostname         = var.argocd_ingress_hostname
-          annotations = {
-            "alb.ingress.kubernetes.io/scheme"             = "internet-facing"
-            "alb.ingress.kubernetes.io/target-type"        = "ip"
-            "alb.ingress.kubernetes.io/certificate-arn"    = var.argocd_ingress_acm_certificate_arn
-            "alb.ingress.kubernetes.io/listen-ports"       = "[{\"HTTPS\": 443}]"
-            "alb.ingress.kubernetes.io/inbound-cidrs"      = join(",", var.argocd_ingress_allowed_cidrs)
-            "alb.ingress.kubernetes.io/load-balancer-name" = var.argocd_ingress_alb_name
-            "external-dns.alpha.kubernetes.io/hostname"    = var.argocd_ingress_hostname
-          }
-        }
-      } : {},
-      # Argo Rollouts UI Extension: argocd-server initContainer로 정적 파일을 받아와 UI에 canary/bluegreen
-      # 진행 상황을 표시한다. Argo Rollouts 자체가 클러스터에 없는 환경에서는 표시할 대상이
-      # 없으므로 local.argo_rollouts_extension_enabled에 종속시켜 무의미한 initContainer가
-      # 뜨지 않도록 한다 — enable_argo_rollouts를 직접 쓰지 않는 이유는 variables.tf의
-      # "GitOps Bridge 이관 후 enable_argo_rollouts의 의미 변화" 주석 참조.
-      # 릴리스 자산 실제 파일명은 extension.tar(.gz 아님) — v0.4.0 기준 GitHub Releases에서 확인.
-      # EXTENSION_CHECKSUM_URL 미설정: rollout-extension 릴리스에 체크섬 파일 자체가 게시되지 않아
-      # (v0.4.0 자산은 extension.tar 단일 파일) 검증 대상 URL이 없다. 버전 태그 고정이 현재
-      # 확보 가능한 무결성 보장의 전부다.
-      local.argo_rollouts_extension_enabled ? {
-        extensions = {
-          enabled = true
-          extensionList = [{
-            name = "extension-rollout-extension"
-            env = [
-              {
-                name  = "EXTENSION_URL"
-                value = "https://github.com/argoproj-labs/rollout-extension/releases/download/${local.rollout_extension_version}/extension.tar"
-              },
-              {
-                name  = "EXTENSION_VERSION"
-                value = local.rollout_extension_version
-              },
-            ]
-          }]
-        }
-      } : {}
-    )
-    repoServer     = { replicas = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 }
-    applicationSet = { replicaCount = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 }
-    # ALB가 TLS를 종료하므로 ArgoCD server는 평문 HTTP로 서빙 (argocd-cmd-params-cm: server.insecure)
-    configs = merge(
-      var.argocd_ingress_enabled ? {
-        params = { "server.insecure" = true }
-      } : {},
-      # argocd_admin_password_bcrypt가 설정된 경우에만 secret 블록을 주입한다.
-      # bcrypt 해시는 반드시 사전 계산된 고정값을 사용해야 한다. Terraform bcrypt() 함수를
-      # 직접 사용하면 apply할 때마다 새 salt가 생성되어 argocd-secret이 매번 업데이트되고
-      # ArgoCD server pod가 재시작된다.
-      # argocdServerAdminPasswordMtime: ArgoCD가 패스워드 변경 여부를 판단하는 타임스탬프.
-      # 패스워드를 재설정하려면 이 값도 함께 변경해야 ArgoCD가 새 해시를 반영한다.
-      var.argocd_admin_password_bcrypt != "" ? {
-        secret = {
-          argocdServerAdminPassword      = var.argocd_admin_password_bcrypt
-          argocdServerAdminPasswordMtime = var.argocd_admin_password_mtime
-        }
-      } : {}
-    )
-  }
-}
-
-################################################################################
-# module.eks_blueprints_addons에서 ArgoCD를 아예 빼둔 이유 (Phase 6 리팩토링)
-#
-# aws-ia/terraform-aws-eks-blueprints-addons는 addon마다 별도 스위치(enable_metrics_server 등)를
-# 두면서도, "Kubernetes 리소스(Helm release)를 실제로 만들지 여부"를 결정하는
-# create_kubernetes_resources 변수는 그 모듈 인스턴스 전체에 걸쳐 단 하나뿐이다 — 소스를 직접
-# 확인한 결과 argocd/metrics_server/karpenter 등 26개 addon 서브모듈이 전부
-# `create_release = var.create_kubernetes_resources`로 예외 없이 같은 변수를 참조한다.
-#
-# 이 프로젝트는 GitOps Bridge(Phase 6)로 addon을 ArgoCD 관리로 하나씩 이관하면서도, ArgoCD
-# 자신만은 부트스트랩 예외로 영원히 Terraform이 관리해야 한다(ArgoCD가 자기 자신을 GitOps로
-# 관리할 수는 없다 — 관리 주체가 없어짐). ArgoCD는 이 모듈에 아예 넣지 않는다 — 아래
-# module "gitops_bridge_bootstrap"이 전담한다(그 모듈 블록 상단 주석 참고 — blueprints로
-# ArgoCD를 설치하지 않게 된 이유가 자세히 적혀 있다).
-################################################################################
-
-module "eks_blueprints_addons" {
-  source  = "aws-ia/eks-blueprints-addons/aws"
-  version = "~> 1.23.0"
-
-  cluster_name      = var.cluster_name
-  cluster_endpoint  = var.cluster_endpoint
-  cluster_version   = var.cluster_version
-  oidc_provider_arn = var.oidc_provider_arn
-
-  # GitOps Bridge(Phase 6) 최종 전환 스위치 — 위 섹션 설명 참고. ArgoCD는 이 module에 아예
-  # 없으므로(module "gitops_bridge_bootstrap"이 전담) 이 스위치의 영향을 받지 않는다.
-  create_kubernetes_resources = var.create_kubernetes_resources
-
-  # ── Metrics Server ────────────────────────────────────────────────────────────
-  # 순수 오픈소스. IAM 불필요.
-  enable_metrics_server = var.enable_metrics_server
-  metrics_server = {
-    chart_version = var.metrics_server_chart_version
-    set = [
-      # 기본값 1이나 명시적으로 관리
-      { name = "replicas", value = tostring(var.replica_counts.metrics_server) },
-      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "tolerations[0].key", value = "CriticalAddonsOnly" },
-      { name = "tolerations[0].operator", value = "Exists" },
-      { name = "tolerations[0].effect", value = "NoSchedule" },
-    ]
-  }
-
-  # ── Argo Rollouts ─────────────────────────────────────────────────────────────
-  # Canary·Blue-Green 배포 전략을 Kubernetes에서 구현한다.
-  # AWS API를 직접 호출하지 않으므로 IAM 불필요 (metrics-server·ArgoCD와 동일).
-  # ALB Ingress와 연동하는 경우 LBC 의존성이 생기므로 LBC보다 나중에 배포된다.
-  enable_argo_rollouts = var.enable_argo_rollouts
-  argo_rollouts = {
-    chart_version = var.argo_rollouts_chart_version
-    set = [
-      # 기본값 2 — dev는 replica_counts.argo_rollouts=1로 낮춰 시스템 노드 리소스 확보
-      { name = "controller.replicas", value = tostring(var.replica_counts.argo_rollouts) },
-      # 시스템 노드(CriticalAddonsOnly taint)에 스케줄 — 인프라 컴포넌트이므로 앱 노드와 분리
-      { name = "controller.tolerations[0].key", value = "CriticalAddonsOnly" },
-      { name = "controller.tolerations[0].operator", value = "Exists" },
-      { name = "controller.tolerations[0].effect", value = "NoSchedule" },
-    ]
-    values = [yamlencode(local.argo_rollouts_values)]
-  }
-
-  tags = var.additional_tags
-}
-
 # ArgoCD 설치 + GitOps Bridge Hub 부트스트랩 — gitops-bridge-dev/gitops-bridge/helm 사용.
-# GitOps 전환(Phase 5)의 시작점. dex(SSO)·notifications는 미구성 상태이므로 비활성화 —
-# 필요 시 이후 단계에서 활성화. app-controller(controller.replicas)는 sharding 설정이
-# 추가로 필요해 이 단계에서는 1로 유지(local.argocd_values, 위 참고).
+# dex(SSO)·notifications는 미구성 상태이므로 비활성화 — 필요 시 이후 단계에서 활성화.
+# app-controller(controller.replicas)는 sharding 설정이 추가로 필요해 이 단계에서는 1로
+# 유지(local.argocd_values, locals.tf 참고).
 #
 # [WHY — blueprints가 아니라 이 모듈로 ArgoCD를 설치하는 이유]
 # 원래는 blueprints(aws-ia/eks-blueprints-addons)의 module "argocd" 서브모듈로 ArgoCD를
@@ -679,7 +122,7 @@ module "gitops_bridge_bootstrap" {
 
 ################################################################################
 # module "eks_blueprints_addons_gitops" — GitOps Bridge로 ArgoCD 관리로 이관됐지만
-# IAM(IRSA)은 계속 Terraform이 유지해야 하는 addon 전용 인스턴스 (Phase 6-3~)
+# IAM(IRSA)은 계속 Terraform이 유지해야 하는 addon 전용 인스턴스
 #
 # module "gitops_bridge_bootstrap"(위)와 반대 성격이다: 그쪽은 "Helm은 Terraform이
 # 영원히 유지"하는 부트스트랩 예외이고, 이쪽은 "IAM만 Terraform이 유지하고 Helm은 ArgoCD가
@@ -687,11 +130,12 @@ module "gitops_bridge_bootstrap" {
 # create(=enable_x)는 true로 두어 IAM Role/Policy는 계속 생성하되, create_release(Helm
 # release)는 이 인스턴스 전체에서 절대 만들지 않는다.
 #
-# LBC가 첫 입주자다(Phase 6-3). 이후 6-4에서 Karpenter/ExternalDNS/External Secrets 등을
-# 이관할 때도 "rest" 인스턴스(module "eks_blueprints_addons")에서 해당 addon 블록을 여기로
-# 옮기기만 하면 된다 — addon마다 새 모듈 인스턴스를 만들 필요 없이 이 인스턴스를 계속 재사용.
+# IAM이 필요한 새 addon이 생기면 이 인스턴스에 블록을 추가하기만 하면 된다 — addon마다 새
+# 모듈 인스턴스를 만들 필요 없이 이 인스턴스를 계속 재사용. GitOps Bridge 패턴에서는 Helm이
+# 처음부터 ArgoCD 몫이므로, "Terraform-Helm으로 먼저 들여왔다가 나중에 여기로 옮기는" 단계
+# 자체가 없다 — IAM이 필요한 addon은 처음부터 여기서 시작한다.
 #
-# state 이전 시 유의 (LBC 최초 이관 때 실제로 밟은 절차):
+# state 이전 시 유의:
 #   1. ArgoCD Application이 sync를 통해 Helm release를 실제로 인수했는지 먼저 검증한다
 #      (diff가 tracking annotation뿐인지, sync 후 파드/ALB 등에 이상 없는지) — 검증 전에는
 #      Terraform의 helm_release를 절대 건드리지 않는다(검증 실패 시 되돌릴 안전망 유지).
@@ -715,34 +159,27 @@ module "eks_blueprints_addons_gitops" {
   # 노출하지 않고 고정한다.
   create_kubernetes_resources = false
 
-  # ── AWS Load Balancer Controller (Phase 6-3, GitOps Bridge 이관 완료) ─────────
+  # ── AWS Load Balancer Controller ──────────────────────────────────────────────
   # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/aws-load-balancer-
-  # controller)이 관리한다. 여기서는 IRSA(IAM Role/Policy)만 유지한다 — role_name 등은
-  # 기존과 동일하게 고정해 ArgoCD values의 serviceAccount.annotations가 가리키는 ARN이
-  # 바뀌지 않게 한다.
+  # controller)이 관리한다. 여기서는 IRSA(IAM Role/Policy)만 유지한다 — chart_version/
+  # role_name/role_name_use_prefix 전부 이 모듈이 정하지 않는다(var.lbc_config, 호출자가
+  # 자신의 네이밍 정책으로 결정). ArgoCD values의 serviceAccount.annotations가 가리키는 ARN이
+  # 안 바뀌려면 호출자가 넘기는 값이 기존과 동일해야 한다 — 그 책임은 root에 있다.
   enable_aws_load_balancer_controller = var.enable_aws_load_balancer_controller
-  aws_load_balancer_controller = {
-    chart_version        = var.lbc_chart_version
-    role_name            = "${var.cluster_name}-lbc-irsa"
-    role_name_use_prefix = false
-  }
+  aws_load_balancer_controller        = var.lbc_config
 
-  # ── ExternalDNS (Phase 6-4, GitOps Bridge 이관 완료) ──────────────────────────
+  # ── ExternalDNS ────────────────────────────────────────────────────────────────
   # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/external-dns)이
-  # 관리한다. 여기서는 IRSA만 유지.
+  # 관리한다. 여기서는 IRSA만 유지 — chart_version/role_name 등은 root가 결정(var.external_dns_config).
   enable_external_dns            = var.enable_external_dns
   external_dns_route53_zone_arns = var.external_dns_route53_zone_arns
-  external_dns = {
-    chart_version        = var.external_dns_chart_version
-    role_name            = "${var.cluster_name}-external-dns-irsa"
-    role_name_use_prefix = false
-  }
+  external_dns                   = var.external_dns_config
 
-  # ── External Secrets Operator (Phase 6-4, GitOps Bridge 이관 완료) ───────────
+  # ── External Secrets Operator ─────────────────────────────────────────────────
   # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/external-secrets)이
-  # 관리한다. 여기서는 IRSA만 유지 — IAM 스코프(ssm_parameter_arns/kms_key_arns)는 원래
-  # 빈 리스트일 때 blueprints 기본 와일드카드를 재현하는 로직을 그대로 가져온다(main.tf
-  # "rest" 인스턴스였을 때와 동일한 이유).
+  # 관리한다. 여기서는 IRSA만 유지 — IAM 스코프(ssm_parameter_arns/kms_key_arns)는 빈
+  # 리스트일 때 blueprints 기본 와일드카드를 그대로 재현한다. chart_version/role_name 등은
+  # root가 결정(var.external_secrets_config).
   enable_external_secrets = var.enable_external_secrets
   external_secrets_ssm_parameter_arns = (
     length(var.external_secrets_ssm_parameter_arns) > 0
@@ -754,49 +191,45 @@ module "eks_blueprints_addons_gitops" {
     ? var.external_secrets_kms_key_arns
     : ["arn:aws:kms:*:*:key/*"] # blueprints 기본값과 동일
   )
-  external_secrets = {
-    chart_version        = var.external_secrets_chart_version
-    role_name            = "${var.cluster_name}-external-secrets-irsa"
-    role_name_use_prefix = false
-  }
+  external_secrets = var.external_secrets_config
 
-  # ── Karpenter (Phase 6-4, GitOps Bridge 이관 완료) ────────────────────────────
+  # ── Karpenter ──────────────────────────────────────────────────────────────────
   # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/karpenter)이
   # 관리한다. 여기서는 컨트롤러 IRSA + 노드 IAM Role/Instance Profile + SQS 인터럽션 큐를
   # 유지한다 — 전부 AWS 리소스라 Helm 이관 여부와 무관하게 계속 Terraform이 관리해야 한다.
   # EventBridge Rule/Target(SQS 인터럽션 큐 연동)은 vendor 모듈이 enable_karpenter=true일 때
   # 자동으로 함께 생성한다 — 별도 선언 불필요.
+  # chart_version/role_name/policy_name 등은 root가 결정(var.karpenter_config) — 단
+  # policy_statements만은 이 모듈이 강제 병합한다: blueprints 기본 정책에
+  # iam:CreateServiceLinkedRole이 빠져있는 결함에 대한 정합성 fix이지 root의 정책적 선택이
+  # 아니기 때문이다(variables.tf의 karpenter_config WHY 참고. 상세 사유:
+  # modules/eks-addons/2.0.0/CLAUDE.md "Karpenter Spot capacity-type" 절 참조). root가 이
+  # 객체에 자기 policy_statements를 추가로 넣으면 concat으로 합쳐지고, 안 넣어도 이 fix는
+  # 항상 포함된다.
   enable_karpenter = var.enable_karpenter
-  karpenter = {
-    chart_version          = var.karpenter_chart_version
-    role_name              = "${var.cluster_name}-karpenter-controller-irsa"
-    role_name_use_prefix   = false
-    policy_name            = "${var.cluster_name}-karpenter-controller-irsa"
-    policy_name_use_prefix = false
-    # blueprints 기본 정책에 iam:CreateServiceLinkedRole이 빠져있는 문제 대응.
-    # 상세 사유: modules/eks-addons/2.0.0/CLAUDE.md "Karpenter Spot capacity-type" 절 참조.
-    policy_statements = [
-      {
-        sid       = "AllowScopedEC2SpotServiceLinkedRoleCreation"
-        actions   = ["iam:CreateServiceLinkedRole"]
-        resources = ["arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"]
-        conditions = [{
-          test     = "StringEquals"
-          variable = "iam:AWSServiceName"
-          values   = ["spot.amazonaws.com"]
-        }]
-      }
-    ]
-  }
+  karpenter = merge(
+    var.karpenter_config,
+    {
+      policy_statements = concat(
+        try(var.karpenter_config.policy_statements, []),
+        [
+          {
+            sid       = "AllowScopedEC2SpotServiceLinkedRoleCreation"
+            actions   = ["iam:CreateServiceLinkedRole"]
+            resources = ["arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"]
+            conditions = [{
+              test     = "StringEquals"
+              variable = "iam:AWSServiceName"
+              values   = ["spot.amazonaws.com"]
+            }]
+          }
+        ]
+      )
+    }
+  )
 
-  karpenter_node = {
-    iam_role_name            = "${var.cluster_name}-karpenter-node"
-    iam_role_use_name_prefix = false
-  }
-
-  karpenter_sqs = {
-    queue_name = "${var.cluster_name}-karpenter"
-  }
+  karpenter_node = var.karpenter_node_config
+  karpenter_sqs  = var.karpenter_sqs_config
 
   tags = var.additional_tags
 }
@@ -836,13 +269,6 @@ resource "aws_eks_access_entry" "karpenter_node" {
 #
 # [GitOps 전환] Phase 6에서 helm_release.otel_operator_spoke와 kubernetes_manifest.*를
 # ArgoCD Application으로 이관한다. CLAUDE.md의 GitOps 전환 계획 참조.
-
-locals {
-  # OTel Collector namespace 이름 단일 정의.
-  # kubernetes_manifest의 metadata.namespace와 kubernetes_namespace_v1이 이 값을 공유하여
-  # namespace 이름 변경 시 한 곳만 수정하면 된다.
-  otel_collector_namespace = "otel-collector"
-}
 
 resource "kubernetes_namespace_v1" "otel_collector" {
   count = var.enable_otel_spoke_collector ? 1 : 0

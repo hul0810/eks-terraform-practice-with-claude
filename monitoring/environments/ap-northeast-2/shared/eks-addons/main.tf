@@ -43,33 +43,56 @@ module "eks_addons" {
   oidc_provider_arn = local.oidc_provider_arn
   vpc_id            = local.vpc_id
 
-  # "rest" 인스턴스(eks_blueprints_addons)에 실제로 연결된 addon은 enable_metrics_server/
-  # enable_argo_rollouts 2개뿐인데 monitoring은 둘 다 false다 — 즉 이 인스턴스에 Helm으로
-  # 설치할 addon이 하나도 안 남았다. modules/eks-addons/2.0.0/CLAUDE.md가 예고한 "남은 addon이
-  # 없어지면 이 값을 false로 바꿔 최종 정리" 시점이라 명시적으로 false로 고정한다 — 지금
-  # 당장은 no-op이지만(어차피 활성 addon이 없음), 향후 이 인스턴스에 새 addon이 실수로
-  # 추가되어도 Helm이 조용히 다시 뜨는 걸 막는 안전장치 역할을 한다.
-  create_kubernetes_resources = false
-
+  # [WHY — *_config 객체로 통째로 넘기는 이유]
+  # 모듈은 enable_*(켜고 끄기)만 알고, chart_version/role_name/role_name_use_prefix 등
+  # 그 addon의 나머지 설정은 전부 이 root가 객체로 조립해 넘긴다 — 정책이 바뀌면 이 파일만
+  # 고치면 되고 공유 모듈(modules/eks-addons/2.0.0)은 안 건드린다. 재사용 가능한 Terraform
+  # 모듈에서 흔히 쓰는 pass-through 패턴과 동일. 상세 이유는
+  # modules/eks-addons/2.0.0/variables.tf의 lbc_config 등 WHY 참고.
   enable_aws_load_balancer_controller = local.eks_addons.enable_aws_load_balancer_controller
-  lbc_chart_version                   = local.eks_addons.lbc_chart_version
+  lbc_config = {
+    chart_version        = local.eks_addons.lbc_chart_version
+    role_name            = "${local.cluster_name}-lbc-irsa"
+    role_name_use_prefix = false
+  }
 
   enable_external_dns            = local.eks_addons.enable_external_dns
   external_dns_route53_zone_arns = local.eks_addons.external_dns_route53_zone_arns
-  external_dns_chart_version     = local.eks_addons.external_dns_chart_version
+  external_dns_config = {
+    chart_version        = local.eks_addons.external_dns_chart_version
+    role_name            = "${local.cluster_name}-external-dns-irsa"
+    role_name_use_prefix = false
+  }
   # monitoring 클러스터: pyhtest.com zone이 workload 계정에 있으므로 크로스 계정 Role 필요
   external_dns_assume_role_arn = local.external_dns_cross_account_role_arn
 
-  enable_metrics_server        = local.eks_addons.enable_metrics_server
-  metrics_server_chart_version = local.eks_addons.metrics_server_chart_version
-
-  enable_karpenter        = local.eks_addons.enable_karpenter
-  karpenter_chart_version = local.eks_addons.karpenter_chart_version
+  enable_karpenter = local.eks_addons.enable_karpenter
+  karpenter_config = {
+    chart_version          = local.eks_addons.karpenter_chart_version
+    role_name              = "${local.cluster_name}-karpenter-controller-irsa"
+    role_name_use_prefix   = false
+    policy_name            = "${local.cluster_name}-karpenter-controller-irsa"
+    policy_name_use_prefix = false
+    # policy_statements(EC2 Spot service-linked-role fix)는 넣지 않는다 — 모듈이 정합성
+    # fix로 항상 강제 병합한다(modules/eks-addons/2.0.0/variables.tf의 karpenter_config
+    # WHY 참고). 여기서 추가 정책이 필요해지면 이 키에 넣으면 된다(concat으로 합쳐짐).
+  }
+  karpenter_node_config = {
+    iam_role_name            = "${local.cluster_name}-karpenter-node"
+    iam_role_use_name_prefix = false
+  }
+  karpenter_sqs_config = {
+    queue_name = "${local.cluster_name}-karpenter"
+  }
 
   enable_external_secrets             = local.eks_addons.enable_external_secrets
-  external_secrets_chart_version      = local.eks_addons.external_secrets_chart_version
   external_secrets_ssm_parameter_arns = local.eks_addons.external_secrets_ssm_parameter_arns
   external_secrets_kms_key_arns       = local.eks_addons.external_secrets_kms_key_arns
+  external_secrets_config = {
+    chart_version        = local.eks_addons.external_secrets_chart_version
+    role_name            = "${local.cluster_name}-external-secrets-irsa"
+    role_name_use_prefix = false
+  }
 
   enable_argocd                      = local.eks_addons.enable_argocd
   argocd_chart_version               = local.eks_addons.argocd_chart_version
@@ -82,10 +105,7 @@ module "eks_addons" {
   argocd_admin_password_bcrypt       = local.eks_addons.argocd_admin_password_bcrypt
   argocd_admin_password_mtime        = local.eks_addons.argocd_admin_password_mtime
 
-  enable_argo_rollouts                      = local.eks_addons.enable_argo_rollouts
-  argo_rollouts_chart_version               = local.eks_addons.argo_rollouts_chart_version
-  argo_rollouts_notifications_slack_enabled = local.eks_addons.argo_rollouts_notifications_slack_enabled
-  argocd_notifications_slack_enabled        = local.eks_addons.argocd_notifications_slack_enabled
+  argocd_notifications_slack_enabled = local.eks_addons.argocd_notifications_slack_enabled
   # GitOps Bridge Hub(Phase 6-1): ArgoCD application-controller가 awsAuthConfig로 클러스터를
   # 명시 등록할 때 필요한 IRSA Role ARN. 다른 local.eks_addons.xxx 참조와 달리 이 값은
   # 리터럴이 아니라 같은 root의 다른 리소스 참조다 — notifications_secret_store_argo_rollouts가
@@ -93,10 +113,10 @@ module "eks_addons" {
   # (gitops-bridge-irsa.tf 참조).
   argocd_controller_irsa_role_arn = aws_iam_role.argocd_application_controller.arn
 
-  # Phase 6-4: Argo Rollouts의 Helm 설치가 ArgoCD로 이관되며 enable_argo_rollouts=false로
-  # Terraform이 손을 뗐지만, 클러스터에는 Argo Rollouts가 계속 존재한다(ArgoCD가 관리).
-  # 명시하지 않으면 ArgoCD UI의 rollout-extension이 enable_argo_rollouts=false를 따라 조용히
-  # 꺼진다 — modules/eks-addons/2.0.0/variables.tf 참조.
+  # Argo Rollouts는 Terraform이 전혀 관여하지 않는 addon(devops-manifest의 ArgoCD Application이
+  # 전담)이라, 이 모듈은 "클러스터에 실제로 있는가"를 알 방법이 없다 — ArgoCD UI의
+  # rollout-extension을 계속 켜두려면 root가 직접 true를 명시해야 한다
+  # (modules/eks-addons/2.0.0/variables.tf의 argo_rollouts_extension_enabled 참조).
   argo_rollouts_extension_enabled = true
 
   # monitoring 클러스터는 OTel Hub — spoke collector 미설치

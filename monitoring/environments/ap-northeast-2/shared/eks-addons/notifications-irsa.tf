@@ -92,8 +92,15 @@ resource "kubernetes_service_account_v1" "notifications_eso_argo_rollouts" {
     }
   }
 
-  # argo-rollouts 네임스페이스는 이 root에서 별도로 생성하지 않는다 — module.eks_addons(Helm
-  # 서브차트)가 자체적으로 생성한다 (argo-rollouts-notifications.tf 상단 주석과 동일 컨벤션).
+  # [주의] argo-rollouts 네임스페이스는 이 root(Terraform)도 module.eks_addons도 만들지 않는다.
+  # Argo Rollouts는 2026-07-20부터 Terraform이 전혀 관여하지 않는 addon이라(IAM도 없음),
+  # 네임스페이스는 오직 ArgoCD Application(devops-manifest, argo-rollouts-monitoring-self)의
+  # sync가 만든다 — 그런데 그 Application의 syncOptions에는 CreateNamespace=true가 없다
+  # (2026-07-20 확인). 즉 지금은 과거(Terraform이 Helm으로 직접 설치하던 시절)에 생성된
+  # namespace가 그대로 남아있어 우연히 동작하는 상태다. 클러스터를 처음부터 재생성하면
+  # (env-teardown → env-provision) 이 SA도, ArgoCD의 argo-rollouts sync도 namespace 부재로
+  # 실패할 수 있다 — devops-manifest ApplicationSet 템플릿에 CreateNamespace=true 추가가
+  # 필요할 수 있음(이 저장소 밖의 변경이라 여기서 직접 고치지 않음).
   depends_on = [module.eks_addons]
 }
 
@@ -106,8 +113,10 @@ resource "kubernetes_service_account_v1" "notifications_eso_argocd" {
     }
   }
 
-  # argocd 네임스페이스는 이 root에서 별도로 생성하지 않는다 — module.eks_addons(Helm
-  # 서브차트)가 자체적으로 생성한다 (argocd-notifications.tf 상단 주석과 동일 컨벤션).
+  # argocd 네임스페이스는 이 root에서 별도로 생성하지 않는다 — ArgoCD는 부트스트랩 예외로
+  # 계속 Terraform이 Helm까지 관리하므로(module.eks_addons의 gitops_bridge_bootstrap 인스턴스),
+  # 그 Helm release가 자체적으로 namespace를 생성한다. argo-rollouts와 달리 이 경로는
+  # ArgoCD Application의 CreateNamespace 설정에 의존하지 않는다.
   depends_on = [module.eks_addons]
 }
 

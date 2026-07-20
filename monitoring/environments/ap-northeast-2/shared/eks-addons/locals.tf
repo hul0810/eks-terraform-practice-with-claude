@@ -30,15 +30,11 @@ locals {
   # eks/locals.tf의 kubernetes_version과 동기화
   cluster_version = "1.34"
 
-  # monitoring: 단일 시스템 노드(비용 절감)로 모든 애드온 replica=1
-  replica_counts = {
-    lbc              = 1
-    karpenter        = 1
-    external_dns     = 1
-    metrics_server   = 1
-    argo_rollouts    = 1
-    external_secrets = 1
-  }
+  # ArgoCD(Terraform이 직접 Helm을 설치하는 유일한 addon)만 대상 — 나머지 addon은
+  # ArgoCD/devops-manifest가 replica 수를 결정한다(modules/eks-addons/2.0.0/variables.tf
+  # 참조). argocd_ha_enabled=false인 동안은 이 값 자체가 안 쓰이므로(항상 1) 모듈 기본값
+  # (2)을 그대로 둔다 — HA를 켤 때 여기서 조정한다.
+  replica_counts = {}
 
   # *.pyhtest.com ACM 인증서 ARN — monitoring 계정, AWS CLI 외부 관리 리소스
   # 발급: aws acm request-certificate --domain-name "*.pyhtest.com" --validation-method DNS \
@@ -60,31 +56,24 @@ locals {
     # 2026-06-09 기준 최신 stable 버전
     lbc_chart_version              = "3.4.0"
     external_dns_chart_version     = "1.14.5"
-    metrics_server_chart_version   = "3.12.2"
     karpenter_chart_version        = "1.12.1"
     external_secrets_chart_version = "2.7.0"
     # argocd_image_updater_chart_version — GitOps Bridge(Phase 6-4)로 이관 완료. 버전은 이제
     # eks-practice-devops-manifest 저장소의 Application이 관리한다.
 
-    # [LBC/ExternalDNS/Karpenter/External Secrets — GitOps Bridge 이관 완료 addon 공통 주의]
-    # 이 4개는 IAM(IRSA)이 있는 addon이라 metrics-server/argo-rollouts와 달리 enable_*를
-    # false로 바꾸면 안 된다 — module.eks_blueprints_addons_gitops 인스턴스에서
-    # create_kubernetes_resources=false가 이미 Helm release 생성을 막고 있으므로, 이
-    # enable_*=true는 "Helm을 설치하라"가 아니라 "IAM Role/Policy(+Karpenter는 노드 IAM·SQS·
-    # EventBridge까지)는 계속 유지하라"는 뜻으로 재해석된다. false로 바꾸면 ArgoCD가 참조 중인
-    # IRSA Role ARN이 통째로 사라져 addon이 깨진다.
+    # [LBC/ExternalDNS/Karpenter/External Secrets 공통 주의]
+    # 이 4개는 IAM(IRSA)이 있는 addon이라 enable_*를 false로 바꾸면 안 된다 —
+    # module.eks_blueprints_addons_gitops 인스턴스에서 create_kubernetes_resources=false가
+    # 이미 Helm release 생성을 막고 있으므로, 이 enable_*=true는 "Helm을 설치하라"가 아니라
+    # "IAM Role/Policy(+Karpenter는 노드 IAM·SQS·EventBridge까지)는 계속 유지하라"는 뜻으로
+    # 재해석된다. false로 바꾸면 ArgoCD가 참조 중인 IRSA Role ARN이 통째로 사라져 addon이 깨진다.
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
     # pyhtest.com zone ARN — workload 계정 소유, Terraform 외부 관리 리소스 (하드코딩)
     # ExternalDNS IRSA가 external_dns_cross_account_role_arn을 assume하여 이 zone에 접근한다
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
-    # GitOps Bridge(Phase 6-2)로 이관 완료 — ArgoCD Application(devops-manifest
-    # charts/eks-addons/metrics-server)이 관리한다. Terraform state에서는 이미
-    # `terraform state rm`으로 분리했고(실제 리소스는 유지, 무중단 인수 완료), 이 플래그를
-    # false로 유지해야 다음 plan이 "없어졌으니 재생성"으로 오판하지 않는다.
-    enable_metrics_server   = false
-    enable_karpenter        = true
-    enable_external_secrets = true
+    enable_karpenter               = true
+    enable_external_secrets        = true
     # ArgoCD GitHub App 인증 정보(SSM SecureString)만 읽도록 스코프 — 계정 내 모든 파라미터
     # 와일드카드(blueprints 기본값) 대신 이 prefix로 제한한다.
     # argocd-image-updater/* : Image Updater가 이미지 태그 갱신을 커밋할 때 쓰는 GitHub App
@@ -104,25 +93,10 @@ locals {
     enable_otel_spoke_collector = false
 
     enable_argocd = true
-    # GitOps Bridge(Phase 6-4)로 이관 완료 — ArgoCD Application(devops-manifest
-    # charts/eks-addons/argo-rollouts)이 관리한다. Terraform state에서는 이미
-    # `terraform state rm`으로 분리했고(실제 리소스는 유지, 무중단 인수 완료), 이 플래그를
-    # false로 유지해야 다음 plan이 "없어졌으니 재생성"으로 오판하지 않는다.
-    #
-    # [주의 — 예전 경고, 지금은 해당 없음] 예전엔 "false로 되돌리면 Argo Rollouts
-    # Notifications(Slack) 알림 기능이 조용히 깨진다"는 경고가 있었다 — 그건 Terraform이
-    # Helm release 자체를 설치하던 시절, false가 "addon 자체를 안 만든다"는 뜻이었을 때
-    # 얘기다. 지금은 false가 "설치는 ArgoCD가 한다"는 뜻이고, notifications 설정
-    # (local.argo_rollouts_values, notifiers/templates/triggers 전체)도 devops-manifest의
-    # values-override.yaml로 그대로 이관되어 동일하게 동작한다 — 이 플래그로 알림이
-    # 깨지지 않는다.
-    enable_argo_rollouts        = false
-    argo_rollouts_chart_version = "2.38.1"
-    # Argo Rollouts Notifications의 Slack 알림 서비스(templates/triggers 포함) 활성화 여부.
-    # 전용 IRSA/SecretStore(notifications-irsa.tf)가 준비되어 있어야 한다.
-    argo_rollouts_notifications_slack_enabled = true
-    # ArgoCD Application Notifications의 Slack 알림 서비스 활성화 여부. 동일하게 전용
-    # IRSA/SecretStore(notifications-irsa.tf)가 준비되어 있어야 한다.
+    # ArgoCD Application Notifications의 Slack 알림 서비스 활성화 여부. 전용
+    # IRSA/SecretStore(notifications-irsa.tf)가 준비되어 있어야 한다. Argo Rollouts는
+    # Terraform이 전혀 관여하지 않는 addon이라 이 목록에 없다 — 그쪽 Slack 설정은
+    # devops-manifest의 values-override.yaml 쪽 관심사다.
     argocd_notifications_slack_enabled = true
     argocd_chart_version               = "9.5.21"
     # monitoring: 단일 시스템 노드(비용 절감)라 HA 불필요
