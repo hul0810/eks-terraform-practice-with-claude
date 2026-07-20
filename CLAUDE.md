@@ -170,6 +170,7 @@
 - **태그 거버넌스**: `docs/tag-governance.md` 참조
 - **모듈 CLAUDE.md 작성 기준**: `docs/module-claude-template.md` 참조
 - **EKS 애드온 전략**: `docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴)
+- **GitOps 원칙 정책**: `docs/gitops-principles.md` 참조 (OpenGitOps 4원칙, 부트스트랩 예외 판단 기준, 알려진 미충족 갭)
 - **환경 전체 삭제 절차**: `docs/environment-teardown.md` 참조 (LBC ALB orphan 방지 순서, 수동 정리)
 - **K8s 운영 팁**: `docs/k8s-operator-tips.md` 참조 (RBAC 확인 명령어, krew 설치/트러블슈팅 등 누적 기록)
 - **Git 저장소**: https://github.com/hul0810/eks-terraform-practice-with-claude

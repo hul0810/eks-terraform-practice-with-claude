@@ -40,9 +40,19 @@
 # 추가한다 — 이번 범위에는 포함하지 않는다(사용자와 합의된 범위 제한).
 ################################################################################
 
-# STS AssumeRoleWithWebIdentity 자체는 별도 IAM 권한(inline policy)이 필요 없다 — 이 Role은
-# "누가 이 신원인지"만 증명하는 용도이고, 실제 K8s API 권한은 전부 아래 Access Entry +
-# ClusterRoleBinding(RBAC)이 부여한다. 따라서 이 Role에는 신뢰 정책만 있고 권한 정책은 없다.
+# [정정 — 2026-07-21, Phase 6-5에서 발견] "이 Role엔 신뢰 정책만 있고 권한 정책은 없다"는
+# 아래 문단은 monitoring-self(같은 계정 Access Entry) 케이스에만 맞는 말이었다. dev/prd
+# 같은 크로스 계정 spoke를 awsAuthConfig.roleARN으로 등록하려면 이 Role이 그 계정의
+# spoke Role을 sts:AssumeRole로 불러올 권한이 별도로 필요하다 — 신뢰 정책(대상 Role 쪽에서
+# "누가 나를 assume할 수 있는가")과 권한 정책(이 Role 쪽에서 "내가 무엇을 assume할 수
+# 있는가")은 양방향으로 각각 허용돼야 하는 별개의 정책이다. 이 사실을 몰라서 처음엔 신뢰
+# 정책만 만들고 넘어갔다가, 실제 dev spoke 등록 테스트에서
+# `AccessDenied: ... not authorized to perform: sts:AssumeRole on resource: ...` 로 실패한
+# 뒤에야 발견했다 — 아래 aws_iam_role_policy.argocd_hub_assume_spokes가 그 보충이다.
+#
+# STS AssumeRoleWithWebIdentity(OIDC federation) 자체는 별도 IAM 권한(inline policy)이
+# 필요 없다 — 이 Role은 "누가 이 신원인지"만 증명하는 용도이고, monitoring-self에 대한
+# 실제 K8s API 권한은 아래 Access Entry + ClusterRoleBinding(RBAC)이 부여한다.
 resource "aws_iam_role" "argocd_application_controller" {
   name = "${local.cluster_name}-argocd-hub-irsa"
 
@@ -65,6 +75,41 @@ resource "aws_iam_role" "argocd_application_controller" {
   })
 
   tags = local.common_tags
+}
+
+# [Phase 6-5 — 크로스 계정 spoke assume 권한]
+# gitops-bridge-spokes.tf가 만드는 spoke Role(project/environments/{develop,production}/
+# .../eks-addons/gitops-bridge-spoke-irsa.tf)들에 대해 이 Hub Role이 sts:AssumeRole을
+# "호출할" 권한. spoke Role 쪽 신뢰 정책(누가 나를 assume할 수 있는가)만으로는 부족하고,
+# 이 Role 쪽에도 "내가 무엇을 assume할 수 있는가"를 별도로 허용해야 한다 — 위 [정정] 참고.
+# local.enabled_gitops_bridge_spokes를 그대로 참조해 활성화된 spoke만큼만 스코프를 연다
+# (dev만 켜져 있으면 dev 하나만, prd를 켜면 자동으로 같이 열림 — 두 곳을 따로 안 맞춰도 됨).
+#
+# [count 가드 — terraform-reviewer 지적, 2026-07-21] 활성화된 spoke가 0개가 되면(예: dev도
+# /env-teardown으로 내려간 뒤 gitops_bridge_spokes에서 enabled=false로 바꾸는 시점) 위
+# for 식이 빈 리스트를 만들어 Resource=[]인 IAM 정책이 생성 시도된다 — AWS가
+# MalformedPolicyDocument로 거부한다. spoke가 하나도 없으면 이 정책 자체가 필요 없으므로
+# count로 생성을 건너뛴다.
+resource "aws_iam_role_policy" "argocd_hub_assume_spokes" {
+  count = length(local.enabled_gitops_bridge_spokes) > 0 ? 1 : 0
+
+  name = "assume-gitops-bridge-spoke-roles"
+  role = aws_iam_role.argocd_application_controller.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AssumeGitopsBridgeSpokeRoles"
+        Effect = "Allow"
+        Action = ["sts:AssumeRole", "sts:TagSession"]
+        Resource = [
+          for name, spoke in local.enabled_gitops_bridge_spokes :
+          "arn:aws:iam::${local.workload_account_id}:role/${spoke.aws_cluster_name}-argocd-spoke-irsa"
+        ]
+      }
+    ]
+  })
 }
 
 # argocd-application-controller ServiceAccount는 이미 argo-cd Helm chart(module.eks_addons)가

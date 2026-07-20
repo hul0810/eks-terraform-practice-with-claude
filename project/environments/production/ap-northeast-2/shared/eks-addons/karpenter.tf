@@ -1,263 +1,41 @@
 ################################################################################
-# Karpenter EC2NodeClass & NodePool
+# Karpenter NodeClaim 정리 — EC2NodeClass/NodePool은 이제 여기 없다
 #
-# ⚠️ 2단계 apply 필수 (첫 배포 또는 Karpenter 재설치 시)
-#
-#   hashicorp/kubernetes provider의 kubernetes_manifest는 plan 단계에서
-#   클러스터 API에 CRD 스키마를 조회하여 manifest를 검증한다.
-#   depends_on은 apply 실행 순서만 제어하며 plan-time 검증에는 영향을 주지 않는다.
-#   Karpenter CRD가 없는 상태에서 plan을 실행하면 "no matches for kind EC2NodeClass" 에러가 발생한다.
-#
-#   1단계: terraform apply -target=module.eks_addons
-#          → Karpenter Helm chart 설치 → CRD 클러스터 등록
-#   2단계: terraform apply
-#          → EC2NodeClass / NodePool 생성
-#
-# computed_fields 설정 이유:
-#   Karpenter webhook과 컨트롤러는 일부 필드를 서버사이드에서 자동으로 채운다.
-#   이 필드들을 computed_fields로 선언하지 않으면 terraform plan이 drift로 감지하여
-#   매 plan마다 불필요한 update를 생성한다.
-#
-# field_manager.force_conflicts 이유:
-#   Karpenter webhook이 일부 필드를 소유(field management)하므로
-#   충돌 없이 apply할 수 있도록 force_conflicts = true를 설정한다.
+# [WHY, 2026-07-21] dev에서 이 root와 동일한 전환을 먼저 검증했다. devops-manifest의
+# karpenter-resources Application이 EC2NodeClass "default"와 NodePool 4종
+# (general/arm64/gpu/spot) 전부를 server-side-apply로 관리한다. 순서대로 이관됐다:
+#   1. "general" 전환 apply 중 Terraform과 ArgoCD가 같은 오브젝트를 동시에 SSA로 소유하며
+#      충돌 발견(`managedFields`에 Terraform+argocd-controller 동시 존재, limits.cpu
+#      플래핑) → EC2NodeClass·"general"을 dev에서 `terraform state rm` + 코드 제거.
+#   2. devops-manifest가 karpenter-resources 차트에 arm64/gpu/spot 3종을 추가한 뒤
+#      (annotation karpenter_consolidate_after 추가 필요 — gitops-bridge-spokes.tf 참조)
+#      같은 field manager 충돌이 arm64/gpu/spot에서도 재현되어 dev에서 동일하게 이관.
+# production도 프로비저닝되어 spoke로 등록되면 같은 karpenter-resources 차트가 4종
+# 전부를 가져가므로, 이 root도 처음부터 그 최종 상태를 반영해뒀다 — 실제 라이브
+# state가 생긴 뒤에 별도 이관 작업이 필요 없다. 결과적으로 Karpenter의 Kubernetes
+# 리소스(EC2NodeClass/NodePool)는 전부 ArgoCD 소관이고, 이 root에는 AWS 리소스
+# (IRSA Role/Policy, 노드 IAM Role, SQS, EventBridge — main.tf의 module.eks_addons)만
+# 남는다.
 ################################################################################
-
-# ── EC2NodeClass ─────────────────────────────────────────────────────────────
-# Karpenter가 노드를 프로비저닝할 때 사용할 EC2 설정을 정의한다.
-# 단일 EC2NodeClass를 모든 NodePool이 공유한다.
-# 서브넷·SG가 NodePool별로 달라야 하는 경우에만 복수 EC2NodeClass를 생성한다.
-resource "kubernetes_manifest" "karpenter_ec2_node_class" {
-  manifest = {
-    apiVersion = "karpenter.k8s.aws/v1"
-    kind       = "EC2NodeClass"
-
-    metadata = {
-      name = "default"
-    }
-
-    spec = {
-      # Karpenter v1 API(karpenter.k8s.aws/v1)에서 amiFamily는 deprecated.
-      # amiSelectorTerms.alias로 AMI 패밀리를 지정한다. (required, minItems: 1)
-      # "al2023@latest": 클러스터 버전에 맞는 최신 AL2023 AMI를 자동 선택.
-      amiSelectorTerms = [
-        {
-          alias = "al2023@latest"
-        }
-      ]
-
-      # blueprints가 생성한 노드 IAM Role 이름.
-      # 이 Role을 가진 EC2 인스턴스만 클러스터에 노드로 조인할 수 있다.
-      role = module.eks_addons.karpenter_node_iam_role_name
-
-      # karpenter.sh/discovery 태그로 프라이빗 서브넷을 자동 탐색한다.
-      # modules/vpc의 private_subnet_tags에 동일한 값이 부여되어 있어야 한다.
-      subnetSelectorTerms = [
-        {
-          tags = {
-            "karpenter.sh/discovery" = local.cluster_name
-          }
-        }
-      ]
-
-      # karpenter.sh/discovery 태그로 node SG를 자동 탐색한다.
-      # modules/eks의 node_security_group_tags에 동일한 값이 부여되어 있어야 한다.
-      securityGroupSelectorTerms = [
-        {
-          tags = {
-            "karpenter.sh/discovery" = local.cluster_name
-          }
-        }
-      ]
-
-      # Karpenter가 생성하는 모든 리소스(EC2, EBS, ENI)에 적용되는 태그.
-      # Name 태그로 웹 콘솔에서 Karpenter 노드를 다른 인스턴스와 구분한다.
-      tags = {
-        Name = "${local.cluster_name}-karpenter"
-      }
-    }
-  }
-
-  # Karpenter webhook이 status, spec.kubelet 등을 서버사이드에서 자동으로 채운다.
-  # amiSelectorTerms는 사용자가 선언하므로 computed_fields에서 제외한다.
-  computed_fields = [
-    "spec.kubelet",
-    "metadata.annotations",
-    "metadata.labels",
-    "status",
-  ]
-
-  field_manager {
-    force_conflicts = true
-  }
-
-  depends_on = [module.eks_addons]
-}
-
-# ── NodePool ─────────────────────────────────────────────────────────────────
-# 분리 기준과 각 NodePool의 역할은 locals.tf의 karpenter_node_pools 정의를 참조한다.
-#
-# for_each 사용 이유:
-#   NodePool 추가/제거를 locals.tf 항목 변경만으로 처리하기 위해 for_each를 사용한다.
-#   새 NodePool 추가 시 karpenter.tf 수정 없이 locals.tf에 항목만 추가하면 된다.
-resource "kubernetes_manifest" "karpenter_node_pool" {
-  for_each = local.karpenter_node_pools
-
-  manifest = {
-    apiVersion = "karpenter.sh/v1"
-    kind       = "NodePool"
-
-    metadata = {
-      name = each.key
-    }
-
-    spec = {
-      template = {
-        spec = merge(
-          {
-            nodeClassRef = {
-              group = "karpenter.k8s.aws"
-              kind  = "EC2NodeClass"
-              name  = "default"
-            }
-
-            requirements = [
-              {
-                key      = "karpenter.sh/capacity-type"
-                operator = "In"
-                values   = each.value.capacity_types
-              },
-              {
-                key      = "karpenter.k8s.aws/instance-category"
-                operator = "In"
-                values   = each.value.instance_families
-              },
-              {
-                key      = "karpenter.k8s.aws/instance-generation"
-                operator = "Gt"
-                # Gt operator는 단일 숫자 문자열을 요구한다 — tostring으로 타입을 명시적으로 보장
-                values = [tostring(each.value.instance_gen_min)]
-              },
-              {
-                key      = "kubernetes.io/arch"
-                operator = "In"
-                values   = each.value.architectures
-              },
-              {
-                key      = "kubernetes.io/os"
-                operator = "In"
-                values   = ["linux"]
-              },
-            ]
-          },
-          # Taint가 있는 NodePool만 taints 블록을 포함한다.
-          # 빈 리스트로 선언하면 Karpenter webhook이 drift로 감지하므로 조건부 merge로 처리한다.
-          length(each.value.taints) > 0 ? { taints = each.value.taints } : {}
-        )
-      }
-
-      # 동일 Pod가 여러 NodePool에 스케줄 가능할 때 우선순위 (높을수록 우선)
-      weight = each.value.weight
-
-      disruption = {
-        consolidationPolicy = "WhenEmptyOrUnderutilized"
-        # production: 300초. 스파이크 트래픽 직후 짧은 시간 내 노드 회수 → 재증가 시
-        # 프로비저닝 대기가 발생하는 것을 방지하기 위해 develop(30초)보다 길게 설정한다.
-        consolidateAfter = "300s"
-        # 동시 통합 상한: 전체 노드의 20%까지만 동시에 드레인 허용.
-        # 미설정 시 다수 노드가 동시 드레인되어 PDB 없는 워크로드가 일제히 종료될 수 있다.
-        budgets = [{ nodes = "20%" }]
-      }
-
-      limits = each.value.limits
-    }
-  }
-
-  computed_fields = [
-    "spec.template.metadata",
-    # Karpenter 컨트롤러가 kubeletConfiguration을 서버사이드에서 자동 설정한다.
-    # computed 미선언 시 매 plan마다 불필요한 update diff가 발생한다.
-    "spec.template.spec.kubeletConfiguration",
-    "metadata.annotations",
-    "metadata.labels",
-    "status",
-  ]
-
-  field_manager {
-    force_conflicts = true
-  }
-
-  # EC2NodeClass가 클러스터에 먼저 생성되어야 Karpenter webhook이 NodePool의 nodeClassRef를 검증할 수 있다.
-  depends_on = [
-    module.eks_addons,
-    kubernetes_manifest.karpenter_ec2_node_class,
-  ]
-}
-
-# ── EC2NodeClass finalizer 제거 (destroy 순서 보장) ──────────────────────────
-#
-# 문제: terraform destroy 시 EC2NodeClass가 수 분간 블로킹되는 현상
-#
-# 원인:
-#   EC2NodeClass에는 "karpenter.k8s.aws/termination" finalizer가 있다.
-#   Karpenter 컨트롤러가 이 finalizer를 제거해야만 Kubernetes가 오브젝트를 삭제한다.
-#   finalizer 제거 전에 Karpenter는 연결된 IAM Instance Profile 등 AWS 리소스를 정리한다.
-#   이 정리 작업에는 IRSA(IAM Role)를 통한 AWS API 인증이 필요하다.
-#
-#   그런데 terraform destroy는 kubernetes_manifest와 module.eks_addons를 병렬로 삭제한다.
-#   module.eks_addons 내부에서 Karpenter IRSA Role이 먼저 삭제되면,
-#   Karpenter가 AWS API를 인증할 수 없어 finalizer를 제거하지 못하고 무한 재시도에 빠진다.
-#
-# 해결:
-#   null_resource에 depends_on = [kubernetes_manifest.karpenter_ec2_node_class]를 설정한다.
-#   Terraform은 destroy 시 depends_on의 역순으로 삭제하므로,
-#   null_resource가 먼저 삭제되면서 destroy provisioner가 실행된다.
-#   provisioner가 finalizer를 강제 제거하면 이후 kubernetes_manifest 삭제가 즉시 완료된다.
-#   그 다음 module.eks_addons(IRSA Role 등)가 삭제되므로 인증 문제도 발생하지 않는다.
-#
-# destroy 순서:
-#   1. null_resource destroy → kubectl patch로 finalizer 제거
-#   2. kubernetes_manifest.karpenter_ec2_node_class destroy → finalizer 없으므로 즉시 삭제
-#   3. module.eks_addons destroy → IRSA Role, SQS, Helm chart 등 AWS 리소스 삭제
-#
-resource "null_resource" "karpenter_nodeclass_finalizer_remover" {
-  triggers = {
-    nodeclass_name = kubernetes_manifest.karpenter_ec2_node_class.manifest.metadata.name
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = "kubectl patch ec2nodeclass ${self.triggers.nodeclass_name} --type=merge -p '{\"metadata\":{\"finalizers\":[]}}' || true"
-  }
-
-  depends_on = [
-    kubernetes_manifest.karpenter_ec2_node_class,
-    # module.eks_addons를 포함해야 destroy 시 null_resource가 module.eks_addons보다 먼저 삭제된다.
-    # 미포함 시 Terraform이 null_resource와 module.eks_addons를 병렬로 삭제하고,
-    # IRSA Role이 먼저 사라지면 kubectl patch가 성공하더라도 Karpenter가 finalizer를 재추가할 수 있다.
-    module.eks_addons,
-  ]
-}
 
 # ── Karpenter NodeClaim 정리 (destroy 시 EC2 인스턴스 고아 방지) ──────────────
 #
 # 문제: NodePool에는 "karpenter.sh/termination" finalizer가 있다.
 # Karpenter 컨트롤러가 그 NodePool로 생성된 NodeClaim(EC2 인스턴스)을 모두
 # drain·terminate해야만 finalizer가 제거되고 NodePool 오브젝트가 삭제된다.
+# NodePool 자체는 이제 ArgoCD 소관이라 Terraform destroy 대상이 아니지만, 이 root가
+# destroy될 때(module.eks_addons의 Karpenter IRSA Role 등 AWS 리소스 삭제) Karpenter
+# 컨트롤러가 AWS API 인증을 잃기 전에 NodeClaim(EC2 인스턴스)을 먼저 정리해야
+# 고아 인스턴스가 남지 않는다.
 #
-# 정상적으로는 동작하지만, Karpenter 컨트롤러가 응답 불가 상태이거나
-# Spot 인스턴스 종료가 지연되는 등의 이유로 NodeClaim 정리가 멈추면
-# kubernetes_manifest.karpenter_node_pool destroy가 무한 대기할 수 있다.
-#
-# 해결: NodePool/module.eks_addons보다 먼저 destroy되는 null_resource에서
+# 해결: module.eks_addons보다 먼저 destroy되는 null_resource에서
 # `kubectl delete nodeclaims --all`을 실행해, Karpenter 컨트롤러가 아직
-# 살아있는 시점에 모든 NodeClaim(EC2 인스턴스) 정리를 명시적으로 트리거한다.
+# 살아있는 시점에 모든 NodeClaim 정리를 명시적으로 트리거한다.
 # timeout + `|| true`로 최악의 경우에도 destroy 자체는 멈추지 않도록 한다.
 #
 # destroy 순서:
 #   1. null_resource destroy → kubectl delete nodeclaims --all (EC2 인스턴스 정리)
-#   2. kubernetes_manifest.karpenter_node_pool destroy → NodeClaim 없으므로 finalizer 즉시 제거
-#   3. karpenter_nodeclass_finalizer_remover → karpenter_ec2_node_class → module.eks_addons
+#   2. module.eks_addons destroy → IRSA Role, SQS, Helm chart 등 AWS 리소스 삭제
 resource "null_resource" "karpenter_nodeclaims_drainer" {
   provisioner "local-exec" {
     when    = destroy
@@ -265,7 +43,6 @@ resource "null_resource" "karpenter_nodeclaims_drainer" {
   }
 
   depends_on = [
-    kubernetes_manifest.karpenter_node_pool,
     # module.eks_addons가 아직 살아있는 상태에서 drain을 트리거해야 한다.
     # 미포함 시 Terraform이 병렬로 삭제하여 Karpenter 컨트롤러가 먼저 사라질 수 있다.
     module.eks_addons,

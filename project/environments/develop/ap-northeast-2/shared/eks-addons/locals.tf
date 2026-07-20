@@ -28,35 +28,28 @@ locals {
   # eks/locals.tf의 kubernetes_version과 동기화 — EKS 버전 업그레이드 시 함께 변경한다
   cluster_version = "1.34"
 
-  # dev: 시스템 노드 1개(비용 절감)로 모든 애드온 replica=1. prd는 모듈 기본값 사용
-  replica_counts = {
-    lbc              = 1
-    karpenter        = 1
-    external_dns     = 1
-    metrics_server   = 1
-    argo_rollouts    = 1
-    external_secrets = 1
-  }
-
   eks_addons = {
     # 2026-06-09 기준 최신 stable 버전 (external_secrets_chart_version은 2026-07-02 기준)
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
+    # metrics-server/argo-rollouts는 여기 없다 — IAM이 필요 없는 addon이라 6-5 이후
+    # Terraform이 완전히 손을 뗐고(2026-07-21), Helm 관리·버전은 devops-manifest
+    # ArgoCD Application이 전담한다(modules/eks-addons/2.0.0/CLAUDE.md 참조).
     lbc_chart_version              = "3.4.0"
     external_dns_chart_version     = "1.14.5"
-    metrics_server_chart_version   = "3.12.2"
     karpenter_chart_version        = "1.12.1"
     argocd_chart_version           = "9.5.21"
-    argo_rollouts_chart_version    = "2.38.1"
     external_secrets_chart_version = "2.7.0"
 
     enable_aws_load_balancer_controller = true
-    enable_argo_rollouts                = true
     enable_external_dns                 = true
     # pyhtest.com zone ARN — workload 계정 hosted zone, Terraform 외부 관리 리소스 (하드코딩)
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
-    enable_metrics_server          = true
     enable_karpenter               = true
-    enable_argocd                  = true
+    # Phase 6-5: dev를 monitoring ArgoCD Hub의 spoke로 등록하며 개별 설치를 롤백한다
+    # (gitops-bridge-spoke-irsa.tf가 그 spoke 등록을 대신 담당). 아래 argocd_* 값들은
+    # enable_argocd=false인 동안 전부 미사용이지만, argocd_chart_version 등 일부는 모듈
+    # 쪽에 기본값이 없는 필수 인자라 값 자체는 남겨둔다 — 다시 켤 일이 생기면 그대로 재사용.
+    enable_argocd = false
     # SecretStore/ClusterSecretStore·ExternalSecret CR 구성은 다음 단계 — 이번 단계는 애드온 설치까지.
     # IAM 스코프는 blueprints 기본 와일드카드(계정 전체 SSM/KMS) 대신 이 환경의 SSM 경로(/eks-practice/develop/*)로
     # 미리 좁혀둔다 — 아직 이 경로에 파라미터가 없어도, 향후 SecretStore 구성 시 별도 IAM 변경 없이 바로 쓸 수 있다.
@@ -89,74 +82,7 @@ locals {
     otel_spoke_operator_chart_version = "0.76.1"
   }
 
-  # ── Karpenter NodePool 정의 ──────────────────────────────────────────────────
-  # 분리 기준: 인스턴스 요건이 아니라 워크로드 격리 요건
-  #   - 아키텍처(amd64/arm64): 이미지 호환성 보장을 위해 분리
-  #   - GPU: Taint로 일반 Pod 차단 필수 → 별도 NodePool
-  #   - Spot-only: 중단 감수 워크로드를 Taint로 강제 격리
-  #   - CPU/메모리 집약: 분리 불필요. Pod의 resources.requests를 보고 Karpenter가 자동 선택
-  #
-  # weight: 동일 Pod가 여러 NodePool에 스케줄 가능할 때 우선순위 (높을수록 우선)
-  # taints: 빈 리스트면 Taint 없음 (일반 Pod도 스케줄 가능)
-  karpenter_node_pools = {
-    # 범용 워크로드 — amd64 기본 진입점
-    # spot+on-demand 혼합 허용: 일반 워크로드는 비용 절감을 위해 spot도 허용한다.
-    # spot 중단에 취약한 워크로드(Stateful, 긴 배치 작업 등)는 PDB 또는
-    # nodeSelector/affinity로 on-demand를 명시적으로 요청해야 한다.
-    general = {
-      capacity_types    = ["spot", "on-demand"]
-      instance_families = ["c", "m", "r"]
-      architectures     = ["amd64"]
-      instance_gen_min  = "2"
-      weight            = 10
-      taints            = []
-      limits            = { cpu = "100", memory = "400Gi" }
-    }
-
-    # Graviton 워크로드 — arm64 이미지를 사용하는 워크로드 전용
-    # Pod에서 nodeSelector: kubernetes.io/arch=arm64 로 명시적 지정
-    arm64 = {
-      capacity_types    = ["spot", "on-demand"]
-      instance_families = ["c", "m", "r"]
-      architectures     = ["arm64"]
-      instance_gen_min  = "2"
-      weight            = 10
-      taints            = []
-      limits            = { cpu = "50", memory = "200Gi" }
-    }
-
-    # GPU 워크로드 — ML/AI 전용. 현재 미사용이나 설계상 포함
-    # Taint: nvidia.com/gpu=true:NoSchedule → Toleration 없는 Pod는 배치 불가
-    # OD 전용: GPU Spot은 가용성이 불안정하고 체크포인트 없는 학습 작업에서 복구 비용이 크다
-    gpu = {
-      capacity_types    = ["on-demand"]
-      instance_families = ["p", "g"]
-      architectures     = ["amd64"]
-      instance_gen_min  = "3"
-      weight            = 5
-      taints = [{
-        key    = "nvidia.com/gpu"
-        value  = "true"
-        effect = "NoSchedule"
-      }]
-      limits = { cpu = "20", memory = "100Gi" }
-    }
-
-    # Spot 전용 — 중단을 감수하는 워크로드 강제 격리
-    # Taint: spot-only=true:NoSchedule → Toleration 없는 Pod는 배치 불가
-    # 사용 대상: 비용 절감이 최우선이고 중단 복구 로직을 갖춘 워크로드
-    spot = {
-      capacity_types    = ["spot"]
-      instance_families = ["c", "m", "r"]
-      architectures     = ["amd64"]
-      instance_gen_min  = "2"
-      weight            = 10
-      taints = [{
-        key    = "spot-only"
-        value  = "true"
-        effect = "NoSchedule"
-      }]
-      limits = { cpu = "100", memory = "400Gi" }
-    }
-  }
+  # Karpenter NodePool 정의는 여기 없다 — 4종(general/arm64/gpu/spot) 전부
+  # devops-manifest의 karpenter-resources-dev Application이 EC2NodeClass "default"와
+  # 함께 관리한다(karpenter.tf 상단 WHY 참조, 2026-07-21).
 }

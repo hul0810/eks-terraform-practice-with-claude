@@ -311,6 +311,11 @@
 >
 > **아키텍처**: dev/prd OTel DaemonSet(spoke) → monitoring OTel Gateway(hub, GitOps 배포) → LGTM 백엔드
 > **전제**: Phase 2-4 완료. cert-manager Bootstrap 애드온 설치 완료 (OTel Operator 전제 조건).
+>
+> **우선순위 하향 (2026-07-21)**: Phase 6-5(Hub-Spoke ArgoCD 확장 — dev/prd를 spoke로 등록)를
+> 먼저 진행한다. monitoring 쪽 ArgoCD Hub 구축과 devops-manifest 연동이 이미 완료된 상태라,
+> 그 구조를 실제 멀티 클러스터 환경(dev/prd 포함)에서 검증하는 게 더 급하다고 판단했다 —
+> Phase 5의 나머지 항목(5-4/5-5)은 6-5 완료 후로 미룬다.
 
 ### 5-1. modules/vpc/1.0.0 — VPC Peering + TGW 옵션 추가 ❌ 취소 (수동 관리로 전환)
 
@@ -449,6 +454,13 @@
 > 이미 상시 운영 중). dev/prd 개별 ArgoCD 워크로드 제거로 그쪽 노드 여유가 오히려 늘어난다.
 >
 > **전제 조건**: Phase 4-1 완료(ArgoCD 설치됨), Phase 5-3 완료(monitoring 클러스터 존재).
+>
+> **설계 확정 (2026-07-21)**: monitoring 계정의 ArgoCD를 Hub로 삼는 Hub-and-Spoke 중앙 집중
+> 배포로 확정했고, Terraform 코드(`modules/eks-addons/2.0.0`)가 이미 이 구조로 작성되어
+> 있다 — `enable_argocd`(Hub만 true)와 `gitops_bridge_hub`(nullable, Hub만 값 채움) 두
+> 변수로 Hub/spoke를 구분하도록 설계됨. monitoring 쪽(ArgoCD 설치, cluster Secret 자기 등록,
+> 메타데이터 브릿지, devops-manifest ApplicationSet 연동)은 전부 라이브로 동작 검증 완료 —
+> 남은 건 6-5(아래)의 dev/prd spoke 등록뿐이다.
 
 **6-1. GitOps Bridge 개념 실습 (monitoring 자기 자신 대상, 위험 낮음) — 완료 (2026-07-17)**
 - [x] ArgoCD `cluster` Secret 구조 이해
@@ -547,16 +559,182 @@ ArgoCD repo-creds, ArgoCD 자신의 cluster Secret(`argocd_cluster_self`).
       전환 — 메타데이터 브릿지 annotation 실사용 시작(`temp/gitops-bridge-overview.md` 4.3절)
 - [x] `temp/gitops-bridge-overview.md` — GitOps Bridge 패턴 전체를 정리한 root 학습 문서 작성
 
-**6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록**
+**6-4 이후 (계속) — "rest" 인스턴스 완전 삭제, GitOps Bridge 전용 구조로 최종 정리 — 완료 (2026-07-20)**
+- [x] `module "eks_blueprints_addons"`("rest" 인스턴스, IAM 불필요 addon을 임시로 담아두던
+      벤더 모듈 호출) 완전 삭제 — metrics-server/argo-rollouts는 이제 Terraform이 전혀 관여하지
+      않음(devops-manifest ArgoCD Application이 처음부터 전담)
+- [x] 무의미해진 변수 6개 삭제(`enable_metrics_server`, `metrics_server_config`,
+      `create_kubernetes_resources`, `enable_argo_rollouts`, `argo_rollouts_config`,
+      `argo_rollouts_notifications_slack_enabled`) + dead local(`argo_rollouts_values`, ~280줄)
+      제거, `replica_counts` 스키마 7필드 → 1필드(`argocd_server`)로 축소
+- [x] `modules/eks-addons/2.0.0/main.tf`(1057줄)를 `main.tf`/`locals.tf`/`notifications.tf`
+      3개 파일로 분리(가독성, 동작 변경 없음)
+- [x] 4단계 리뷰(terraform-reviewer/security-engineer/aws-architect/cost-engineer) 전부
+      PASSED/OK, 커밋 `ee9449a`/`e97ea92` push 완료
+- [x] **부수 발견 — devops-manifest ApplicationSet 4종(argo-rollouts/external-dns/
+      external-secrets/karpenter)에 `CreateNamespace=true` 누락**: 지금은 과거 Terraform Helm이
+      만들어둔 namespace가 우연히 남아있어 동작 중이지만, monitoring을 처음부터 재구축하면
+      (`env-teardown` → `env-provision`) sync 실패 가능. 이 저장소 밖(devops-manifest) 수정
+      필요 — `temp/request-devops-manifest-create-namespace.md`에 요청서 작성, 아직 미반영
+
+**6-4 이후 (백로그) — `gitops-bridge-irsa.tf` IRSA → Pod Identity 전환**
+- [ ] `aws_iam_role.argocd_application_controller`(GitOps Bridge Hub 자기 등록용, AWS API 권한
+      없이 K8s API 인증 신원 증명만 담당)의 trust policy를 OIDC federated(`sts:AssumeRoleWithWebIdentity`)에서
+      Pod Identity(`pods.eks.amazonaws.com` principal, `sts:AssumeRole`+`sts:TagSession`)로 교체하고
+      `aws_eks_pod_identity_association` 리소스 추가
+- [ ] argo-cd Helm values의 `controller.serviceAccount.annotations`(`eks.amazonaws.com/role-arn`)
+      주입 제거(Pod Identity는 SA annotation이 필요 없음) — `argocd_controller_irsa_role_arn`
+      변수/locals.tf 경로 정리
+- WHY: 이 파일은 blueprints가 아니라 손코드라 프로젝트 자체 IAM 정책("blueprints 미사용 →
+      Pod Identity", `modules/eks-addons/2.0.0/CLAUDE.md` "IAM 전략" 절)을 따르면 지금이 예외
+      상태다. EKS Pod Identity Agent는 이미 EBS CSI가 쓰고 있어 클러스터에 떠 있을 가능성이 큼.
+- 주의: 전환 시 `argocd-application-controller` 파드가 새 자격증명 경로를 인식하려면 재시작이
+      필요 — Hub 재조정에 짧은 공백 발생 가능(실습 환경이라 리스크는 낮으나 무중단은 아님)
+
+**6-5 관련 백로그 — aws-architect 리뷰 지적 사항(2026-07-21, High 2건)**
+- [ ] dev `public_access_cidrs`의 monitoring NAT Gateway IP 하드코딩(`43.200.108.10/32`)을
+      `endpoint_private_access=true` + 기존 VPC Peering(`pcx-07fa1a0e9eb100e47`) 경유로
+      전환 — 현재 구조는 monitoring teardown→재provision마다 IP가 바뀌어 Hub→spoke
+      크로스 계정 인증이 에러 없이 타임아웃만 나며 조용히 끊긴다(SPOF). 이번 세션에서
+      monitoring teardown을 실행했으므로 다음 monitoring provision 직후 이 값은 이미
+      stale — `/env-provision monitoring` 재실행 시 즉시 체감될 수 있음
+- [ ] prod `eks-addons`가 `2.0.0`으로 코드 선반영된 상태에서 `/env-provision production`을
+      표준 절차(1.0.0처럼 처음부터 addon 다 켜서 apply)로 그대로 실행하면 addon Helm이
+      전혀 설치되지 않는다 — Terraform은 IAM만 만들고(2.0.0), ArgoCD도 prod가 아직
+      spoke 미등록(`enabled=false`)이라 아무것도 안 가져간다. **prod를 실제 프로비저닝하기
+      전 반드시**: monitoring `gitops-bridge-spokes.tf`에서 `prod.enabled`/`addon_managed`를
+      `true`로 먼저 바꾸고 apply → devops-manifest의 addon Application들이 `-prod`로
+      정상 sync되는지 확인 → 그 다음에 prod EKS/eks-addons를 provision하는 순서를 지킬 것.
+      `/env-provision` 스킬에 이 순서 가드를 명문화하는 것도 후속 작업 후보
+
+**6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록 — dev 완료·검증 (2026-07-21), prd는 코드만**
 > ApplicationSet의 `clusters` generator(위 항목)가 이미 여러 cluster Secret을 자동
 > 순회하도록 구성되어 있어, 아래 4번은 이미 준비 완료 상태다.
+>
+> dev는 `/env-provision develop`으로 가동 → 아래 4개 항목 전부 적용 → 테스트 Application으로
+> 실제 배포까지 검증 완료. prd는 CLAUDE.md "Production 배포 정책"에 따라 코드만 작성하고
+> apply는 안 함(사용자가 직접 실행) — `local.gitops_bridge_spokes["prod"].enabled`를 `true`로
+> 바꾸고 prd를 프로비저닝한 뒤 적용하면 된다.
 
-- [ ] dev/prd EKS access entry에 Hub(monitoring) ArgoCD의 IAM Role 등록
-      (`aws_eks_access_entry` 패턴 확장 — 기존 dev/prd `access_entries` 블록 참조)
-- [ ] dev/prd 각각을 가리키는 `cluster` Secret을 monitoring의 ArgoCD 네임스페이스에 생성
-- [ ] dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 4-1 개별 설치 롤백)
+- [x] dev/prd EKS access entry에 Hub(monitoring) ArgoCD의 IAM Role 등록
+      — `project/environments/{develop,production}/.../eks-addons/gitops-bridge-spoke-irsa.tf`
+      (dev는 apply 완료, prd는 코드만)
+      - **부수 발견**: 신뢰 정책(spoke Role이 "누가 나를 assume할 수 있는가")만으로는 부족하고,
+        Hub Role 쪽에도 "내가 무엇을 assume할 수 있는가"를 허용하는 별도 identity policy가
+        필요했다 — `AccessDenied: ... not authorized to perform: sts:AssumeRole`로 실제
+        발견. `gitops-bridge-irsa.tf`의 `aws_iam_role_policy.argocd_hub_assume_spokes`로 보충.
+      - **부수 발견 2**: dev의 EKS API가 `public_access_cidrs`로 운영자 IP만 허용하고 있어
+        monitoring NAT Gateway IP가 차단됨(`argocd-k8s-auth` 타임아웃, exit code 20) —
+        monitoring NAT Gateway 공인 IP를 dev의 `public_access_cidrs`에 추가해 해결
+        (`project/environments/develop/.../eks/locals.tf`). VPC Peering은 이미 있지만
+        `endpoint_private_access`가 꺼져 있어 지금은 public 경로 의존 — 더 안전한 구조로
+        가려면 private access + peering 경유로 전환 검토 여지 있음(백로그 후보).
+- [x] dev/prd 각각을 가리키는 `cluster` Secret을 monitoring의 ArgoCD 네임스페이스에 생성
+      — `monitoring/.../eks-addons/gitops-bridge-spokes.tf`(`for_each` 기반, dev만 활성화,
+      prd는 `enabled=false`로 맵에서 제외해 실제 AWS 조회 자체가 안 일어남)
+      - **부수 발견 — addon ApplicationSet 10개가 spoke Secret까지 잘못 매칭**: cluster
+        Secret이 생기자마자 addon selector가 너무 넓어서 `-dev` Application이 자동
+        생성되고 `destination: in-cluster`가 고정이라 monitoring 자신과 리소스 소유권
+        충돌(`SharedResourceWarning`)까지 발생 — devops-manifest에 selector 스코프 분리
+        요청서 전달(2026-07-21), `eks-practice.io/gitops-bridge-role: spoke` 구분 라벨은
+        Terraform 쪽에 이미 추가해둠. 반영 전까지는 `-dev`/`-prd` addon Application이
+        재생성될 수 있는데 **절대 sync하면 안 된다**(monitoring 실제 addon을 덮어쓸 위험).
+- [x] dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 4-1 개별 설치 롤백) — dev apply
+      완료(ArgoCD helm_release destroy 확인), prd는 코드만
 - [x] ~~Hub ArgoCD에 ApplicationSet `cluster generator` 구성~~ — 6-4 이후 항목에서 이미 완료
       (spoke label selector 포함, dev/prd cluster Secret 추가만 하면 자동 확장)
+- [x] **dev 검증** — `argocd/examples/sync-wave-example` 소스를 재사용한 임시 테스트
+      Application(`destination.name: dev`)으로 sync 성공 확인, dev 클러스터에 직접 접속해
+      리소스(Job/ConfigMap)가 실제로 그쪽에 생겼음을 확인. 검증 후 삭제 완료.
+
+> **정정(2026-07-21)**: workload ApplicationSet destination 수정은 devops-manifest 쪽에서
+> 코드로는 이미 완료됐다(`catalog/gateway/order` 6개를 `clusters` generator +
+> `destination.name: '{{.name}}'`으로 전환, `workload` AppProject도 name 기반으로 변경).
+> 다만 그 진입점(`root-app-workload.yaml`)이 monitoring Hub에서 한 번도 부트스트랩된 적이
+> 없어(`root-app-addons.yaml`만 최초 적용했었음) 아직 라이브로 검증되지 않은 상태 —
+> 6-6에서 이 부트스트랩과 실제 배포 확인을 진행한다.
+
+**6-5 이후 — dev/prod eks-addons를 `2.0.0`(GitOps Bridge)으로 이관, addon Helm을 Argo가 관리 (착수, 2026-07-21)**
+> **배경**: 6-5는 "Hub가 dev/prd에 접근·인증할 수 있는 연결 레이어"까지만 다뤘다. dev/prd는
+> 여전히 `1.0.0`(Terraform이 addon Helm까지 직접 관리)이라, Hub가 실제로 dev/prd의 addon을
+> 원격 배포하려면 monitoring이 이미 거친 GitOps Bridge 이관(6-2~6-4 패턴)을 dev/prd에도
+> 적용해야 한다. **"rest" 인스턴스가 이미 삭제된 `2.0.0`**을 쓰는 첫 사례라 monitoring 때와
+> 다르게 addon마다 별도 임시 보관 인스턴스 없이 진행해야 한다(아래 절차가 그 차이를 반영).
+>
+> **순서**(monitoring이 이미 검증한 패턴 재사용 — 6-2 metrics-server 먼저, 6-3 LBC로 첫
+> IAM 케이스 검증, 6-4로 나머지):
+> 1. devops-manifest에 dev를 addon selector에 포함시켜달라 요청(요청서 작성, 아래 참고)
+> 2. addon마다 `argocd app diff`로 기존 Terraform Helm과 렌더링 결과가 tracking annotation
+>    외엔 동일한지 확인 — 다르면 devops-manifest values-override.yaml 조정 요청
+> 3. IAM 불필요 addon(metrics-server, argo-rollouts) 먼저: sync 확인 후 dev
+>    `locals.tf`에서 `enable_metrics_server`/`enable_argo_rollouts`를 `false`로(Terraform
+>    완전히 손 뗌) — 이건 `2.0.0` 전환과 무관하게 지금 `1.0.0`에서 바로 가능
+> 4. IAM 필요 addon 4개(LBC/Karpenter/ExternalDNS/ExternalSecrets) sync 확인(state는
+>    아직 안 건드림, ArgoCD가 실제로 인수 가능한지만 확인)
+> 5. dev의 `eks-addons` root `source`를 `1.0.0` → `2.0.0`으로 전환하는 **단일 apply**에서
+>    4개 addon의 IAM Role/Policy/Attachment를 `terraform state mv`로 새 주소
+>    (`eks_blueprints_addons_gitops`)로 옮기고, Helm release는 `terraform state rm`
+>    (monitoring 6-3/6-4와 동일 원칙 — ArgoCD sync 검증 후에만 실행)
+> 6. Karpenter NodeClass/NodePool도 GitOps로 이관(monitoring 6-4와 동일 패턴,
+>    `kubernetes_manifest` → devops-manifest plain-manifest Application)
+> 7. dev 전체 검증(파드/Ingress), prod는 dev 검증 통과 후 동일 패턴 코드만 준비(apply는
+>    사용자가 직접 — CLAUDE.md "Production 배포 정책")
+>
+> **devops-manifest 쪽 selector 설계 변경 필요**: 지금 addon selector는 spoke 라벨이 있으면
+> 무조건 제외(`NotIn: [spoke]`)라 dev가 준비돼도 자동으로 포함되지 않는다. "제외 목록"
+> 대신 "포함 목록"으로 바꿔야 한다 — 요청서에서 구체화.
+
+- [x] devops-manifest에 addon selector 포함 요청 — `eks-practice.io/addon-managed: "true"` 라벨
+  기반으로 반영 완료(2026-07-21), dev Secret에도 라벨 부여 완료
+- [x] metrics-server/argo-rollouts sync 확인 → dev에서 Terraform 손 떼기 — `terraform state rm` +
+  `enable_metrics_server`/`enable_argo_rollouts=false` 적용 완료. devops-manifest 확인 결과
+  `metrics-server-dev`/`argo-rollouts-dev` 모두 Synced/Healthy, 기존 pod RESTARTS=0으로
+  무중단 인수 확인(2026-07-21)
+- [x] LBC/Karpenter/ExternalDNS/ExternalSecrets sync 확인(state 미변경) — IAM Role ARN
+  annotation(`aws_load_balancer_controller_iam_role_arn`/`karpenter_iam_role_arn`/
+  `karpenter_node_iam_role_name`/`karpenter_discovery_tag`/`karpenter_sqs_queue_name`/
+  `external_dns_iam_role_arn`/`external_secrets_iam_role_arn`)을 dev cluster Secret에
+  추가(monitoring `gitops-bridge-spokes.tf`, dev는 1.0.0의 고정 role_name 패턴을 문자열로
+  조합). devops-manifest 요청으로 키 이름 2개 정정(`*_role_arn`→`*_iam_role_arn`) +
+  `karpenter_sqs_queue_name` 추가 반영(2026-07-21). devops-manifest 확인 결과 5개 addon
+  Application(LBC/Karpenter/ExternalDNS/ExternalSecrets/karpenter-resources) 전부
+  Synced/Healthy, pod RESTARTS=0으로 무중단 인수 확인
+- [x] dev `eks-addons` root `2.0.0` 전환 + IAM state mv + Helm state rm (단일 apply) — IAM
+  리소스 26개 `terraform state mv`(`eks_blueprints_addons`→`eks_blueprints_addons_gitops`),
+  helm_release 4개 `terraform state rm`. `terraform plan` = "No changes" 확인(2026-07-21)
+- [x] Karpenter NodeClass/NodePool GitOps 이관 — **일부만 완료**. 전환 apply 직후
+  `kubernetes_manifest.karpenter_node_pool["general"]`을 Terraform이 재적용하면서
+  devops-manifest의 `karpenter-resources-dev`(이미 EC2NodeClass "default" + NodePool
+  "general"을 SSA로 관리 중이었음)와 field manager 충돌 발생 확인
+  (`managedFields`에 `Terraform`+`argocd-controller` 동시 존재, `limits.cpu` 50↔100
+  플래핑). ArgoCD 쪽 스펙이 Terraform과 동등하거나 더 안전(instance-size 상한 추가)함을
+  확인하고 EC2NodeClass·NodePool "general"·관련 null_resource를 `terraform state rm` +
+  코드에서 제거 완료(2026-07-21) — 이제 ArgoCD 단독 관리. arm64/gpu/spot 3종은
+  devops-manifest `karpenter-resources` 차트가 아직 지원하지 않아 계속 Terraform 관리
+  (요청서 전달, 아래 참고). `karpenter-resources-dev`가 SCP(`p-v2sbnmua`) 관련
+  `RunInstancesAuthCheckFailed`로 Degraded 표시되지만 실제 노드/파드는 전부 정상 —
+  기존에 이미 확인된 조직 SCP 이슈(cosmetic, 논블로킹)와 동일 원인
+- [x] dev 전체 검증 — 전체 파드 Running/Completed, Ingress 없음(워크로드 미배포, 정상),
+  addon Application 6개 Synced/Healthy(karpenter-resources-dev만 위 SCP 이슈로 Degraded
+  표시, 논블로킹) 확인(2026-07-21)
+- [x] prod 동일 패턴 코드 작성(apply는 보류) — dev와 동일하게 `main.tf` 2.0.0 전환,
+  `karpenter.tf`에서 EC2NodeClass·NodePool "general" 제거(devops-manifest가 프로비저닝
+  시점부터 관리할 것을 미리 반영), `locals.tf` 미사용 변수 정리. `terraform validate`
+  통과 확인, apply는 미실행(CLAUDE.md Production 배포 정책, 훅이 차단 — 2026-07-21)
+
+**Karpenter NodeClass/NodePool GitOps 이관 완료(2026-07-21)**: devops-manifest가
+`karpenter-resources` 차트에 arm64/gpu/spot 3종 추가 후 push — 처음엔 신규
+annotation(`karpenter_consolidate_after`, dev "30s"/prod "300s")이 dev cluster Secret에
+없어 karpenter-resources-dev 전체가 ComparisonError로 막혔다가(기존 general 포함, 실제
+리소스 변경 없음 확인됨), monitoring `gitops-bridge-spokes.tf`에 반영 후 정상 sync됨.
+sync 직후 arm64/gpu/spot에서도 general 때와 동일한 field manager 충돌
+(`Terraform`+`argocd-controller` 동시 존재)이 재현되어 dev/prod 양쪽
+`kubernetes_manifest.karpenter_node_pool["arm64"/"gpu"/"spot"]`을 `terraform state rm` +
+`karpenter.tf`/`locals.tf`에서 완전히 제거(dev는 실제 적용, prod는 코드만). 이제 이
+root들에는 Karpenter의 AWS 리소스(IRSA Role/Policy, 노드 IAM Role, SQS, EventBridge)만
+남고 Kubernetes 리소스(EC2NodeClass/NodePool)는 전부 ArgoCD 소관 — Phase 6-5(addon Helm
+관리 주체 이관) 완전히 마무리. `karpenter-resources-dev`는 여전히 기존 SCP
+(`p-v2sbnmua`) 관련 `RunInstancesAuthCheckFailed`로 Degraded 표시되나 논블로킹(위 참고).
 
 **6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
 - [ ] `eks-practice-devops-manifest` repo에 ApplicationSet 작성
