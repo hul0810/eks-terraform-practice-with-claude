@@ -426,8 +426,10 @@
 > **ArgoCD 자신은 예외적으로 계속 Terraform 관리**: GitOps Bridge/Hub-Spoke 패턴 자체가
 > ArgoCD를 전제로 동작하므로, ArgoCD 설치 자체를 ArgoCD로 관리할 수는 없다(부트스트랩 역설).
 > monitoring 기준 실제 구현은 `modules/eks-addons/2.0.0`의 전용 인스턴스
-> `eks_blueprints_addons_argocd`다(6-2/6-3 참고) — develop/production은 아직 `1.0.0`의
-> `enable_argocd` 경로 그대로다.
+> `gitops_bridge_bootstrap`(`gitops-bridge-dev/gitops-bridge/helm`, 2026-07-19부터 —
+> 이전엔 blueprints의 `eks_blueprints_addons_argocd`였으나 그 wrapper가 ArgoCD 자리에서
+> IRSA 인자를 forward하지 않아 교체, 6-4 이후 절 참고)다 — develop/production은 아직
+> `1.0.0`의 `enable_argocd` 경로 그대로다.
 >
 > **점진적 진행 원칙**: 아래 체크리스트는 **한 번에 몰아서 하지 않고, 항목 하나씩 순서대로
 > 진행하며 각 단계에서 실제로 GitOps Bridge가 어떻게 동작하는지 확인**한다. 특히 IAM
@@ -533,12 +535,28 @@ external-secrets, argocd-image-updater(+git-creds), notification secrets(argo-ro
 argocd), 범용 ClusterSecretStore. **영구 Terraform 예외**: ArgoCD 자신(Helm release),
 ArgoCD repo-creds, ArgoCD 자신의 cluster Secret(`argocd_cluster_self`).
 
+**6-4 이후 — ArgoCD 설치 모듈 교체 + 메타데이터 브릿지 실사용 전환 — 완료 (2026-07-19)**
+- [x] ArgoCD 설치 + Hub cluster Secret 생성 주체를 blueprints에서
+      `gitops-bridge-dev/gitops-bridge/helm`(`module "gitops_bridge_bootstrap"`)로 교체
+      (`modules/eks-addons/2.0.0/main.tf` — 교체 사유는 그 파일 상단 주석,
+      `temp/gitops-bridge-overview.md` 6절 참고)
+- [x] `gitops_bridge_hub`(nullable 변수) 신설 — Hub-Spoke opt-in 설계
+      (`modules/eks-addons/2.0.0/variables.tf`)
+- [x] `terraform state mv`로 무중단 이전, 4단계 리뷰 통과, 커밋 `e687a7c`/`63e9f58` push 완료
+- [x] devops-manifest가 eks-addons 10개를 `clusters` generator 기반 `ApplicationSet`으로
+      전환 — 메타데이터 브릿지 annotation 실사용 시작(`temp/gitops-bridge-overview.md` 4.3절)
+- [x] `temp/gitops-bridge-overview.md` — GitOps Bridge 패턴 전체를 정리한 root 학습 문서 작성
+
 **6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록**
+> ApplicationSet의 `clusters` generator(위 항목)가 이미 여러 cluster Secret을 자동
+> 순회하도록 구성되어 있어, 아래 4번은 이미 준비 완료 상태다.
+
 - [ ] dev/prd EKS access entry에 Hub(monitoring) ArgoCD의 IAM Role 등록
       (`aws_eks_access_entry` 패턴 확장 — 기존 dev/prd `access_entries` 블록 참조)
 - [ ] dev/prd 각각을 가리키는 `cluster` Secret을 monitoring의 ArgoCD 네임스페이스에 생성
 - [ ] dev/prd `eks-addons`에서 `enable_argocd` 제거 (Phase 4-1 개별 설치 롤백)
-- [ ] Hub ArgoCD에 ApplicationSet `cluster generator` 구성 — spoke 라벨로 dev/prd 자동 타겟팅
+- [x] ~~Hub ArgoCD에 ApplicationSet `cluster generator` 구성~~ — 6-4 이후 항목에서 이미 완료
+      (spoke label selector 포함, dev/prd cluster Secret 추가만 하면 자동 확장)
 
 **6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
 - [ ] `eks-practice-devops-manifest` repo에 ApplicationSet 작성
