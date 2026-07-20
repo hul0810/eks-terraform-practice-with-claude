@@ -1,13 +1,12 @@
 # modules/eks-addons 설계 원칙
 
-> **2026-07-17: `2.0.0` 버전 분리 안내.** monitoring 환경은 GitOps Bridge(Phase 6)로
-> `2.0.0`을 참조하도록 전환됐다 — `2.0.0`은 이 모듈이 내부적으로 호출하는
-> `aws-ia/eks-blueprints-addons` 인스턴스를 3개(아직 이관 안 된 addon용 "rest" / ArgoCD
-> 전용 부트스트랩 예외 / GitOps로 이관 완료된 addon의 IAM만 유지하는 인스턴스)로 나눈
-> **파괴적 변경**이라 `1.0.0`을 그대로 두고 새 버전 디렉토리로 분리했다
-> (`docs/terraform-principles.md` "커스텀 모듈 — 디렉토리 기반 버전 관리" 참조).
-> develop/production은 아직 이 `1.0.0`을 그대로 참조하며, 각자 addon을 GitOps Bridge로
-> 이관할 때(6-4 이후) `2.0.0`으로 전환하면 된다. 두 버전의 정확한 차이는
+> **버전 분리 안내(2026-07-17 도입, 2026-07-21 갱신).** `2.0.0`은 addon Helm 관리 주체를
+> Terraform에서 ArgoCD(GitOps Bridge)로 넘기는 **파괴적 변경**이라 `1.0.0`을 그대로 두고
+> 새 버전 디렉토리로 분리했다(`docs/terraform-principles.md` "커스텀 모듈 — 디렉토리 기반
+> 버전 관리" 참조). **2026-07-21 기준 이 `1.0.0`을 실제로 참조하는 환경은 없다** —
+> monitoring(Phase 6-4)에 이어 develop(Phase 6-5)도 `2.0.0`으로 전환 완료했고,
+> production도 코드는 `2.0.0`으로 이미 전환됐다(apply는 CLAUDE.md "Production 배포
+> 정책"에 따라 보류 중). `1.0.0`은 과거 버전으로만 남아있다 — 두 버전의 정확한 차이는
 > `modules/eks-addons/2.0.0/CLAUDE.md` 상단의 "1.0.0 → 2.0.0 변경 사항" 참조.
 
 ## 이 모듈이 관리하는 애드온 (10종)

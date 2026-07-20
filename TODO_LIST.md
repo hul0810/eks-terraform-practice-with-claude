@@ -430,11 +430,14 @@
 >
 > **ArgoCD 자신은 예외적으로 계속 Terraform 관리**: GitOps Bridge/Hub-Spoke 패턴 자체가
 > ArgoCD를 전제로 동작하므로, ArgoCD 설치 자체를 ArgoCD로 관리할 수는 없다(부트스트랩 역설).
-> monitoring 기준 실제 구현은 `modules/eks-addons/2.0.0`의 전용 인스턴스
+> 실제 구현은 `modules/eks-addons/2.0.0`의 전용 인스턴스
 > `gitops_bridge_bootstrap`(`gitops-bridge-dev/gitops-bridge/helm`, 2026-07-19부터 —
 > 이전엔 blueprints의 `eks_blueprints_addons_argocd`였으나 그 wrapper가 ArgoCD 자리에서
-> IRSA 인자를 forward하지 않아 교체, 6-4 이후 절 참고)다 — develop/production은 아직
-> `1.0.0`의 `enable_argocd` 경로 그대로다.
+> IRSA 인자를 forward하지 않아 교체, 6-4 이후 절 참고)다. 2026-07-21 기준 develop도 이
+> `2.0.0`으로 전환했지만 `enable_argocd=false`로 로컬 ArgoCD 자체를 켜지 않는다 —
+> Hub-Spoke 확장(6-5)으로 monitoring 하나의 ArgoCD가 dev를 spoke로 원격 관리하는 구조를
+> 택했기 때문이다(각 환경이 자기 ArgoCD를 갖는 대신). production도 코드는 동일하게
+> `2.0.0`+`enable_argocd=false`로 이미 전환됨(apply는 보류).
 >
 > **점진적 진행 원칙**: 아래 체크리스트는 **한 번에 몰아서 하지 않고, 항목 하나씩 순서대로
 > 진행하며 각 단계에서 실제로 GitOps Bridge가 어떻게 동작하는지 확인**한다. 특히 IAM
