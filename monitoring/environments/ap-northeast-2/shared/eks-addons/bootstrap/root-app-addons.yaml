@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: root-app-addons
+  namespace: argocd
+spec:
+  # Hub 자기 자신(cluster_name=monitoring-self)에만 매칭한다 — selector 없이 clusters: {}로
+  # 두면 dev/prd spoke cluster Secret도 매칭돼 spoke마다 root-app-addons가 중복 생성되고,
+  # 그 아래 addon ApplicationSet들을 서로 다른 부모가 동시에 소유하려 해서
+  # SharedResourceWarning이 발생한다(6-5에서 addon selector 범위 문제로 이미 겪은 것과 동일
+  # 클래스의 사고).
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            cluster_name: monitoring-self
+  template:
+    metadata:
+      name: root-app-addons
+    spec:
+      project: default
+      source:
+        # repoURL/path/revision을 하드코딩하지 않고 cluster Secret annotation에서 읽는다 —
+        # Terraform 쪽 local.gitops_bridge_hub_cluster.metadata(gitops-bridge-irsa.tf)가
+        # 실제 값을 소유한다. eks-addons/ 아래는 서브디렉토리 없이 파일이 바로 있어
+        # directory.recurse 불필요.
+        repoURL: '{{metadata.annotations.addons_repo_url}}'
+        targetRevision: '{{metadata.annotations.addons_repo_revision}}'
+        path: '{{metadata.annotations.addons_repo_basepath}}{{metadata.annotations.addons_repo_path}}'
+      destination:
+        server: '{{server}}'
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true

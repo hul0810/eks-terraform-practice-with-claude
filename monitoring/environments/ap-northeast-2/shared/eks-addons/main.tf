@@ -123,11 +123,44 @@ module "eks_addons" {
   enable_otel_spoke_collector = local.eks_addons.enable_otel_spoke_collector
 
   # GitOps Bridge Hub(Phase 6-1): monitoring이 자기 자신을 spoke로 명시 등록하는 cluster
-  # Secret + (추후) App-of-Apps 데이터. develop/production은 이 변수를 안 넘기면(기본값 null)
+  # Secret + App-of-Apps 부트스트랩. develop/production은 이 변수를 안 넘기면(기본값 null)
   # spoke로 동작한다 — gitops-bridge-irsa.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.
+  #
+  # [WHY — apps.addons가 devops-manifest의 실제 addon 매니페스트가 아닌 이유]
+  # bootstrap/root-app-addons.yaml은 devops-manifest 저장소의 repoURL·path·targetRevision을
+  # 가리키는 "포인터" ApplicationSet이다 — devops-manifest(private repo)의 실제 콘텐츠는 이
+  # root가 file()로도, 다른 어떤 방식으로도 읽지 않는다. 실제 fetch는 이 Application이
+  # 클러스터에 생성된 뒤 ArgoCD 자신의 git credential로 수행한다 — 그래서
+  # docs/addon-strategy.md의 "이 저장소가 devops-manifest를 직접 읽지 않는다" 경계가 지켜진다.
+  # gitops-bridge-dev/gitops-bridge 공식 예제(getting-started, complete, multi-cluster/hub-spoke)가
+  # bootstrap/addons.yaml을 정확히 이 패턴으로 쓴다.
+  #
+  # repoURL/path/revision 자체는 YAML에 하드코딩하지 않고 '{{metadata.annotations.xxx}}'로
+  # 런타임에 cluster Secret annotation에서 읽는다(gitops-bridge-irsa.tf의
+  # local.gitops_bridge_hub_cluster.metadata가 실제 값을 소유) — 이 값도 저장소 이전·브랜치
+  # 전략 변경으로 바뀔 수 있어, Karpenter clusterEndpoint 하드코딩이 실제 장애로 이어졌던
+  # 전례와 같은 이유로 정적 문자열을 피한다. '{{}}' 템플릿 치환은 Application이 아니라
+  # ApplicationSet(+ generators.clusters)에서만 동작하므로 ApplicationSet으로 작성했다 —
+  # selector로 Hub 자신(cluster_name=monitoring-self)에만 매칭시켜 dev/prd spoke까지
+  # 매칭돼 중복 생성되는 걸 막는다(bootstrap/root-app-addons.yaml 자체의 주석 참고).
+  #
+  # devops-manifest의 argocd/root-app-addons.yaml 원본은 이제 이 로컬 사본이 유일한
+  # source of truth가 되므로 삭제 요청함(중복 시 드리프트 위험).
+  #
+  # [WHY — workload(catalog/gateway/order) Application은 여기서 부트스트랩하지 않는 이유]
+  # addon(LBC·karpenter·external-dns 등)은 "클러스터가 쓸 수 있는 상태인가"의 일부라 인프라
+  # 프로비저닝과 자연스럽게 묶이지만, 실제 서비스 배포는 앱 팀·CI/CD가 결정할 별도 라이프사이클
+  # 이다 — monitoring Terraform apply가 트리거할 일이 아니다. vendor 예제도 이 둘을 항상 묶지는
+  # 않는다(multi-cluster/hub-spoke는 addons+workloads를 같이 부트스트랩하지만
+  # multi-cluster/hub-spoke-shared는 addons만 부트스트랩). 이 프로젝트도 Phase
+  # 6-5(addon GitOps 이관)와 Phase 6-6(워크로드 GitOps 롤아웃, 아직 미착수)를 이미 별도
+  # 단계로 분리해뒀다 — workload 부트스트랩 방식(Terraform apps로 할지, devops-manifest가
+  # root-app-addons의 감시 경로 안에 자체적으로 넣을지)은 Phase 6-6 착수 시점에 결정한다.
   gitops_bridge_hub = {
     cluster = local.gitops_bridge_hub_cluster
-    apps    = {}
+    apps = {
+      addons = file("${path.module}/bootstrap/root-app-addons.yaml")
+    }
   }
 
   replica_counts  = local.replica_counts

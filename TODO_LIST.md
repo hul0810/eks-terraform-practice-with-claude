@@ -519,6 +519,46 @@
   spoke+addon_managed로 먼저 활성화해야 함 — 안 하면 addon Helm이 전혀 안 깔린 채 fresh
   apply될 위험(`/env-provision` 스킬에 가드 추가 완료)
 
+**6-5 이후 — root-app-addons ApplicationSet 부트스트랩 자동화(완료, 2026-07-21)**
+> `env-provision` 스킬 Step 3-B-2가 사람이 수동으로 `gh api ... | kubectl apply -f -`로
+> 적용해야 했던 `root-app-addons`를, monitoring 클러스터 생성 시 Terraform이 자동으로
+> 만들도록 전환했다.
+
+- [x] `bootstrap/root-app-addons.yaml`(ApplicationSet, Hub의
+  `gitops_bridge_hub.apps.addons`로 전달) 신설 — repoURL/path/revision은 하드코딩하지
+  않고 `{{metadata.annotations.addons_repo_url}}` 등으로 cluster Secret annotation에서
+  읽음(실제 값은 `gitops-bridge-irsa.tf`의 `local.gitops_bridge_hub_cluster.metadata`가
+  소유). `clusters` generator selector를 Hub 자신(`cluster_name: monitoring-self`)에만
+  매칭시켜 dev/prd spoke까지 중복 매칭되는 것을 방지
+- [x] devops-manifest의 실제 addon 매니페스트는 여전히 Terraform이 전혀 읽지 않음 —
+  이 root가 갖는 건 "어디를 보라"는 포인터뿐(`docs/addon-strategy.md` 경계 유지),
+  gitops-bridge-dev/gitops-bridge 공식 예제와 동일 패턴(vendor 저장소로 검증)
+- [x] `terraform fmt`/`validate` 통과 확인(monitoring 클러스터가 꺼져있어 실제 `plan`은
+  다음 `/env-provision monitoring` 때 최초 검증)
+- 부수 발견: 워크로드(catalog/gateway/order) Application까지 같이 자동 부트스트랩할지
+  검토했으나 보류 — vendor 예제도 갈린다(`multi-cluster/hub-spoke`는 addons+workloads를
+  같이 부트스트랩, `multi-cluster/hub-spoke-shared`는 addons만). 인프라 프로비저닝과
+  워크로드 배포는 라이프사이클이 다르다고 판단해 addons만 이 root가 담당하고, workload
+  부트스트랩 방식은 Phase 6-6 착수 시점에 별도 결정하기로 함
+- devops-manifest에 `argocd/projects/workload.yaml`(AppProject)을
+  `argocd/applicationsets/workload/_project.yaml`로 이동 요청(eks-addons AppProject가
+  이미 같은 방식으로 반영된 전례) — 전달 대기 중
+
+**백로그 (aws-architect 리뷰, 2026-07-21)**
+- [ ] `env-teardown` 스킬이 이제 Terraform 소유가 된 `root-app-addons` 부트스트랩을
+  인지하지 못함 — `terraform destroy`가 ArgoCD bootstrap을 helm uninstall할 때 ArgoCD의
+  비동기 cascade delete(root-app → 하위 addon ApplicationSet들)를 기다리지 않고 바로
+  IAM/클러스터 destroy로 진행할 수 있어, LBC가 ALB finalize 전에 죽어 ALB orphan이 생길
+  위험이 있음. addon 정리를 명시적으로 기다리거나 `terraform state rm` 순서를 조정하는
+  방향으로 스킬 갱신 필요
+- [ ] 라이브 클러스터에 이미 수동 kubectl apply된 동일 이름 `root-app-addons`가 있는
+  상태로 이 변경을 처음 적용하면 Helm이 소유권 충돌로 실패할 수 있음(fresh
+  destroy→재생성 경로에서는 해당 없음 — 선존 리소스가 없으므로) — 라이브 클러스터에
+  얹을 일이 생기면 `kubectl delete applicationset root-app-addons -n argocd` 선행 필요
+- [ ] root-app-addons의 `syncPolicy.automated.prune: true`가 최상단에 걸려있어
+  `addons_repo_path`/`revision` annotation 오타나 devops-manifest 경로 일시 공백 시
+  하위 addon ApplicationSet 전체가 prune될 수 있음(선택 사항 — `prune: false` 전환 검토)
+
 **6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
 > devops-manifest의 workload(catalog/gateway/order) ApplicationSet은 이미 `clusters`
 > generator 기반으로 코드 전환됐지만, 그 진입점(`root-app-workload.yaml`)이 Hub에

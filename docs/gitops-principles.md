@@ -46,6 +46,11 @@
 
 - ArgoCD 자체 설치(Helm)
 - ArgoCD repo-creds(Git 인증정보)
+- root-app-addons 부트스트랩 ApplicationSet(devops-manifest의 repoURL·path·revision을
+  가리키는 포인터, `monitoring/.../eks-addons/bootstrap/root-app-addons.yaml`) — ArgoCD가
+  뜬 직후 devops-manifest를 처음 가리켜줄 대상이 없으면 GitOps 루프 자체가 시작되지
+  않는다는 점에서 ArgoCD 자체 설치와 같은 카테고리다. 실제 addon 콘텐츠는 이 파일에
+  없다(repoURL 등 좌표만 있음) — 그 콘텐츠는 devops-manifest가 100% 소유한다.
 
 새 예외 대상을 추가로 판단해야 할 때도 별도 기준을 새로 만들지 않고, `docs/addon-strategy.md`의
 판단 질문을 그대로 적용한다: **"ArgoCD 자신의 부트스트랩에 필요한 리소스인가, 아니면 ArgoCD가

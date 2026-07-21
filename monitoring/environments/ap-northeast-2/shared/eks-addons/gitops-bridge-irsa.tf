@@ -266,6 +266,16 @@ locals {
       # 경우에도 이 값 하나만 갱신하면 되고 devops-manifest 쪽 코드는 안 건드려도 된다.
       workload_account_id                 = local.workload_account_id
       external_dns_cross_account_role_arn = local.external_dns_cross_account_role_arn
+      # bootstrap/root-app-addons.yaml(ApplicationSet)이 '{{metadata.annotations.xxx}}'로 읽는
+      # devops-manifest 저장소 좌표. repoURL 자체를 YAML에 하드코딩하지 않는 이유: 이 값도
+      # 저장소 이전·조직 변경·브랜치 전략 변경으로 바뀔 수 있는 값이라 위 workload_account_id와
+      # 동일한 원칙을 적용한다 — 바뀌면 여기 한 곳만 고치면 되고 bootstrap YAML은 손댈 필요 없다.
+      # workload(catalog/gateway/order) 쪽 동일 필드는 아직 안 만든다 — main.tf의
+      # gitops_bridge_hub WHY 참고(Phase 6-6에서 별도 결정).
+      addons_repo_url      = "https://github.com/hul0810/eks-practice-devops-manifest.git"
+      addons_repo_basepath = "argocd/"
+      addons_repo_path     = "applicationsets/eks-addons"
+      addons_repo_revision = "main"
     }
   }
 }
