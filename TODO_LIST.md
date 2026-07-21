@@ -543,6 +543,13 @@
 - devops-manifest에 `argocd/projects/workload.yaml`(AppProject)을
   `argocd/applicationsets/workload/_project.yaml`로 이동 요청(eks-addons AppProject가
   이미 같은 방식으로 반영된 전례) — 전달 대기 중
+- [x] 버그 수정: `destination: server: '{{server}}'` → `name: in-cluster`(devops-manifest
+  리뷰로 발견, 2026-07-21) — `clusters` generator가 매칭하는 `monitoring-self`는 Phase
+  6-1에서 의도적으로 읽기 전용 RBAC로 구성해뒀는데, 이걸 destination에 그대로 쓰면 이
+  Application이 만드는 하위 addon ApplicationSet들의 write가 전부 막혀 sync가 실패했을
+  것. devops-manifest의 실제 addon ApplicationSet들이 이미 같은 이유로 `in-cluster` 고정
+  패턴을 쓰고 있었음 — clusters generator는 annotation 값을 읽어오는 용도로만 남기고
+  destination은 그 패턴을 그대로 따름
 
 **백로그 (aws-architect 리뷰, 2026-07-21)**
 - [ ] `env-teardown` 스킬이 이제 Terraform 소유가 된 `root-app-addons` 부트스트랩을

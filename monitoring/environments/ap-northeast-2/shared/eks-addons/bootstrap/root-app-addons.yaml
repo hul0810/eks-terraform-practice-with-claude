@@ -27,8 +27,16 @@ spec:
         repoURL: '{{metadata.annotations.addons_repo_url}}'
         targetRevision: '{{metadata.annotations.addons_repo_revision}}'
         path: '{{metadata.annotations.addons_repo_basepath}}{{metadata.annotations.addons_repo_path}}'
+      # destination은 in-cluster로 고정한다 — clusters generator가 매칭한
+      # monitoring-self(IRSA 기반 등록)는 읽기 전용 RBAC(argocd-hub-read-all: get/list/watch만
+      # 있음, Phase 6-1에서 의도적으로 least-privilege 검증용으로 구성)라 '{{server}}'를 그대로
+      # destination에 쓰면 이 Application이 만드는 하위 addon ApplicationSet들의 write가 전부
+      # 막혀 sync가 실패한다. devops-manifest의 실제 addon ApplicationSet
+      # (aws-load-balancer-controller.yaml 등)도 동일한 이유로 monitoring 자신을 대상으로 할 때는
+      # in-cluster를 고정하고, clusters generator는 순수하게 annotation 값을 읽어오는 용도로만
+      # 쓴다 — 그 패턴을 그대로 따른다(2026-07-21, devops-manifest 리뷰로 발견).
       destination:
-        server: '{{server}}'
+        name: in-cluster
         namespace: argocd
       syncPolicy:
         automated:
