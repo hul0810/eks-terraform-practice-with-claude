@@ -40,7 +40,7 @@ variable "oidc_provider_arn" {
 }
 
 variable "vpc_id" {
-  description = "EKS 클러스터가 속한 VPC ID. LBC가 VPC ID를 IMDS에서 조회하지 않도록 직접 주입하는 용도였으나, LBC의 Helm release가 ArgoCD로 이관되며 이 값(devops-manifest의 charts/eks-addons/aws-load-balancer-controller/values-override.yaml의 vpcId)도 함께 옮겨가 이 버전(2.0.0)에서는 실제 사용처가 없다. 6-4 이후 vpc_id가 필요한 다른 addon이 eks_blueprints_addons_gitops로 이관되면 그때 다시 쓰일 수 있어 인터페이스는 유지한다."
+  description = "EKS 클러스터가 속한 VPC ID. LBC의 Helm release가 ArgoCD로 이관되며 이 값(devops-manifest의 charts/eks-addons/aws-load-balancer-controller/values-override.yaml의 vpcId)도 함께 옮겨가 이 모듈에서는 현재 실제 사용처가 없다. vpc_id가 필요한 다른 addon이 eks_blueprints_addons_gitops로 이관되면 그때 다시 쓰일 수 있어 인터페이스는 유지한다."
   type        = string
 
   validation {
@@ -335,15 +335,13 @@ variable "argocd_controller_irsa_role_arn" {
 }
 
 # [WHY — Hub 여부를 코드 위치가 아니라 변수의 null 여부로 가르는 이유]
-# 여러 클러스터를 관리하는 실무 Terraform 모듈에서 흔히 쓰는 opt-in 패턴을 참고했다
-# (예: 공용 EKS 모듈이 Hub 전용 부트스트랩 서브모듈을 for_each 키의 존재 여부로
-# opt-in시키는 구조). 처음엔 "Hub 전용 로직(cluster Secret 등)은 공유 모듈이 아니라
-# root에 둬야 한다"고 생각했었다 — Hub만 갖는 데이터(image-updater Role ARN 등)가 root에만
-# 있었기 때문이다. 하지만 그건 "코드가 어디 있는가"와 "이 클러스터가 Hub인가"를 혼동한
-# 것이었다 — 데이터는 root에서 계산해 변수로 넘기면 그만이고, "Hub냐 아니냐"라는 판단 자체는
-# 이 변수 하나(null이면 spoke, 값이 있으면 Hub)로 표현하는 게 재사용성 측면에서 더 낫다.
-# develop/production이 나중에 이 모듈(2.0.0)로 이관되어 spoke가 되어도, 이 변수를 안 넘기기만
-# 하면 코드 수정 없이 자연스럽게 spoke로 동작한다.
+# 여러 클러스터를 관리하는 실무 Terraform 모듈에서 흔히 쓰는 opt-in 패턴을 따른다(예:
+# 공용 EKS 모듈이 Hub 전용 부트스트랩 서브모듈을 for_each 키의 존재 여부로 opt-in시키는
+# 구조). "코드가 어디 있는가"와 "이 클러스터가 Hub인가"는 별개 문제다 — Hub만 갖는
+# 데이터(image-updater Role ARN 등)는 root에서 계산해 변수로 넘기면 그만이고, "Hub냐
+# 아니냐"라는 판단 자체는 이 변수 하나(null이면 spoke, 값이 있으면 Hub)로 표현하는 게
+# 재사용성 측면에서 낫다. develop/production이 이 모듈(2.0.0)로 이관되어 spoke가 되어도,
+# 이 변수를 안 넘기기만 하면 코드 수정 없이 자연스럽게 spoke로 동작한다.
 variable "gitops_bridge_hub" {
   description = "GitOps Bridge Hub 전용 설정(cluster/apps). null이면 이 클러스터는 Hub 역할을 하지 않는다 — module.gitops_bridge_bootstrap의 cluster Secret·App-of-Apps 리소스가 생성되지 않는다. 스키마는 gitops-bridge-dev/gitops-bridge/helm 모듈 자체의 cluster/apps 변수를 그대로 따른다(별도 스키마를 새로 정의하지 않음 — 벤더 모듈의 인터페이스를 그대로 노출)."
   type        = any

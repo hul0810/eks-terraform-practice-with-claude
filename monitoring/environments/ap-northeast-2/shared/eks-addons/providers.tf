@@ -29,7 +29,7 @@ provider "aws" {
   }
 }
 
-# GitOps Bridge Hub-Spoke(Phase 6-5): dev/prd 클러스터(workload 계정, 657231015203)의
+# GitOps Bridge Hub-Spoke: dev/prd 클러스터(workload 계정, 657231015203)의
 # EKS API 엔드포인트·CA 인증서를 읽어 cluster Secret에 채우기 위한 크로스 계정 provider.
 # terraform_remote_state로 workload 계정의 S3 state 버킷을 읽으려면 버킷 정책에 크로스
 # 계정 read 권한이 별도로 필요한데, 로컬 AWS CLI 프로필(terraform-workload)이 이미

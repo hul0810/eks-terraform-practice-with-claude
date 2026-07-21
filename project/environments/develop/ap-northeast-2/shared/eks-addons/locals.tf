@@ -31,9 +31,9 @@ locals {
   eks_addons = {
     # 2026-06-09 기준 최신 stable 버전 (external_secrets_chart_version은 2026-07-02 기준)
     # 버전 업그레이드: helm repo update && helm search repo <chart> --versions
-    # metrics-server/argo-rollouts는 여기 없다 — IAM이 필요 없는 addon이라 6-5 이후
-    # Terraform이 완전히 손을 뗐고(2026-07-21), Helm 관리·버전은 devops-manifest
-    # ArgoCD Application이 전담한다(modules/eks-addons/2.0.0/CLAUDE.md 참조).
+    # metrics-server/argo-rollouts는 여기 없다 — IAM이 필요 없는 addon이라 Terraform이
+    # 완전히 손을 떼고, Helm 관리·버전은 devops-manifest ArgoCD Application이 전담한다
+    # (modules/eks-addons/2.0.0/CLAUDE.md 참조).
     lbc_chart_version              = "3.4.0"
     external_dns_chart_version     = "1.14.5"
     karpenter_chart_version        = "1.12.1"
@@ -45,8 +45,8 @@ locals {
     # pyhtest.com zone ARN — workload 계정 hosted zone, Terraform 외부 관리 리소스 (하드코딩)
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
     enable_karpenter               = true
-    # Phase 6-5: dev를 monitoring ArgoCD Hub의 spoke로 등록하며 개별 설치를 롤백한다
-    # (gitops-bridge-spoke-irsa.tf가 그 spoke 등록을 대신 담당). 아래 argocd_* 값들은
+    # dev는 monitoring ArgoCD Hub의 spoke로 등록되어 개별 ArgoCD 설치를 쓰지 않는다
+    # (gitops-bridge-spoke-irsa.tf가 그 spoke 등록을 담당). 아래 argocd_* 값들은
     # enable_argocd=false인 동안 전부 미사용이지만, argocd_chart_version 등 일부는 모듈
     # 쪽에 기본값이 없는 필수 인자라 값 자체는 남겨둔다 — 다시 켤 일이 생기면 그대로 재사용.
     enable_argocd = false
@@ -84,5 +84,5 @@ locals {
 
   # Karpenter NodePool 정의는 여기 없다 — 4종(general/arm64/gpu/spot) 전부
   # devops-manifest의 karpenter-resources-dev Application이 EC2NodeClass "default"와
-  # 함께 관리한다(karpenter.tf 상단 WHY 참조, 2026-07-21).
+  # 함께 관리한다(karpenter.tf 상단 WHY 참조).
 }

@@ -28,41 +28,34 @@
 # 유지(local.argocd_values, locals.tf 참고).
 #
 # [WHY — blueprints가 아니라 이 모듈로 ArgoCD를 설치하는 이유]
-# 원래는 blueprints(aws-ia/eks-blueprints-addons)의 module "argocd" 서브모듈로 ArgoCD를
-# 설치하고("eks_blueprints_addons_argocd"라는 별도 인스턴스), Hub 등록용 cluster Secret은
-# root(gitops-bridge-irsa.tf)에 kubernetes_secret_v1으로 손코드 작성했었다. 이 구조를 재검토한
-# 계기는 "ArgoCD 자신의 IRSA(argocd-application-controller SA)를 blueprints가 지원하는가"라는
-# 질문이었다 — aws-ia/eks-blueprints-addon(범용 단일 addon 모듈)은 create_role/oidc_providers
-# 등을 지원하지만, aws-ia/eks-blueprints-addons(복수형 wrapper)의 module "argocd" 호출부는
-# 다른 13개 addon(aws_load_balancer_controller, external_dns, karpenter 등)과 달리 그 인자들을
-# 전혀 forward하지 않는다는 걸 소스에서 직접 확인했다(temp/gitops-bridge-terraform-notes.md
-# 7번 참고). 즉 blueprints는 ArgoCD 설치에 있어 얻을 이점이 하나도 없었다 — IRSA도 못 주고,
-# Helm 설치는 다른 25개 addon과 똑같은 얇은 wrapper일 뿐이라 별도 인스턴스로 분리해 둘 이유가
-# 사라졌다.
+# aws-ia/eks-blueprints-addons(복수형 wrapper)의 module "argocd" 호출부는 다른 addon
+# (aws_load_balancer_controller, external_dns, karpenter 등)과 달리 create_role/
+# oidc_providers 같은 IRSA 관련 인자를 전혀 forward하지 않는다(소스에서 직접 확인) —
+# ArgoCD 자신의 IRSA(argocd-application-controller SA)를 blueprints로는 구성할 수 없다는
+# 뜻이라 blueprints는 ArgoCD 설치에 이점이 없다.
 #
 # gitops-bridge-dev/gitops-bridge/helm은 ArgoCD Helm 설치(install)와 GitOps Bridge Hub의
 # cluster Secret(cluster) + App-of-Apps 부트스트랩(apps)을 한 모듈 인터페이스로 제공한다.
-# 단, 이 모듈도 IAM 관련 리소스는 전혀 만들지 않는다(temp 문서 8번 참고) — ArgoCD 자신의
-# IRSA(IAM Role/Access Entry/RBAC)는 root의 gitops-bridge-irsa.tf에 여전히 손코드로 남는다
-# (blueprints든 이 모듈이든 어느 vendor도 "Hub 자신의 IRSA"는 대신 해주지 않는다).
+# 단, 이 모듈도 IAM 관련 리소스는 전혀 만들지 않는다 — ArgoCD 자신의 IRSA(IAM Role/Access
+# Entry/RBAC)는 root의 gitops-bridge-irsa.tf에 여전히 손코드로 남는다(blueprints든 이
+# 모듈이든 어느 vendor도 "Hub 자신의 IRSA"는 대신 해주지 않는다).
 #
 # [WHY — cluster/apps를 nullable 변수(var.gitops_bridge_hub)로 받는 이유]
 # 이 모듈 인스턴스는 공유 모듈(모든 환경이 재사용)에 있지만, cluster Secret·App-of-Apps는
-# "이 클러스터가 GitOps Bridge Hub인가"라는 환경별 개념이다(develop/production이 나중에 이
-# 모듈로 이관되면 spoke가 될 뿐 Hub가 아니다). "Hub 전용 로직이니 공유 모듈이 아니라 root에
-# 둬야 한다"고 생각했었지만, 그건 "데이터가 어디 있는가"와 "이게 Hub 개념에 속하는가"를
-# 혼동한 것이었다(temp 문서 9번 참고) — var.gitops_bridge_hub가 null이면 아래 두 리소스가
-# 전혀 생성되지 않고, monitoring(Hub)만 root에서 실제 값을 채워 넘긴다. spoke가 될 환경은
-# 이 변수를 안 넘기기만 하면 코드 수정 없이 자연스럽게 spoke로 동작한다.
+# "이 클러스터가 GitOps Bridge Hub인가"라는 환경별 개념이다(develop/production이 이 모듈로
+# 이관되면 spoke가 될 뿐 Hub가 아니다). "데이터가 어디 있는가"와 "이게 Hub 개념에 속하는가"는
+# 별개 문제다 — var.gitops_bridge_hub가 null이면 아래 두 리소스가 전혀 생성되지 않고,
+# monitoring(Hub)만 root에서 실제 값을 채워 넘긴다. spoke가 될 환경은 이 변수를 안 넘기기만
+# 하면 코드 수정 없이 자연스럽게 spoke로 동작한다.
 #
 # [WHY — cluster.metadata의 merge를 root가 아니라 여기(공유 모듈 내부)에서 하는 이유]
 # root가 넘기는 var.gitops_bridge_hub.cluster.metadata에는 root에서만 계산 가능한 값
 # (image-updater Role ARN 등)만 담고, 각 addon의 IRSA Role ARN 같은 값(module
 # "eks_blueprints_addons_gitops"의 공식 output "gitops_metadata")은 여기서 형제 module을
 # 직접 참조해 합친다. root에서 먼저 이 둘을 합쳐 넘기면 "module.eks_addons의 출력을 같은
-# module.eks_addons 호출의 입력으로 되먹이는" 순환 참조가 되어 Terraform이 거부한다 — 이건
-# 실제로 작성하다가 걸린 실수다. 같은 부모 모듈 안의 형제 module 참조는 순환이 아니므로,
-# 이 merge는 반드시 root가 아니라 여기서 이뤄져야 한다.
+# module.eks_addons 호출의 입력으로 되먹이는" 순환 참조가 되어 Terraform이 거부한다. 같은
+# 부모 모듈 안의 형제 module 참조는 순환이 아니므로, 이 merge는 반드시 root가 아니라
+# 여기서 이뤄져야 한다.
 module "gitops_bridge_bootstrap" {
   source = "gitops-bridge-dev/gitops-bridge/helm"
   # 프로젝트 컨벤션(공식 모듈 버전 "~> X.Y.Z", 패치만 허용)에 맞춰 패치 범위로 고정한다.
@@ -102,24 +95,6 @@ module "gitops_bridge_bootstrap" {
   apps = try(var.gitops_bridge_hub.apps, {})
 }
 
-# 옛 module "eks_blueprints_addons_argocd"(aws-ia/eks-blueprints-addons 기반)에서 이 module
-# "gitops_bridge_bootstrap"(gitops-bridge-dev/gitops-bridge/helm 기반)으로 ArgoCD 설치
-# 주체를 교체하면서 생기는 state 주소 변경은 moved 블록으로 처리할 수 없다 — source 자체가
-# 다른 벤더 모듈로 바뀌어 Terraform이 "동일 리소스의 이동"으로 인식할 근거가 없기 때문이다
-# (moved 블록은 같은 provider/schema 안에서의 주소 변경만 지원한다). 리소스 타입
-# (helm_release)은 동일하므로 아래처럼 1회성 명령형 terraform state mv로 옮긴다:
-#
-#   terraform state mv \
-#     'module.eks_addons.module.eks_blueprints_addons_argocd.module.argocd.helm_release.this[0]' \
-#     'module.eks_addons.module.gitops_bridge_bootstrap.helm_release.argocd[0]'
-#
-# root의 kubernetes_secret_v1.argocd_cluster_self(손코드, gitops-bridge-irsa.tf)도 동일한
-# 이유로 state mv 대상이다:
-#
-#   terraform state mv \
-#     'kubernetes_secret_v1.argocd_cluster_self' \
-#     'module.eks_addons.module.gitops_bridge_bootstrap.kubernetes_secret_v1.cluster[0]'
-
 ################################################################################
 # module "eks_blueprints_addons_gitops" — GitOps Bridge로 ArgoCD 관리로 이관됐지만
 # IAM(IRSA)은 계속 Terraform이 유지해야 하는 addon 전용 인스턴스
@@ -134,15 +109,6 @@ module "gitops_bridge_bootstrap" {
 # 모듈 인스턴스를 만들 필요 없이 이 인스턴스를 계속 재사용. GitOps Bridge 패턴에서는 Helm이
 # 처음부터 ArgoCD 몫이므로, "Terraform-Helm으로 먼저 들여왔다가 나중에 여기로 옮기는" 단계
 # 자체가 없다 — IAM이 필요한 addon은 처음부터 여기서 시작한다.
-#
-# state 이전 시 유의:
-#   1. ArgoCD Application이 sync를 통해 Helm release를 실제로 인수했는지 먼저 검증한다
-#      (diff가 tracking annotation뿐인지, sync 후 파드/ALB 등에 이상 없는지) — 검증 전에는
-#      Terraform의 helm_release를 절대 건드리지 않는다(검증 실패 시 되돌릴 안전망 유지).
-#   2. 검증 통과 후: IAM 리소스(aws_iam_role/aws_iam_policy/aws_iam_role_policy_attachment)는
-#      `terraform state mv`로 이 인스턴스의 새 주소로 옮긴다(실제 AWS 리소스는 그대로 유지).
-#   3. helm_release는 `terraform state rm`으로 Terraform 추적에서만 제거한다(destroy 아님 —
-#      ArgoCD가 이미 그 리소스를 관리 중이므로 Terraform이 손을 뗄 뿐).
 ################################################################################
 
 module "eks_blueprints_addons_gitops" {

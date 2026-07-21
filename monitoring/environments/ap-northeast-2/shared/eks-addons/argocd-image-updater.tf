@@ -19,10 +19,9 @@
 # 맞지만, 실제 이미지/태그 조회(BatchGetImage 등)가 성립하려면 IAM 평가 로직이 same-account와
 # 다르다: same-account는 identity 기반 정책 또는 resource 기반 정책 중 하나만 허용해도 되지만,
 # cross-account는 호출자 쪽 identity 기반 정책과 대상 리소스의 resource 기반 정책 둘 다
-# 명시적으로 허용해야 성립하는 AND 로직이다. 초기에는 이 사실을 놓치고 GetAuthorizationToken만
-# identity 측에 부여한 채 workload 계정 repository policy(read_access_arns)만으로 충분하다고
-# 가정했다가 실제 태그 조회에서 403이 발생했다(로그인은 되지만 조회가 막힘 — AND 조건 중 identity
-# 측이 비어 있었기 때문).
+# 명시적으로 허용해야 성립하는 AND 로직이다 — GetAuthorizationToken만 identity 측에
+# 부여하고 workload 계정 repository policy(read_access_arns)만 있으면 로그인은 되지만
+# 실제 태그 조회(BatchGetImage 등)는 403으로 막힌다(identity 측 read 액션이 비어 있으므로).
 # 따라서 이 IRSA Role에는 GetAuthorizationToken(계정 단위, 아래 별도 정책) 외에도 실제 조회에
 # 필요한 identity 측 read 액션(BatchGetImage/DescribeImages/ListImages/DescribeRepositories/
 # GetDownloadUrlForLayer/BatchCheckLayerAvailability)을 workload 계정 저장소 전체(현재 6개)에
@@ -35,8 +34,7 @@
 # ext: 스크립트는 ECR 로그인 토큰을 발급하는 바이너리가 필요한데, 차트 기본 이미지
 # (quay.io/argoprojlabs/argocd-image-updater)는 Alpine(musl libc) 기반이라 aws-cli(glibc 바이너리)를
 # 그대로 복사해 넣으면 "exec: no such file or directory"로 실행 자체가 안 된다(동적 링커 경로가
-# 다른 libc를 가리켜 파일이 있어도 실행 불가 — 실제로 이 프로젝트에서 aws-cli로 먼저 시도했다가
-# 이 문제로 교체했다). 대신 AWS 공식 amazon-ecr-credential-helper(docker-credential-ecr-login)를
+# 다른 libc를 가리켜 파일이 있어도 실행 불가). 대신 AWS 공식 amazon-ecr-credential-helper(docker-credential-ecr-login)를
 # 쓴다 — Alpine aports 공식 패키지로 배포되어 musl 바이너리를 그대로 얻을 수 있고, Go 정적 바이너리라
 # 별도 공유 라이브러리 의존성도 없다. initContainer 이미지를 메인 컨테이너와 같은 Alpine 버전으로
 # 맞춰 apk로 설치한 바이너리를 emptyDir에 복사한다.

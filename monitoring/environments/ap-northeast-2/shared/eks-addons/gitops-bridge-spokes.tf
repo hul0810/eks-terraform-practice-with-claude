@@ -1,17 +1,13 @@
 ################################################################################
-# GitOps Bridge Hub-Spoke(Phase 6-5) — dev/prod cluster Secret을 monitoring의 argocd
+# GitOps Bridge Hub-Spoke — dev/prod cluster Secret을 monitoring의 argocd
 # 네임스페이스에 생성해 Hub가 원격 클러스터를 관리 대상으로 인식하게 한다.
 #
 # [monitoring-self와의 차이 — 왜 module.eks_addons(공유 모듈) 안이 아니라 root에 직접 두는가]
-# monitoring-self는 module.eks_addons에 gitops_bridge_hub 변수로 넘겨서, 공유 모듈 내부에서
-# 자기 자신의 addon IAM ARN(module.eks_blueprints_addons_gitops.gitops_metadata)과 합쳐야
-# 했다(순환 참조 회피 목적). 이 spoke Secret들은 dev/prod 자신의 addon IAM과는 무관하다 —
-# dev는 2026-07-21 `2.0.0`으로 전환 완료했지만(prod는 코드만), 이 local의
-# addon_iam_metadata는 아직 dev 자신의 `module.eks_addons`가 노출하는 gitops_metadata
-# output을 직접 참조하도록 배선하지 않은 상태다(같은 계정도 아니고 별도 root라 그 output을
-# 읽으려면 cross-account remote_state가 필요 — 아래 addon_iam_metadata WHY 참고). 그래서
-# 공유 모듈을 거칠 이유가 없어 벤더 모듈(gitops-bridge-dev/gitops-bridge/helm)을 이 root에서
-# 바로 호출한다.
+# 이 spoke Secret들은 dev/prod 자신의 addon IAM과는 무관하다 — 별도 계정·별도 root라 그
+# addon IAM ARN(module.eks_addons의 gitops_metadata output)을 읽으려면 cross-account
+# remote_state가 필요한데, 대신 role_name 네이밍 패턴을 문자열로 직접 조합한다(아래
+# addon_iam_metadata 참고). 공유 모듈을 거칠 이유가 없어 벤더 모듈
+# (gitops-bridge-dev/gitops-bridge/helm)을 이 root에서 바로 호출한다.
 #
 # [install=false인 이유]
 # ArgoCD 자신은 이미 module.eks_addons(gitops_bridge_bootstrap)가 설치했다. 이 모듈을
@@ -29,7 +25,7 @@
 # 이 Secret의 config.awsAuthConfig.roleARN은 project/environments/{develop,production}/
 # .../eks-addons/gitops-bridge-spoke-irsa.tf가 만든 spoke Role을 가리킨다. Hub의
 # argocd_application_controller Role이 이 spoke Role을 sts:AssumeRole로 넘겨받아 그
-# 계정의 EKS API에 접근한다(gitops-bridge-irsa.tf 3단 체인과 대칭되는 크로스 계정 버전).
+# 계정의 EKS API에 접근한다(gitops-bridge-irsa.tf의 크로스 계정 assume 권한과 대칭).
 #
 # [지금은 dev만 활성화]
 # prod EKS 클러스터는 현재 꺼져있다(비용 절감, teardown 상태) — enabled_gitops_bridge_spokes가
@@ -44,14 +40,12 @@ locals {
       enabled          = true
       aws_cluster_name = "eks-practice-dev"
       environment      = "develop"
-      # 6-5 이후: dev의 addon(LBC/Karpenter/ExternalDNS/ExternalSecrets/metrics-server/
-      # argo-rollouts)을 Terraform-Helm에서 Argo 배포로 이관 중 — devops-manifest의 addon
-      # selector가 이 라벨이 있는 spoke만 포함하도록 전환됨(2026-07-21).
+      # devops-manifest의 addon selector가 이 라벨이 있는 spoke만 addon 배포 대상으로
+      # 포함한다.
       addon_managed = true
       # dev/eks-addons/karpenter.tf의 disruption.consolidateAfter(arm64/gpu/spot NodePool)와
-      # 동일 값 — karpenter-resources 차트가 이 값을 그대로 템플릿에 주입한다(2026-07-21).
+      # 동일 값 — karpenter-resources 차트가 이 값을 그대로 템플릿에 주입한다.
       karpenter_consolidate_after = "30s"
-      # 2026-07-21: SCP RunInstancesAuthCheckFailed 대응 요청 이후 devops-manifest 회신 —
       # 워크로드(dev/prod)는 general/arm64/gpu/spot 4종 NodePool을 전부 쓰고, monitoring은
       # GPU가 필요 없어 값을 아예 안 받고 devops-manifest values-override.yaml에서 false로
       # 고정한다(그래서 monitoring-self의 metadata에는 이 3개 키가 없다 — 아래 module
@@ -69,11 +63,10 @@ locals {
       # production/eks-addons/karpenter.tf와 동일 값(dev보다 긴 300s — 스파이크 직후 과도한
       # 노드 회수 방지).
       karpenter_consolidate_after = "300s"
-      # dev와 동일하게 미리 채워뒀다 — 지금은 addon_managed=false라 addon_iam_metadata의
-      # 삼항식이 {}를 반환해 spoke Secret에 실제로는 반영되지 않는다(terraform-reviewer
-      # 지적, 2026-07-21: 값과 "재확인 필요"라는 주석이 불일치했던 걸 정정). prod의
+      # dev와 동일하게 미리 채워뒀다 — addon_managed=false인 동안은 addon_iam_metadata의
+      # 삼항식이 {}를 반환해 spoke Secret에 실제로는 반영되지 않는 죽은 값이다. prod의
       # addon_managed를 true로 바꾸는 시점에 이 값 그대로 둘지(워크로드 전체 NodePool
-      # 사용) 재검토할 것 — 그 전까지는 이 값 자체가 죽은 값이라 위험 없음.
+      # 사용) 재검토할 것.
       karpenter_nodepool_arm64_enabled = "true"
       karpenter_nodepool_gpu_enabled   = "true"
       karpenter_nodepool_spot_enabled  = "true"
@@ -89,13 +82,11 @@ locals {
   # (예: serviceAccount.annotations.eks.amazonaws.com/role-arn). spoke(dev/prod)는 monitoring
   # 자신처럼 형제 module의 gitops_metadata output을 참조할 수 없다 — 별도 root(다른 AWS
   # 계정)라 그 output을 읽으려면 cross-account remote_state가 필요하기 때문이다. 대신
-  # modules/eks-addons/2.0.0/main.tf(dev가 2026-07-21부터 실제 참조 중)가 고정한 role_name
-  # 패턴(${cluster_name}-lbc-irsa 등, role_name_use_prefix=false)을 그대로 조합한다 — 1.0.0도
-  # 동일한 네이밍 규칙을 썼으므로 이 문자열 조합은 dev의 1.0.0→2.0.0 전환 전후로 값이
-  # 바뀌지 않는다. 이 파일의 roleARN(위 config.awsAuthConfig)과 동일한 방식(데이터소스 대신
-  # 문자열 조합)이라 계정 ID·네이밍이 바뀌지 않는 한 안전하다. cross-account remote_state로
-  # dev 자신의 gitops_metadata output을 직접 읽는 방식으로 바꾸면 이 local 자체가 필요
-  # 없어지지만, 지금은 그 정도 리팩토링 없이도 정확히 동작한다.
+  # modules/eks-addons/2.0.0/main.tf가 고정한 role_name 패턴(${cluster_name}-lbc-irsa 등,
+  # role_name_use_prefix=false)을 문자열로 그대로 조합한다 — 이 파일의 roleARN(위
+  # config.awsAuthConfig)과 동일한 방식이라 계정 ID·네이밍이 바뀌지 않는 한 안전하다.
+  # cross-account remote_state로 dev 자신의 gitops_metadata output을 직접 읽는 방식으로
+  # 바꾸면 이 local 자체가 필요 없어지지만, 지금은 그 정도 리팩토링 없이도 정확히 동작한다.
   addon_iam_metadata = {
     for name, spoke in local.gitops_bridge_spokes : name => (
       spoke.addon_managed ? {
@@ -110,9 +101,9 @@ locals {
         karpenter_consolidate_after   = spoke.karpenter_consolidate_after
         external_dns_iam_role_arn     = "arn:aws:iam::${local.workload_account_id}:role/${spoke.aws_cluster_name}-external-dns-irsa"
         external_secrets_iam_role_arn = "arn:aws:iam::${local.workload_account_id}:role/${spoke.aws_cluster_name}-external-secrets-irsa"
-        # SCP RunInstancesAuthCheckFailed 대응 devops-manifest 요청(2026-07-21) — karpenter-resources
-        # 차트가 이 값으로 arm64/gpu/spot NodePool 생성 여부를 결정한다. karpenter-resources 자체가
-        # addon_managed spoke만 대상이라 이 3개도 같은 조건(addon_managed) 안에 둔다.
+        # karpenter-resources 차트가 이 값으로 arm64/gpu/spot NodePool 생성 여부를 결정한다.
+        # karpenter-resources 자체가 addon_managed spoke만 대상이라 이 3개도 같은 조건
+        # (addon_managed) 안에 둔다.
         karpenter_nodepool_arm64_enabled = spoke.karpenter_nodepool_arm64_enabled
         karpenter_nodepool_gpu_enabled   = spoke.karpenter_nodepool_gpu_enabled
         karpenter_nodepool_spot_enabled  = spoke.karpenter_nodepool_spot_enabled
@@ -138,20 +129,12 @@ module "gitops_bridge_spoke" {
   cluster = {
     cluster_name = each.key # "dev"/"prod" — ApplicationSet의 {{name}}으로 노출되는 값
     environment  = each.value.environment
-    # [WHY] addon 10개 ApplicationSet의 clusters generator selector가 원래
-    # `argocd.argoproj.io/secret-type: cluster` 하나만 보고 있어서, 이 Secret이 생기자마자
-    # monitoring 전용이어야 할 addon 10개가 "-dev" Application으로 잘못 자동 생성되고
-    # destination이 in-cluster로 고정돼 있어 monitoring 자신의 기존 리소스와
-    # SharedResourceWarning(소유권 충돌)까지 발생했다(2026-07-21 실제 발생).
-    # devops-manifest 쪽에서 addon selector에 이 라벨 NotIn 조건을 추가해 spoke Secret을
-    # 제외하도록 수정 완료(2026-07-21, push+라이브 반영 확인) — 지금은 정상적으로 걸러진다.
-    # workload(catalog/gateway/order) ApplicationSet 6개도 이 라벨(정확히는 spoke의
-    # cluster_name)로 매칭해 destination.name을 '{{.name}}'으로 템플릿화하도록 함께 전환됨 —
-    # 실제 workload가 monitoring이 아니라 진짜 dev/prod로 배포되기 시작했다.
-    #
-    # [addon-managed — 6-5 이후] addon selector가 "제외 목록"(spoke면 무조건 뺌)에서
-    # "포함 목록"(이 라벨이 있는 spoke만 포함) 방식으로 바뀌었다(devops-manifest 요청·반영,
-    # 2026-07-21). dev가 addon 이관 준비가 됐을 때만 이 라벨을 붙인다 — prod는 아직 안 붙임.
+    # [WHY] devops-manifest의 addon ApplicationSet은 이 Secret의 `eks-practice.io/
+    # addon-managed` 라벨이 있는 spoke만 포함 목록에 넣는다 — dev가 addon 이관 준비가
+    # 됐을 때만 이 라벨을 붙인다(prod는 아직 안 붙임). `eks-practice.io/gitops-bridge-role:
+    # spoke` 라벨은 workload(catalog/gateway/order) ApplicationSet 6개가 이 Secret의
+    # cluster_name으로 매칭해 destination.name을 '{{.name}}'으로 템플릿화하는 데 쓰인다 —
+    # 즉 워크로드가 monitoring이 아니라 실제 dev/prod로 배포된다.
     addons = merge(
       { "eks-practice.io/gitops-bridge-role" = "spoke" },
       each.value.addon_managed ? { "eks-practice.io/addon-managed" = "true" } : {}

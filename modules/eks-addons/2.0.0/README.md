@@ -72,7 +72,7 @@ No requirements.
 | <a name="input_otel_gateway_endpoint"></a> [otel\_gateway\_endpoint](#input\_otel\_gateway\_endpoint) | monitoring 클러스터 OTel Gateway Internal NLB 엔드포인트 (예: 'internal-xxxx.elb.ap-northeast-2.amazonaws.com:4317'). enable\_otel\_spoke\_collector=true일 때 필수 | `string` | `""` | no |
 | <a name="input_otel_spoke_operator_chart_version"></a> [otel\_spoke\_operator\_chart\_version](#input\_otel\_spoke\_operator\_chart\_version) | OTel Operator Helm chart 버전 (예: '0.76.1'). enable\_otel\_spoke\_collector=true일 때 필수 | `string` | `null` | no |
 | <a name="input_replica_counts"></a> [replica\_counts](#input\_replica\_counts) | ArgoCD server/repoServer/applicationSet의 HA 모드 replica 수 | <pre>object({<br/>    argocd_server = optional(number, 2) # ArgoCD HA 모드에서 server/repoServer/applicationSet replica 수<br/>  })</pre> | `{}` | no |
-| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | EKS 클러스터가 속한 VPC ID. LBC가 VPC ID를 IMDS에서 조회하지 않도록 직접 주입하는 용도였으나, LBC의 Helm release가 ArgoCD로 이관되며 이 값(devops-manifest의 charts/eks-addons/aws-load-balancer-controller/values-override.yaml의 vpcId)도 함께 옮겨가 이 버전(2.0.0)에서는 실제 사용처가 없다. 6-4 이후 vpc\_id가 필요한 다른 addon이 eks\_blueprints\_addons\_gitops로 이관되면 그때 다시 쓰일 수 있어 인터페이스는 유지한다. | `string` | n/a | yes |
+| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | EKS 클러스터가 속한 VPC ID. LBC의 Helm release가 ArgoCD로 이관되며 이 값(devops-manifest의 charts/eks-addons/aws-load-balancer-controller/values-override.yaml의 vpcId)도 함께 옮겨가 이 모듈에서는 현재 실제 사용처가 없다. vpc\_id가 필요한 다른 addon이 eks\_blueprints\_addons\_gitops로 이관되면 그때 다시 쓰일 수 있어 인터페이스는 유지한다. | `string` | n/a | yes |
 
 ## Outputs
 

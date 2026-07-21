@@ -106,11 +106,9 @@ module "eks_addons" {
   argocd_admin_password_mtime        = local.eks_addons.argocd_admin_password_mtime
 
   argocd_notifications_slack_enabled = local.eks_addons.argocd_notifications_slack_enabled
-  # GitOps Bridge Hub(Phase 6-1): ArgoCD application-controller가 awsAuthConfig로 클러스터를
-  # 명시 등록할 때 필요한 IRSA Role ARN. 다른 local.eks_addons.xxx 참조와 달리 이 값은
-  # 리터럴이 아니라 같은 root의 다른 리소스 참조다 — notifications_secret_store_argo_rollouts가
-  # kubernetes_service_account_v1.notifications_eso_argo_rollouts를 참조하는 것과 같은 방식
-  # (gitops-bridge-irsa.tf 참조).
+  # GitOps Bridge Hub: ArgoCD application-controller가 다른 클러스터를 크로스 계정으로
+  # 관리할 때 assume하는 IRSA Role ARN(gitops-bridge-irsa.tf 참조). 다른
+  # local.eks_addons.xxx 참조와 달리 이 값은 리터럴이 아니라 같은 root의 다른 리소스 참조다.
   argocd_controller_irsa_role_arn = aws_iam_role.argocd_application_controller.arn
 
   # Argo Rollouts는 Terraform이 전혀 관여하지 않는 addon(devops-manifest의 ArgoCD Application이
@@ -122,9 +120,9 @@ module "eks_addons" {
   # monitoring 클러스터는 OTel Hub — spoke collector 미설치
   enable_otel_spoke_collector = local.eks_addons.enable_otel_spoke_collector
 
-  # GitOps Bridge Hub(Phase 6-1): monitoring이 자기 자신을 spoke로 명시 등록하는 cluster
-  # Secret + App-of-Apps 부트스트랩. develop/production은 이 변수를 안 넘기면(기본값 null)
-  # spoke로 동작한다 — gitops-bridge-irsa.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.
+  # GitOps Bridge Hub: monitoring이 자기 자신을 spoke로 명시 등록하는 cluster Secret +
+  # App-of-Apps 부트스트랩. develop/production은 이 변수를 안 넘기면(기본값 null) spoke로
+  # 동작한다 — gitops-bridge-irsa.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.
   #
   # [WHY — apps.addons가 devops-manifest의 실제 addon 매니페스트가 아닌 이유]
   # bootstrap/root-app-addons.yaml은 devops-manifest 저장소의 repoURL·path·targetRevision을
@@ -137,25 +135,21 @@ module "eks_addons" {
   #
   # repoURL/path/revision 자체는 YAML에 하드코딩하지 않고 '{{metadata.annotations.xxx}}'로
   # 런타임에 cluster Secret annotation에서 읽는다(gitops-bridge-irsa.tf의
-  # local.gitops_bridge_hub_cluster.metadata가 실제 값을 소유) — 이 값도 저장소 이전·브랜치
-  # 전략 변경으로 바뀔 수 있어, Karpenter clusterEndpoint 하드코딩이 실제 장애로 이어졌던
-  # 전례와 같은 이유로 정적 문자열을 피한다. '{{}}' 템플릿 치환은 Application이 아니라
-  # ApplicationSet(+ generators.clusters)에서만 동작하므로 ApplicationSet으로 작성했다 —
-  # selector로 Hub 자신(cluster_name=monitoring-self)에만 매칭시켜 dev/prd spoke까지
-  # 매칭돼 중복 생성되는 걸 막는다(bootstrap/root-app-addons.yaml 자체의 주석 참고).
-  #
-  # devops-manifest의 argocd/root-app-addons.yaml 원본은 이제 이 로컬 사본이 유일한
-  # source of truth가 되므로 삭제 요청함(중복 시 드리프트 위험).
+  # local.gitops_bridge_hub_cluster.metadata가 실제 값을 소유) — 저장소 이전·브랜치 전략
+  # 변경으로 바뀔 수 있는 값을 정적 문자열로 박아두지 않기 위해서다. '{{}}' 템플릿 치환은
+  # Application이 아니라 ApplicationSet(+ generators.clusters)에서만 동작하므로
+  # ApplicationSet으로 작성했다 — selector로 Hub 자신(cluster_name=monitoring-self)에만
+  # 매칭시켜 dev/prd spoke까지 매칭돼 중복 생성되는 걸 막는다(bootstrap/root-app-addons.yaml
+  # 자체의 주석 참고). devops-manifest의 argocd/root-app-addons.yaml 원본은 삭제되어 이
+  # 로컬 사본이 유일한 source of truth다.
   #
   # [WHY — workload(catalog/gateway/order) Application은 여기서 부트스트랩하지 않는 이유]
   # addon(LBC·karpenter·external-dns 등)은 "클러스터가 쓸 수 있는 상태인가"의 일부라 인프라
   # 프로비저닝과 자연스럽게 묶이지만, 실제 서비스 배포는 앱 팀·CI/CD가 결정할 별도 라이프사이클
   # 이다 — monitoring Terraform apply가 트리거할 일이 아니다. vendor 예제도 이 둘을 항상 묶지는
   # 않는다(multi-cluster/hub-spoke는 addons+workloads를 같이 부트스트랩하지만
-  # multi-cluster/hub-spoke-shared는 addons만 부트스트랩). 이 프로젝트도 Phase
-  # 6-5(addon GitOps 이관)와 Phase 6-6(워크로드 GitOps 롤아웃, 아직 미착수)를 이미 별도
-  # 단계로 분리해뒀다 — workload 부트스트랩 방식(Terraform apps로 할지, devops-manifest가
-  # root-app-addons의 감시 경로 안에 자체적으로 넣을지)은 Phase 6-6 착수 시점에 결정한다.
+  # multi-cluster/hub-spoke-shared는 addons만 부트스트랩). workload 부트스트랩 방식은
+  # 별도 단계에서 결정한다.
   gitops_bridge_hub = {
     cluster = local.gitops_bridge_hub_cluster
     apps = {
@@ -221,21 +215,16 @@ resource "aws_iam_role_policy" "external_dns_assume_cross_account_role" {
 # (external-secrets-sa IRSA, modules/eks-addons가 blueprints를 통해 생성)은 계속
 # Terraform이 관리한다. 판단 기준은 docs/addon-strategy.md "GitOps 관리 경계" 참조.
 
-# [정정 — ExternalSecret(ESO) 대신 Terraform이 SSM을 직접 읽어 Secret을 만드는 이유]
-# 원래는 위 aws_parameterstore_secret_store(ClusterSecretStore)를 거치는 ExternalSecret이었다.
-# 그런데 ClusterSecretStore/ExternalSecret은 ESO가 설치하는 CRD라, "완전 재구축"(클러스터를
-# 처음부터 새로 만드는) 시나리오를 가정해보면 순환 의존이 생긴다는 게 뒤늦게 드러났다:
+# [WHY — ExternalSecret(ESO) 대신 Terraform이 SSM을 직접 읽어 Secret을 만드는 이유]
+# ClusterSecretStore/ExternalSecret은 ESO가 설치하는 CRD라, 이 repo-creds Secret을 그
+# 경로로 만들면 "완전 재구축" 시나리오에서 순환 의존이 생긴다:
 #   1. ArgoCD가 devops-manifest를 sync하려면 이 repo-creds Secret이 필요
 #   2. 그 Secret은 ExternalSecret(ESO CRD)이 만듦 → ESO의 CRD+controller가 먼저 떠 있어야 함
-#   3. ESO 자신도 GitOps(devops-manifest)로 관리하려는 게 Phase 6-4 계획인데, ESO를 설치하려면
-#      ArgoCD가 devops-manifest를 먼저 읽어야 하고, 그러려면 1번의 Secret이 필요 → 순환
-# docs/addon-strategy.md "GitOps 관리 경계"의 "ArgoCD 자신의 부트스트랩에 필요한 리소스"
-# 원칙은 애초에 ArgoCD Helm 설치뿐 아니라 이 repo-creds Secret에도 동일하게 적용됐어야
-# 했다 — ESO(추이 ExternalSecret)를 거치는 한 이 Secret도 사실상 ESO에 종속되어 똑같이
-# 순환 의존 사슬에 걸리기 때문이다. 그래서 ESO(ExternalSecret)를 완전히 우회하고 Terraform이
-# SSM에서 직접 값을 읽어(아래 data 블록) 평범한 K8s Secret으로 만든다 — 이러면 ESO가 아직
-# 없어도(심지어 GitOps로 이관되어 ArgoCD sync 이후에나 설치되어도) 이 Secret은 항상 먼저
-# 존재하고, ArgoCD 부트스트랩이 ESO 존재 여부와 완전히 무관해진다.
+#   3. ESO 자신도 GitOps(devops-manifest)로 관리하는데, ESO를 설치하려면 ArgoCD가
+#      devops-manifest를 먼저 읽어야 하고, 그러려면 1번의 Secret이 필요 → 순환
+# 그래서 ESO(ExternalSecret)를 완전히 우회하고 Terraform이 SSM에서 직접 값을 읽어(아래
+# data 블록) 평범한 K8s Secret으로 만든다 — 이러면 ESO 존재 여부와 무관하게 이 Secret은
+# 항상 먼저 존재하고, ArgoCD 부트스트랩이 ESO에 의존하지 않는다.
 # Image Updater의 git-creds(아래 argocd_image_updater_git_creds)는 이 순환에 해당하지
 # 않는다 — Image Updater는 ArgoCD가 이미 떠 있어야 동작하는 컴포넌트라 의존 방향이 반대다.
 # 그래서 그쪽은 계속 ESO(ExternalSecret)를 그대로 쓴다.

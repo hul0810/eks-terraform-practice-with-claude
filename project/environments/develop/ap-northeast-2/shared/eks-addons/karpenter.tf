@@ -1,18 +1,12 @@
 ################################################################################
 # Karpenter NodeClaim 정리 — EC2NodeClass/NodePool은 이제 여기 없다
 #
-# [WHY, 2026-07-21] devops-manifest의 karpenter-resources-dev Application이
-# EC2NodeClass "default"와 NodePool 4종(general/arm64/gpu/spot) 전부를
-# server-side-apply로 관리한다. 순서대로 이관됐다:
-#   1. "general" 전환 apply 중 Terraform과 ArgoCD가 같은 오브젝트를 동시에 SSA로 소유하며
-#      충돌 발견(`managedFields`에 Terraform+argocd-controller 동시 존재, limits.cpu
-#      50↔100 플래핑) → EC2NodeClass·"general"을 `terraform state rm` + 코드 제거.
-#   2. devops-manifest가 karpenter-resources 차트에 arm64/gpu/spot 3종을 추가한 뒤
-#      (annotation karpenter_consolidate_after 추가 필요 — gitops-bridge-spokes.tf 참조)
-#      같은 field manager 충돌이 arm64/gpu/spot에서도 재현되어 동일하게 이관.
-# 결과적으로 Karpenter의 Kubernetes 리소스(EC2NodeClass/NodePool)는 전부 ArgoCD 소관이
-# 됐고, 이 root에는 AWS 리소스(IRSA Role/Policy, 노드 IAM Role, SQS, EventBridge —
-# main.tf의 module.eks_addons)만 남는다.
+# devops-manifest의 karpenter-resources-dev Application이 EC2NodeClass "default"와
+# NodePool 4종(general/arm64/gpu/spot) 전부를 server-side-apply로 관리한다 — Terraform과
+# ArgoCD가 같은 오브젝트를 동시에 SSA로 소유하면 필드가 계속 플래핑하는 충돌이 발생하므로
+# (annotation karpenter_consolidate_after는 gitops-bridge-spokes.tf 참조), Kubernetes
+# 리소스(EC2NodeClass/NodePool)는 전부 ArgoCD 소관이고 이 root에는 AWS 리소스(IRSA
+# Role/Policy, 노드 IAM Role, SQS, EventBridge — main.tf의 module.eks_addons)만 남는다.
 ################################################################################
 
 # ── Karpenter NodeClaim 정리 (destroy 시 EC2 인스턴스 고아 방지) ──────────────

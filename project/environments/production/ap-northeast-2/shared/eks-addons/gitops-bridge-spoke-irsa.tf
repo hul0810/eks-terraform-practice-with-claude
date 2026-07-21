@@ -23,11 +23,9 @@
 # 커스텀 ClusterRole을 쓰는 이유는 gitops-bridge-irsa.tf와 동일(관리형 정책 이름에 의존하지
 # 않고 이 프로젝트가 권한 범위를 직접 통제).
 #
-# [2026-07-21 — develop과 동일 코드, production은 apply 보류]
-# CLAUDE.md "Production 배포 정책"에 따라 이 파일의 apply는 사용자가 직접 실행한다
-# (`.claude/hooks/block-production-apply.sh`가 어차피 차단). develop에서 먼저 apply·검증
-# 완료 후 동일 패턴을 그대로 옮겼다 — develop이 정상 동작하면 이 코드도 동일하게 동작할
-# 것으로 본다(계정/클러스터 이름만 다르고 구조는 완전히 동일).
+# [production apply 보류] CLAUDE.md "Production 배포 정책"에 따라 이 파일의 apply는
+# 사용자가 직접 실행한다(`.claude/hooks/block-production-apply.sh`가 어차피 차단) — 코드는
+# develop과 완전히 동일한 구조다(계정/클러스터 이름만 다름).
 ################################################################################
 
 resource "aws_iam_role" "gitops_bridge_spoke" {

@@ -1,16 +1,10 @@
 ################################################################################
 # Karpenter NodeClaim 정리 — EC2NodeClass/NodePool은 이제 여기 없다
 #
-# [WHY, 2026-07-21] dev에서 이 root와 동일한 전환을 먼저 검증했다. devops-manifest의
-# karpenter-resources Application이 EC2NodeClass "default"와 NodePool 4종
-# (general/arm64/gpu/spot) 전부를 server-side-apply로 관리한다. 순서대로 이관됐다:
-#   1. "general" 전환 apply 중 Terraform과 ArgoCD가 같은 오브젝트를 동시에 SSA로 소유하며
-#      충돌 발견(`managedFields`에 Terraform+argocd-controller 동시 존재, limits.cpu
-#      플래핑) → EC2NodeClass·"general"을 dev에서 `terraform state rm` + 코드 제거.
-#   2. devops-manifest가 karpenter-resources 차트에 arm64/gpu/spot 3종을 추가한 뒤
-#      (annotation karpenter_consolidate_after 추가 필요 — gitops-bridge-spokes.tf 참조)
-#      같은 field manager 충돌이 arm64/gpu/spot에서도 재현되어 dev에서 동일하게 이관.
-# production도 프로비저닝되어 spoke로 등록되면 같은 karpenter-resources 차트가 4종
+# devops-manifest의 karpenter-resources Application이 EC2NodeClass "default"와
+# NodePool 4종(general/arm64/gpu/spot) 전부를 server-side-apply로 관리한다(dev와 동일
+# 패턴 — annotation karpenter_consolidate_after는 gitops-bridge-spokes.tf 참조).
+# production이 프로비저닝되어 spoke로 등록되면 같은 karpenter-resources 차트가 4종
 # 전부를 가져가므로, 이 root도 처음부터 그 최종 상태를 반영해뒀다 — 실제 라이브
 # state가 생긴 뒤에 별도 이관 작업이 필요 없다. 결과적으로 Karpenter의 Kubernetes
 # 리소스(EC2NodeClass/NodePool)는 전부 ArgoCD 소관이고, 이 root에는 AWS 리소스

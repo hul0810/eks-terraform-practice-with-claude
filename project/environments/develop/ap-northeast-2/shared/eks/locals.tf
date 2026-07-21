@@ -38,19 +38,15 @@ locals {
     endpoint_public_access = true
 
     # 로컬 kubectl 접근을 허용할 IP 목록. 공인 IP가 변경되면 갱신 후 terraform apply.
-    # Phase 6-5: monitoring의 ArgoCD Hub가 이 클러스터의 EKS API에 접근하려면 monitoring
-    # NAT Gateway의 공인 IP도 허용해야 한다 — VPC Peering(pcx-07fa1a0e9eb100e47)은 이미
-    # 있지만 이 클러스터의 endpoint_private_access가 꺼져있어 지금은 public 경로로만 접근
-    # 가능하다(argocd-k8s-auth 타임아웃으로 실제 확인 — exit code 20). 이 IP는 monitoring
-    # vpc/outputs.tf의 nat_public_ips 참고.
+    # 두 번째 IP는 monitoring의 ArgoCD Hub가 이 클러스터의 EKS API에 접근하기 위한
+    # monitoring NAT Gateway 공인 IP다(monitoring vpc/outputs.tf의 nat_public_ips 참고) —
+    # 이 클러스터의 endpoint_private_access가 꺼져있어 지금은 public 경로로만 접근 가능하다.
     #
-    # [알려진 리스크 — aws-architect 리뷰 지적, 2026-07-21] NAT Gateway는 EIP를 고정하지
-    # 않으므로 monitoring teardown→재provision마다 이 IP가 바뀐다. 갱신을 깜빡하면
-    # Hub→spoke 크로스 계정 인증이 "무성으로"(에러 없이 타임아웃만) 실패한다 — 이 세션에서
-    # 실제로 monitoring teardown을 진행했으므로 다음 monitoring provision 후에는 이 값이
-    # 이미 stale하다. 근본 해결책은 CIDR을 계속 갱신하는 게 아니라
-    # `endpoint_private_access = true`로 켜고 기존 VPC Peering 경로로 완전히 옮기는 것 —
-    # TODO_LIST.md "Phase 6 이후 백로그" 참조.
+    # [알려진 리스크] NAT Gateway는 EIP를 고정하지 않으므로 monitoring teardown→재provision
+    # 마다 이 IP가 바뀐다. 갱신을 깜빡하면 Hub→spoke 크로스 계정 인증이 에러 없이 타임아웃만
+    # 나며 실패한다. 근본 해결책은 CIDR을 계속 갱신하는 게 아니라
+    # `endpoint_private_access = true`로 켜고 기존 VPC Peering(pcx-07fa1a0e9eb100e47) 경로로
+    # 완전히 옮기는 것 — TODO_LIST.md "Phase 6 이후 백로그" 참조.
     public_access_cidrs = [var.operator_ip_cidr, "52.78.200.247/32"]
 
     # 컨트롤 플레인 로그: CloudWatch Logs 비용 발생 (로그 타입당 약 $0.50/GB~)
