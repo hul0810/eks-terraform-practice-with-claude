@@ -65,6 +65,21 @@ allowed-tools:
 
 `y`가 아니면 중단한다.
 
+> **여러 환경을 함께 삭제할 때 순서 — spoke(develop/production) 먼저, monitoring(Hub) 나중
+> (2026-07-22 확인)**: monitoring의 `gitops-bridge-registry.tf`가 만드는
+> `gitops_bridge_registry_writer` Role(spoke별 계정 하나씩)을, develop/production의
+> `gitops-bridge-registry.tf`(spoke 쪽)가 자기 SSM Parameter Store 등록 항목을 정리할 때
+> assume한다. monitoring을 먼저 destroy하면 이 Role이 사라져 spoke의 `eks-addons destroy`가
+> provider 단계에서부터 `Cannot assume IAM Role`로 전체가 막힌다(state rm으로 리소스만
+> 빼도 provider 블록 자체가 선언돼 있으면 Terraform이 여전히 그 provider 설정을 평가하려
+> 시도한다 — 소용없음). 이 경우 `providers.tf`의 `aws.gitops_bridge_registry` provider
+> 블록과 `gitops-bridge-registry.tf`의 `aws_ssm_parameter.gitops_bridge_registry` 리소스를
+> 임시로 주석 처리해야 destroy가 진행된다(monitoring 재provision 후 함께 복원) — 결과물로
+> monitoring 계정에 SSM Standard tier 파라미터(비용 없음)가 고아로 남는다. `monitoring
+> develop 둘 다 삭제해줘`처럼 여러 환경을 한 번에 받으면 **항상 spoke(develop/production)를
+> 먼저 끝내고 monitoring을 마지막에 처리한다** — spoke가 아직 살아있는 동안 monitoring을
+> 먼저 지우면 이 문제가 반드시 재현된다.
+
 > **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
 > `environments/production` 경로의 `terraform apply`를 기본적으로 차단한다
 > (`terraform destroy`는 정규식 대상이 아니므로 차단되지 않는다). 즉 Step 6·8의
@@ -193,16 +208,19 @@ aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profil
 
 클러스터에 연결되지 않으면(이미 삭제됐거나 최초 생성 전) Step 2~5를 건너뛰고 Step 6으로 이동한다.
 
-### Step 2: ArgoCD Application/ApplicationSet 삭제 (재활성화, 2026-07-21)
+### Step 2: ArgoCD Application/ApplicationSet 삭제 — 2-2·2-3·2-4만 필수, 2-5는 생략한다 (2026-07-22 갱신)
 
-**이 단계를 실행한다.** GitOps Bridge 이관 이후 이 클러스터의 ArgoCD는 LBC처럼 실제 AWS
-리소스(ALB 등)를 만드는 addon까지 GitOps로 관리한다 — `syncPolicy.automated.selfHeal: true`가
-켜져 있어서, Step 3에서 Ingress를 수동으로 지워도 ArgoCD가 여전히 살아있는 한(클러스터
-자체는 아직 destroy 전) 그 삭제를 "git과의 드리프트"로 인식해 즉시 되살릴 수 있다.
-Step 3보다 먼저 ArgoCD의 능동적 조정 자체를 끊어야 Step 3의 삭제가 실제로 유지된다.
+**AWS 비용/고아 리소스 위험이 있는 항목만 이 클러스터가 살아있는 동안 명시적으로 정리한다
+— Karpenter NodeClaim(EC2 인스턴스, 2-2)과 Ingress/ALB(2-3·2-4) 둘뿐이다.** 나머지
+Application/ApplicationSet은 순수 K8s 오브젝트라 Step 8(EKS destroy)이 클러스터를
+지우면 etcd와 함께 자동으로 사라진다 — 남겨봐야 손해가 없으므로 2-5(전체 삭제)는
+**기본적으로 실행하지 않는다.** (배경: root-app-addons를 `--all`로 정리하던 옛 절차는
+전체 Application이 십여 개뿐이던 시절 "확실하게 정리"가 목적이었지만, self-service
+레지스트리 도입 이후 addon마다 `-spoke` ApplicationSet이 추가로 생겨 Application·
+ApplicationSet 수가 30개 넘게 늘었고, 아래 WHY의 데드락처럼 지우는 순서 자체가 새로운
+위험을 만든다는 게 드러났다 — "다 지운다"의 실익보다 절차 리스크가 커졌다.)
 
-**반드시 아래 3단계 순서를 지킨다 — `--all`로 한꺼번에 지우면 안 된다** (2026-07-21
-monitoring/dev 둘 다에서 데드락 실제 발생, 아래 WHY 참고).
+**순서:**
 
 **2-1. root-app-addons 먼저 (재동기화 경합 차단)**
 
@@ -215,9 +233,17 @@ kubectl delete applicationset root-app-addons -n argocd --ignore-not-found
 `NotFound`여야 함) — 살아있는 채로 다음 단계로 넘어가면 devops-manifest 디렉터리가
 재동기화되며 2-3에서 지운 걸 되살릴 수 있다.
 
-**2-2. `*-karpenter-resources*` Application만 먼저 지우고 완전히 끝날 때까지 대기**
+**2-2. `karpenter-resources` ApplicationSet(들)을 먼저 지운 뒤에만 Application을 지운다**
+
+self-service 레지스트리 도입 이후 `karpenter-resources`(monitoring-self 전용)와
+`karpenter-resources-spoke`(`clusters` generator로 dev/prod spoke마다 Application을
+생성) 두 ApplicationSet이 있다 — Application만 지우면 그 owner인 ApplicationSet이
+아직 살아있어 즉시 재생성한다(root-app-addons와 동일한 재동기화 경합). 먼저
+`kubectl get application <name> -n argocd -o jsonpath='{.metadata.ownerReferences[0].name}'`로
+owner ApplicationSet 이름을 확인하고, 그 ApplicationSet부터 지운다:
 
 ```bash
+kubectl delete applicationset karpenter-resources karpenter-resources-spoke -n argocd --ignore-not-found
 kubectl get application -n argocd -o name | grep karpenter-resources | \
   xargs -r -n1 kubectl delete -n argocd --ignore-not-found
 ```
@@ -246,6 +272,27 @@ aws ec2 terminate-instances --region ap-northeast-2 --profile <profile> --instan
 kubectl patch nodeclaim <name> --type=merge -p '{"metadata":{"finalizers":[]}}'
 kubectl delete node <stuck-node-name> --ignore-not-found
 kubectl patch ec2nodeclass <name> --type=merge -p '{"metadata":{"finalizers":[]}}'
+```
+
+**[주의] `karpenter-resources` Application을 지우면 `argocd-application-controller` 자신이
+스케줄 불가 상태에 빠질 수 있다 (2026-07-22 monitoring에서 실제 발생)**: 시스템 노드는
+인스턴스 타입별 최대 pod 개수(t3.medium=17)가 고정돼 있고, `application-controller`
+(및 `argocd-image-updater-controller`)가 평소 이 한도를 넘겨 Karpenter가 만든 여분
+노드에서 돌고 있었다면, 그 NodePool을 지우는 순간 노드가 드레인되면서 두 파드가 갈 곳을
+잃고 `Pending`(`0/1 nodes are available: 1 Too many pods`)에 빠진다.
+`argocd-application-controller`가 죽으면 `resources-finalizer.argocd.argoproj.io`를
+아무도 처리하지 못해 방금 지운 `karpenter-resources-*` Application 자체가 `Terminating`에
+멈춘다 — 실제 NodeClaim/EC2NodeClass는 이미 다 지워졌는데(`kubectl get nodeclaims -A`,
+`kubectl get ec2nodeclass`가 비어있음) Application 오브젝트만 남는 상태다. 확인 후
+아래로 대응한다:
+
+```bash
+kubectl get pod -n argocd -l app.kubernetes.io/name=argocd-application-controller -o wide
+# Pending이고 이벤트에 "Too many pods"가 있으면:
+kubectl scale deployment argocd-image-updater-controller -n argocd --replicas=0   # teardown 중엔 불필요, 슬롯 1개 확보
+# 그래도 application-controller가 안 뜨거나 이미 NodeClaim/EC2NodeClass가 확인상 비어있으면
+# finalizer를 직접 제거한다(실제 AWS 리소스는 이미 정리됐으므로 안전):
+kubectl patch application <stuck-app-name> -n argocd --type=merge -p '{"metadata":{"finalizers":[]}}'
 ```
 
 **2-3. Ingress 삭제 — LBC가 아직 살아있는 상태에서 실행 (Step 3/4 내용이 여기로 통합됨)**
@@ -287,11 +334,15 @@ aws elbv2 delete-target-group --region ap-northeast-2 --profile <profile> --targ
 aws ec2 delete-security-group --region ap-northeast-2 --profile <profile> --group-id <sg-id>
 ```
 
-**2-5. 나머지 전부 (LBC/karpenter 컨트롤러 포함)**
+**2-5. (선택, 기본 생략) 나머지 전부 (LBC/karpenter 컨트롤러 포함)**
 
-Ingress/ALB 정리(2-3, 2-4)와 karpenter-resources(2-2)가 완전히 끝난 뒤에만 진행한다 —
-이 시점부터는 controller Application(LBC, karpenter 등)을 지워도 더 이상 정리할 게
-남아있지 않아 안전하다:
+**기본적으로 실행하지 않는다** — Step 2 도입부 참고: 2-2·2-3·2-4로 AWS 리소스 위험은
+이미 없앴고, 나머지 Application/ApplicationSet은 Step 8(EKS destroy)이 지우면 그만이다.
+"ArgoCD를 계속 깨끗하게 쓰고 싶다"거나 "클러스터를 지우지 않고 addon만 다시 원복하고
+싶다" 같은 예외적 상황에서만 이 단계를 명시적으로 실행한다 — 그 경우에도 Ingress/ALB
+정리(2-3, 2-4)와 karpenter-resources(2-2)가 완전히 끝난 뒤에만 진행해야 한다(그래야
+controller Application(LBC, karpenter 등)을 지워도 더 이상 정리할 게 남아있지 않아
+안전하다):
 
 ```bash
 kubectl delete application --all -n argocd --ignore-not-found
