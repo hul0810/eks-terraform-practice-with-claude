@@ -50,15 +50,34 @@ allowed-tools:
 
 `y`가 아니면 중단한다.
 
-> **production eks-addons 선행조건 가드(2026-07-21, aws-architect 리뷰 지적)**: production의
-> `eks-addons` root는 이미 코드상 `modules/eks-addons/2.0.0`(GitOps Bridge)을 가리킨다 —
-> 즉 Terraform은 addon Helm을 아예 설치하지 않고 IAM만 만든다. 이 상태로 Step 3을 그대로
-> 진행하면 **addon Helm이 전혀 설치되지 않는 클러스터**(LBC/Karpenter/ExternalDNS/
+> **production eks-addons 선행조건 가드(2026-07-22 갱신 — SSM 레지스트리 self-service 방식으로 전환)**:
+> production의 `eks-addons` root는 이미 코드상 `modules/eks-addons/2.0.0`(GitOps Bridge)을
+> 가리킨다 — 즉 Terraform은 addon Helm을 아예 설치하지 않고 IAM만 만든다. 이 상태로 Step 3을
+> 그대로 진행하면 **addon Helm이 전혀 설치되지 않는 클러스터**(LBC/Karpenter/ExternalDNS/
 > ExternalSecrets 파드가 없는 상태)가 될 수 있다 — ArgoCD가 이 addon들을 가져가려면 먼저
-> `monitoring/environments/ap-northeast-2/shared/eks-addons/gitops-bridge-spokes.tf`의
-> `gitops_bridge_spokes.prod.enabled`와 `addon_managed`가 둘 다 `true`로 바뀌어 apply되어
-> 있어야 한다(monitoring 쪽 root). Step 3 진행 전 이 값을 확인하고, `false`이면 사용자에게
-> 먼저 monitoring 쪽 조치가 필요하다고 안내한 뒤 진행 여부를 다시 확인한다.
+> production이 monitoring(Hub)에 spoke로 등록되어 있어야 한다.
+>
+> **구 방식(더 이상 없음)**: monitoring의 `gitops-bridge-spokes.tf`에 있던
+> `gitops_bridge_spokes.prod.enabled` 플래그를 손으로 뒤집는 방식은 2026-07-22 self-service
+> 레지스트리 도입으로 사라졌다 — 이 필드 자체가 코드에 없다.
+>
+> **현재 방식**: production 자신이 `project/environments/production/.../eks-addons/`에
+> `develop/.../eks-addons/gitops-bridge-registry.tf`·해당 `locals.tf`의
+> `gitops_bridge_registry_payload`·`providers.tf`의 `aws.gitops_bridge_registry` provider를
+> 그대로 본떠 자기 파일을 만들고(2026-07-22 시점 production에는 아직 이 파일이 없음 — 최초
+> 1회 신규 작성 필요), `addon_managed = true`로 apply해서 SSM에 자기 등록 정보를 publish해야
+> 한다. 그 후 monitoring(Hub) 쪽 `eks-addons`를 **한 번 더 apply**해야 discovery가
+> production을 인식하고 cluster Secret을 만든다(발행 시점과 Hub가 아는 시점이 다르다 —
+> `temp/gitops-bridge-registry-summary.md` 참고). Step 3 진행 전 production의 registry 파일이
+> 있는지, monitoring이 이미 discovery했는지(`kubectl get secret prod -n argocd` 등)를 확인하고,
+> 없다면 사용자에게 먼저 이 등록 작업이 필요하다고 안내한 뒤 진행 여부를 다시 확인한다.
+>
+> **참고(미해결 갭)**: `addon_managed = true`로 등록해도, devops-manifest의 `-spoke`
+> ApplicationSet들이 실제로는 이 값(라벨)을 selector에서 확인하지 않는 것으로 확인됐다
+> (`temp/gitops-bridge-addon-managed-label-unused-gap.md`) — 즉 지금은 `gitops-bridge-role:
+> spoke`만 있으면 addon_managed 값과 무관하게 addon이 배포될 수 있다. production을 처음
+> 등록하기 전 이 갭이 해소됐는지 먼저 확인할 것 — 안 그러면 production이 아직 자기
+> Terraform으로 addon을 관리 중인 상태에서 ArgoCD가 동시에 배포를 시도해 충돌할 수 있다.
 
 > **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
 > `environments/production` 경로의 모든 `terraform apply`를 무조건 차단한다 (CLAUDE.md

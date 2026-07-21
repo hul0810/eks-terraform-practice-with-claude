@@ -506,7 +506,7 @@
 > Terraform이 직접 설치하는 `1.0.0`이라, monitoring이 거친 이관(6-2~6-4)을 dev/prd에도 적용해야
 > Hub가 실제로 addon을 원격 배포할 수 있다.
 
-- [x] devops-manifest에 addon selector 포함 요청 — `eks-practice.io/addon-managed: "true"` 라벨 기반 반영
+- [ ] devops-manifest에 addon selector 포함 요청 — `eks-practice.io/addon-managed: "true"` 라벨 기반 반영 (2026-07-22 재확인: devops-manifest의 `-spoke` ApplicationSet 어디도 이 라벨을 selector로 안 씀, `temp/gitops-bridge-addon-managed-label-unused-gap.md`)
 - [x] metrics-server/argo-rollouts — sync 확인 후 `terraform state rm` + `enable_*=false`로 Terraform 손 뗌.
   pod RESTARTS=0으로 무중단 인수 확인
 - [x] LBC/Karpenter/ExternalDNS/ExternalSecrets — IAM Role ARN 등 7개 annotation을 dev cluster

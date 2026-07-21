@@ -121,3 +121,46 @@ locals {
   # 이제 eks-practice-devops-manifest 저장소의 charts/eks-addons/karpenter-resources/에서
   # 관리한다 — 값을 바꾸려면 이 저장소가 아니라 그쪽 저장소를 수정한다.
 }
+
+################################################################################
+# GitOps Bridge Registry — discovery 결과 조합 (gitops-bridge-registry.tf 참조)
+################################################################################
+locals {
+  # 지금 이 레지스트리에 쓰기가 필요한 계정만 명시(gitops-bridge-registry.tf의 신뢰 정책 참조).
+  # 계정이 늘면 여기에만 추가하면 된다.
+  trusted_spoke_account_ids = [local.workload_account_id]
+
+  # [논리적 라우팅 별칭 — dev/prod]
+  # devops-manifest의 워크로드 ApplicationSet(order/gateway/catalog)이 ArgoCD 클러스터 Secret의
+  # `cluster_name` 라벨을 `matchLabels: cluster_name: dev|prod`로 선택하고, addon/workload
+  # ApplicationSet들은 destination/namespace를 `{{name}}`/`eks-practice-{{name}}`으로
+  # 템플릿한다(project/environments/develop이 이미 이 별칭으로 라우팅되고 있음, 실제 검증됨).
+  # 이 별칭을 실제 EKS 클러스터 이름(예: eks-practice-dev)으로 바꾸면 그 라우팅이 전부 깨진다.
+  # 레지스트리 payload의 environment(develop/production)는 이미 아는 값이라, 새 필드를
+  # 추가하지 않고 이 매핑 하나로 별칭을 유도한다.
+  environment_spoke_alias = {
+    develop    = "dev"
+    production = "prod"
+  }
+
+  # aws_ssm_parameters_by_path는 names/values를 병렬 배열로 반환한다(공식 스키마 — 두 배열의
+  # 순서가 항상 일치). zipmap으로 {parameter_name => JSON string} 맵을 만든 뒤 jsondecode한다.
+  # values는 SecureString 여부와 무관하게 항상 sensitive로 마킹되는데(AWS provider 공식 동작),
+  # 이 경로에는 endpoint/ARN 같은 식별자만 있고 진짜 비밀이 없다(그래서 애초에 SecureString이
+  # 아니라 String으로 설계했다) — nonsensitive()로 해제해 plan 출력에서 정상적으로 diff를
+  # 확인할 수 있게 한다.
+  gitops_bridge_registry_raw = {
+    for name, value in zipmap(
+      data.aws_ssm_parameters_by_path.gitops_bridge_registry.names,
+      nonsensitive(data.aws_ssm_parameters_by_path.gitops_bridge_registry.values)
+    ) : name => jsondecode(value)
+  }
+
+  # discovery된 spoke를 "dev"/"prod" 별칭으로 재색인 — module.gitops_bridge_spoke의 for_each
+  # 키가 된다(gitops-bridge-spokes.tf 참조). SSM 경로에 존재하는 것 자체가 "등록됨"이므로
+  # 구버전의 enabled 플래그는 더 이상 필요 없다(파라미터 부재 = 미등록).
+  gitops_bridge_spokes = {
+    for name, payload in local.gitops_bridge_registry_raw :
+    local.environment_spoke_alias[payload.environment] => payload
+  }
+}

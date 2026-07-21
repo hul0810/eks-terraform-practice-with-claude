@@ -47,15 +47,17 @@ resource "aws_iam_role" "argocd_application_controller" {
 
 # gitops-bridge-spokes.tf가 만드는 spoke Role(project/environments/{develop,production}/
 # .../eks-addons/gitops-bridge-spoke-irsa.tf)들에 대해 이 Hub Role이 sts:AssumeRole을
-# "호출할" 권한. local.enabled_gitops_bridge_spokes를 그대로 참조해 활성화된 spoke만큼만
-# 스코프를 연다(dev만 켜져 있으면 dev 하나만, prd를 켜면 자동으로 같이 열림 — 두 곳을
-# 따로 안 맞춰도 됨).
+# "호출할" 권한. local.gitops_bridge_spokes(레지스트리 discovery 결과, locals.tf)를 그대로
+# 참조해 실제로 등록된 spoke만큼만 스코프를 연다(dev만 등록되어 있으면 dev 하나만, prod가
+# 등록되면 자동으로 같이 열림 — 두 곳을 따로 안 맞춰도 됨). Resource ARN은 spoke가 레지스트리에
+# 실어 보낸 spoke_role_arn을 그대로 쓴다 — "${cluster_name}-argocd-spoke-irsa" 같은 네이밍
+# 패턴을 여기서 다시 조합하지 않는다(gitops-bridge-registry.tf와 동일한 self-service 원칙).
 #
-# [count 가드] 활성화된 spoke가 0개면 위 for 식이 빈 리스트를 만들어 Resource=[]인 IAM
+# [count 가드] 등록된 spoke가 0개면 위 for 식이 빈 리스트를 만들어 Resource=[]인 IAM
 # 정책이 생성 시도되고, AWS가 MalformedPolicyDocument로 거부한다. spoke가 하나도 없으면
 # 이 정책 자체가 필요 없으므로 count로 생성을 건너뛴다.
 resource "aws_iam_role_policy" "argocd_hub_assume_spokes" {
-  count = length(local.enabled_gitops_bridge_spokes) > 0 ? 1 : 0
+  count = length(local.gitops_bridge_spokes) > 0 ? 1 : 0
 
   name = "assume-gitops-bridge-spoke-roles"
   role = aws_iam_role.argocd_application_controller.id
@@ -68,8 +70,7 @@ resource "aws_iam_role_policy" "argocd_hub_assume_spokes" {
         Effect = "Allow"
         Action = ["sts:AssumeRole", "sts:TagSession"]
         Resource = [
-          for name, spoke in local.enabled_gitops_bridge_spokes :
-          "arn:aws:iam::${local.workload_account_id}:role/${spoke.aws_cluster_name}-argocd-spoke-irsa"
+          for name, spoke in local.gitops_bridge_spokes : spoke.spoke_role_arn
         ]
       }
     ]
