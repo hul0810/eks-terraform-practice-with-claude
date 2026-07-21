@@ -51,7 +51,7 @@ locals {
     # 이미 stale하다. 근본 해결책은 CIDR을 계속 갱신하는 게 아니라
     # `endpoint_private_access = true`로 켜고 기존 VPC Peering 경로로 완전히 옮기는 것 —
     # TODO_LIST.md "Phase 6 이후 백로그" 참조.
-    public_access_cidrs = [var.operator_ip_cidr, "43.200.108.10/32"]
+    public_access_cidrs = [var.operator_ip_cidr, "52.78.200.247/32"]
 
     # 컨트롤 플레인 로그: CloudWatch Logs 비용 발생 (로그 타입당 약 $0.50/GB~)
     # 기본 비활성화. 디버깅 필요 시 원하는 타입 추가 후 terraform apply.

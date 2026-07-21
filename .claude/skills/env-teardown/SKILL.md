@@ -193,43 +193,65 @@ aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profil
 
 클러스터에 연결되지 않으면(이미 삭제됐거나 최초 생성 전) Step 2~5를 건너뛰고 Step 6으로 이동한다.
 
-### Step 2 (비활성화 — 실행하지 않음): ArgoCD Application/ApplicationSet 삭제
+### Step 2: ArgoCD Application/ApplicationSet 삭제 (재활성화, 2026-07-21)
 
-**이 단계는 실행하지 않는다.** Application/ApplicationSet은 K8s 커스텀 리소스(etcd에 저장)이므로
-Step 8에서 클러스터(컨트롤 플레인)를 destroy하면 etcd 자체가 사라지면서 자동으로 함께
-없어진다 — 별도 조치가 불필요하다. 대신 Step 11의 zone 전체 재검증(모든 ALB·Route53
-레코드를 스캔해 대응 리소스가 없는 고아를 찾아 정리)을 **반드시** 실행해 ALB/Route53
-고아 여부를 사후 확인한다 (2026-07-10 monitoring teardown에서 이 단계를 생략하고
-Step 11까지 실행해 Route53·ALB 모두 깨끗함을 확인했다). 바로 Step 3으로 진행한다.
+**이 단계를 실행한다.** GitOps Bridge 이관 이후 이 클러스터의 ArgoCD는 LBC처럼 실제 AWS
+리소스(ALB 등)를 만드는 addon까지 GitOps로 관리한다 — `syncPolicy.automated.selfHeal: true`가
+켜져 있어서, Step 3에서 Ingress를 수동으로 지워도 ArgoCD가 여전히 살아있는 한(클러스터
+자체는 아직 destroy 전) 그 삭제를 "git과의 드리프트"로 인식해 즉시 되살릴 수 있다.
+Step 3보다 먼저 ArgoCD의 능동적 조정 자체를 끊어야 Step 3의 삭제가 실제로 유지된다.
 
-과거에 이 단계가 실행하던 절차는 참고용으로만 남겨둔다 (실행하지 않음):
+**반드시 아래 3단계 순서를 지킨다 — `--all`로 한꺼번에 지우면 안 된다** (2026-07-21
+monitoring/dev 둘 다에서 데드락 실제 발생, 아래 WHY 참고).
+
+**2-1. root-app-addons 먼저 (재동기화 경합 차단)**
 
 ```bash
-# kubectl get application -n argocd 2>/dev/null
-# kubectl get applicationset -n argocd 2>/dev/null
-# kubectl delete applicationset --all -n argocd --ignore-not-found
-# kubectl delete application --all -n argocd --ignore-not-found
+kubectl delete application root-app-addons -n argocd --ignore-not-found
+kubectl delete applicationset root-app-addons -n argocd --ignore-not-found
 ```
 
-> **WHY (이 단계가 원래 존재했던 이유, 참고용)**: 2026-07-04 monitoring teardown에서 `gateway-dev` Ingress를 Step 3(당시 Step 2)
-> 절차대로 삭제했지만, 그 Ingress는 ArgoCD Application `gateway-dev`(destination이
-> `https://kubernetes.default.svc`인 in-cluster 배포, namespace `eks-practice-dev`)가
-> 계속 소유·조정하고 있었다. `syncPolicy.automated.selfHeal=false`라 즉시 되살아나지는
-> 않았지만, 실제로는 우리가 기록해둔 것과 다른 새 ALB가 이미 떠 있는 상태였고, 클러스터를
-> 완전히 destroy한 뒤에도 그 ALB(및 연결된 대상 그룹·보안 그룹 2개)가 고아로 남아 수동
-> 정리가 필요했다. 근본 원인은 "Ingress를 지우는 시점에 ArgoCD가 여전히 그 리소스를
-> 관리 중이었다"는 것이므로, ALB DNS 이름을 사후에 재대조하는 임시방편 대신 Ingress를
-> 지우기 전에 Application/ApplicationSet 자체를 먼저 제거해 ArgoCD가 어떤 시점에도 재생성·
-> 교체할 수 없는 상태를 만든다. 이 환경은 dev/prod 구분 없이 여러 서비스가 namespace로만
-> 분리되어 한 클러스터에 배포될 수 있으므로(같은 날 teardown에서 실제 확인됨), Application이
-> 여러 개 있을 수 있다는 전제로 `--all`을 사용한다.
+즉시 둘 다 사라졌는지 확인한다(`kubectl get application,applicationset root-app-addons -n argocd`가
+`NotFound`여야 함) — 살아있는 채로 다음 단계로 넘어가면 devops-manifest 디렉터리가
+재동기화되며 2-3에서 지운 걸 되살릴 수 있다.
 
-### Step 3: Ingress 삭제 — 잔여 ALB/Route53 정리 트리거
+**2-2. `*-karpenter-resources*` Application만 먼저 지우고 완전히 끝날 때까지 대기**
 
-`kubectl get ingress -A -o json`으로 전체 Ingress를 조회한다. 없으면 이 단계 및 Step 4, 5를
-건너뛰고 Step 6으로 이동한다.
+```bash
+kubectl get application -n argocd -o name | grep karpenter-resources | \
+  xargs -r -n1 kubectl delete -n argocd --ignore-not-found
+```
 
-각 Ingress에 대해 **삭제 전에** 아래를 기록한다 (삭제 후에는 조회 불가):
+이 Application들이 관리하는 NodePool/EC2NodeClass는 Karpenter 자신의 finalizer
+(`karpenter.sh/termination`, `karpenter.k8s.aws/termination`)가 걸려있어, 연결된
+NodeClaim(실제 EC2 노드)이 완전히 drain될 때까지 삭제가 안 끝난다 — **이때 karpenter
+컨트롤러 자신은 아직 살아있어야 drain이 정상 진행된다.** 완전히 사라질 때까지 최대
+3분 polling:
+
+```bash
+for i in $(seq 1 36); do
+  count=$(kubectl get application -n argocd --no-headers 2>/dev/null | grep -c karpenter-resources)
+  [ "$count" -eq 0 ] && break
+  sleep 5
+done
+```
+
+3분 초과 시 `kubectl get nodeclaims -A`로 확인 — `READY` 컬럼이 안 바뀌고 멈춰있으면
+karpenter 컨트롤러가 이미 죽었거나 응답 없는 상태다. 이 경우 아래로 직접 정리한다
+(WHY 참고 — 이게 바로 2026-07-21에 실제로 밟은 복구 경로다):
+
+```bash
+kubectl get node <stuck-node-name> -o jsonpath='{.spec.providerID}'   # arn 뒤 instance-id 추출
+aws ec2 terminate-instances --region ap-northeast-2 --profile <profile> --instance-ids <instance-id>
+kubectl patch nodeclaim <name> --type=merge -p '{"metadata":{"finalizers":[]}}'
+kubectl delete node <stuck-node-name> --ignore-not-found
+kubectl patch ec2nodeclass <name> --type=merge -p '{"metadata":{"finalizers":[]}}'
+```
+
+**2-3. Ingress 삭제 — LBC가 아직 살아있는 상태에서 실행 (Step 3/4 내용이 여기로 통합됨)**
+
+`kubectl get ingress -A -o json`으로 전체 Ingress를 조회한다. 없으면 2-4/2-5를 건너뛰고
+2-6으로 이동한다. 각 Ingress에 대해 **삭제 전에** 아래를 기록한다(삭제 후에는 조회 불가):
 - `namespace`, `name`
 - `status.loadBalancer.ingress[0].hostname` (ALB DNS 이름)
 - `metadata.annotations."external-dns.alpha.kubernetes.io/hostname"` (Route53 레코드 이름)
@@ -240,19 +262,104 @@ Step 11까지 실행해 Route53·ALB 모두 깨끗함을 확인했다). 바로 S
 kubectl delete ingress <name> -n <namespace>
 ```
 
-### Step 4: ALB 정리 완료 대기
-
-`{root}/eks/providers.tf`의 `profile`로 아래를 polling한다 (최대 3분):
+**2-4. ALB 정리 완료 대기 (LBC가 처리할 시간을 준다)**
 
 ```bash
 aws elbv2 describe-load-balancers --region ap-northeast-2 --profile <profile> \
   --query "LoadBalancers[?DNSName=='<기록한 ALB DNS 이름>']"
 ```
 
-Step 3에서 기록한 모든 ALB가 빈 결과(`[]`)가 될 때까지 대기한다.
-3분 초과 시 경고를 출력하고 계속 진행한다 (Step 6에서 다시 확인 기회가 있음을 안내).
-Step 2에서 Application을 이미 제거했으므로 이 시점에는 ArgoCD가 Ingress를 재생성할 수
-없다 — 그래도 최종 확인은 Step 11에서 한 번 더 이뤄진다.
+2-3에서 기록한 모든 ALB가 빈 결과(`[]`)가 될 때까지 최대 3분 polling한다. 이 시점엔
+LBC(`aws-load-balancer-controller` Application)가 아직 살아있으므로 정상적으로 ALB를
+정리한다 — **3분이 지나도 안 사라지면 LBC 파드가 이미 죽었을 가능성이 높다**
+(`kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로
+확인). 이 경우 Ingress의 finalizer(`ingress.k8s.aws/resources`)가 영구히 안 풀리므로
+아래로 직접 정리한다(2026-07-21 monitoring에서 실제로 겪은 복구 경로):
+
+```bash
+# target group ARN 확보(ALB 삭제 후엔 조회 불가하므로 먼저)
+aws elbv2 describe-target-groups --region ap-northeast-2 --profile <profile> --load-balancer-arn <lb-arn>
+# ALB의 SecurityGroups 필드도 미리 확보(elbv2.k8s.aws/cluster 태그로 LBC 소유 확인 후 삭제 대상에 포함)
+aws elbv2 delete-load-balancer --region ap-northeast-2 --profile <profile> --load-balancer-arn <lb-arn>
+kubectl patch ingress <name> -n <namespace> --type=merge -p '{"metadata":{"finalizers":[]}}'
+# ALB가 완전히 사라진 뒤(polling)
+aws elbv2 delete-target-group --region ap-northeast-2 --profile <profile> --target-group-arn <tg-arn>
+aws ec2 delete-security-group --region ap-northeast-2 --profile <profile> --group-id <sg-id>
+```
+
+**2-5. 나머지 전부 (LBC/karpenter 컨트롤러 포함)**
+
+Ingress/ALB 정리(2-3, 2-4)와 karpenter-resources(2-2)가 완전히 끝난 뒤에만 진행한다 —
+이 시점부터는 controller Application(LBC, karpenter 등)을 지워도 더 이상 정리할 게
+남아있지 않아 안전하다:
+
+```bash
+kubectl delete application --all -n argocd --ignore-not-found
+kubectl delete applicationset --all -n argocd --ignore-not-found
+```
+
+```bash
+for i in $(seq 1 24); do
+  count=$(kubectl get application -n argocd --no-headers 2>/dev/null | wc -l)
+  [ "$count" -eq 0 ] && break
+  sleep 5
+done
+```
+
+> **WHY (2026-07-21, `--all`을 처음부터 한꺼번에 쓰면 안 되는 이유 — 실제 데드락 2건 재현)**:
+> 처음엔 Application/ApplicationSet을 순서 구분 없이 `--all`로 한 번에 지우고, Ingress
+> 삭제는 그 이후(옛 Step 3)에 진행했다. 두 가지 데드락이 실제로 발생했다:
+> (1) `root-app-addons`(ApplicationSet)가 아직 살아있는 찰나에 그 Application이 삭제되자,
+> ApplicationSet 컨트롤러가 즉시 재생성 → devops-manifest 디렉터리 재동기화 → 이미 지운
+> 나머지 17개 ApplicationSet이 전부 부활했다(`preserveResourcesOnDeletion: true`는
+> "ApplicationSet 자신이 지워질 때 하위 리소스를 보존"하는 것이지 이 재생성 경합을 막지
+> 못한다). (2) `karpenter`/`aws-load-balancer-controller`(컨트롤러 Helm release)
+> Application과 `karpenter-resources`/Ingress가 순서 보장 없이 동시에 처리되면서,
+> 컨트롤러가 먼저 죽어버리면 NodePool·Ingress 각각의 자체 finalizer(`karpenter.sh/
+> termination`, `ingress.k8s.aws/resources`)가 기다리는 정리 작업을 아무도 처리 못 해
+> 영구 데드락에 빠졌다 — monitoring/dev의 Karpenter, monitoring의 LBC 전부 이걸로 걸려
+> EC2 인스턴스/ALB를 직접 `terminate-instances`/`delete-load-balancer`하고 finalizer를
+> 강제로 제거해야 했다. 근본 원인은 같다: `--all`은 리소스 간 의존 순서를 전혀 모른다.
+> Terraform의 `null_resource.karpenter_nodeclaims_drainer`가 원래 이 문제를 안 겪는
+> 이유는 컨트롤러 IAM Role을 지우기 *전에* drain을 먼저 실행하도록 `depends_on`으로
+> 순서를 강제하기 때문이다 — kubectl 직접 삭제에는 그런 보장이 없으므로, "실제 AWS
+> 리소스를 관리하는 addon(LBC/Karpenter)의 리소스"는 그 컨트롤러가 살아있는 동안 먼저
+> 정리하고, 컨트롤러 자신은 맨 마지막(2-5)에 지우는 순서를 수동으로 강제해야 한다.
+
+> **WHY (2026-07-21, root-app-addons가 Terraform 소유가 되면서 재검토)**: 이 Step은 원래
+> "Application/ApplicationSet은 클러스터 destroy 시 etcd와 함께 자동으로 사라지니 손댈
+> 필요 없다"는 이유로 비활성화돼 있었다. 이 판단은 `root-app-addons`가 순수 K8s 리소스일
+> 때는 맞았지만, 이제 `root-app-addons`가 `helm_release`로 Terraform state에 들어오면서
+> Step 6(`eks-addons destroy`)이 이걸 `helm uninstall`로 지우는 시점과, Step 8(EKS
+> destroy)이 클러스터 자체를 지우는 시점 사이에 **간극**이 생겼다 — 그 사이에도 ArgoCD
+> 자신은 여전히 살아있고 나머지 17개 addon ApplicationSet은 root-app-addons와 무관하게
+> 독립적으로 계속 selfHeal을 수행한다. 특히 LBC가 관리하는 ALB는 Ingress 객체가 실제로
+> 삭제된 채 유지돼야만 정리되는데, ArgoCD가 그 삭제를 되돌리면 Step 4의 "ALB가 사라졌는지"
+> 확인이 일시적 상태만 보고 통과해버릴 위험이 있다 — 그 직후 ArgoCD가 Ingress를 재생성하면
+> 새로 뜬 ALB가 아무도 모르는 채 고아로 남는다. `root-app-addons` 자신은
+> `preserveResourcesOnDeletion: true`가 걸려있어 그것만 지워서는 나머지 17개
+> ApplicationSet의 selfHeal이 멈추지 않으므로(각자 독립적으로 계속 조정), `--all`로 전부
+> 지워 ArgoCD의 능동적 조정 자체를 끊는 것이 유일하게 확실한 방법이다. 이 환경은 dev/prod
+> 구분 없이 여러 서비스가 namespace로만 분리돼 한 클러스터에 배포될 수 있으므로
+> (`gateway-dev` Ingress 관련 2026-07-04 사고 참고, 아래), Application이 여러 개 있을 수
+> 있다는 전제로 `--all`을 쓴다.
+>
+> **WHY (이 단계가 애초에 만들어진 이유, 2026-07-04)**: monitoring teardown에서
+> `gateway-dev` Ingress를 Step 3(당시 Step 2) 절차대로 삭제했지만, 그 Ingress는 ArgoCD
+> Application `gateway-dev`가 계속 소유·조정하고 있었다. 클러스터를 완전히 destroy한
+> 뒤에도 그 ALB(및 연결된 대상 그룹·보안 그룹 2개)가 고아로 남아 수동 정리가 필요했다 —
+> 근본 원인은 "Ingress를 지우는 시점에 ArgoCD가 여전히 그 리소스를 관리 중이었다"는
+> 것이었다.
+
+Step 11의 zone 전체 재검증(모든 ALB·Route53 레코드를 스캔해 대응 리소스가 없는 고아를
+찾아 정리)은 이 Step으로 위험이 줄어도 여전히 **반드시** 실행한다 — 최종 안전망이다.
+
+### Step 3/4 (통합됨, 2026-07-21): Ingress/ALB 정리는 Step 2-3·2-4로 이동
+
+**이 두 Step은 더 이상 별도로 실행하지 않는다.** LBC(Ingress를 처리하는 컨트롤러)가
+아직 살아있는 동안 정리해야 해서, Step 2(ArgoCD 조정 해제)의 중간 단계로 옮겨졌다 —
+Step 2-3(Ingress 삭제), Step 2-4(ALB 정리 대기) 참고. 이 자리는 번호 유지를 위한
+자리표시자다. Step 5로 바로 진행한다.
 
 ### Step 5: Route53 레코드 수동 삭제 — 잔여 리소스 관리 핵심
 
@@ -262,7 +369,7 @@ Step 2에서 Application을 이미 제거했으므로 이 시점에는 ArgoCD가
 상황이 아니라 이 프로젝트의 정상 동작이다 (2026-07-02 monitoring teardown에서
 `kubectl logs`로 확인: 삭제 후에도 계속 `All records are already up to date`만 출력).
 
-Step 3에서 기록한 `external-dns.alpha.kubernetes.io/hostname` 값이 있는 Ingress마다,
+Step 2-3에서 기록한 `external-dns.alpha.kubernetes.io/hostname` 값이 있는 Ingress마다,
 `{root}/eks-addons/locals.tf`에서 `external_dns_route53_zone_arns`를 Grep해 zone ID를 추출한 뒤
 현재 레코드를 조회한다 (workload 계정이 zone을 소유하므로 profile은 항상 `terraform-workload`).
 **`<hostname>.`뿐 아니라 `cname-<hostname>.`도 함께 조회한다** (아래 WHY 참고):
@@ -276,7 +383,7 @@ aws route53 list-resource-record-sets --hosted-zone-id <zone-id> --profile terra
 레코드의 `ResourceRecords[0].Value`에 `heritage=external-dns`가 포함되어 있는지 확인한다.
 포함되어 있으면 사람이 수동으로 만든 레코드가 아니라 ExternalDNS가 생성·관리하는
 레코드라는 확정적 증거이므로 안전하게 삭제 대상에 포함한다. 값 안의
-`external-dns/resource=ingress/<namespace>/<name>` 부분이 Step 3에서 기록한 삭제 대상
+`external-dns/resource=ingress/<namespace>/<name>` 부분이 Step 2-3에서 기록한 삭제 대상
 Ingress와 일치하는지도 함께 확인하면 다른 Ingress의 레코드를 잘못 지우는 실수를 방지할 수
 있다 (`external-dns/owner=<id>`는 같은 zone을 여러 ExternalDNS 인스턴스가 공유할 때 어느
 인스턴스 소유인지 구분하는 값이다). `heritage=external-dns` 마커가 없는 레코드는 이
@@ -329,6 +436,14 @@ kubectl patch <kind> <name> -n <namespace> --type=merge -p '{"metadata":{"finali
 ```
 
 제거 후 destroy를 재시도한다. 그 외 에러는 사용자에게 보고 후 중단한다.
+
+> **참고 (2026-07-21 — root-app-addons는 이미 Step 2에서 지워진 상태로 도달함)**:
+> monitoring의 `helm_release.bootstrap["addons"]`(root-app-addons)는 Step 2에서
+> `kubectl delete application/applicationset --all`로 이미 삭제됐다. Terraform은 여전히
+> 이 리소스를 state에 갖고 있으므로 이 destroy가 `helm uninstall`을 시도하는데, 대상이
+> 이미 없어 보통 조용히 성공(no-op)한다 — 만약 `release: not found` 류 에러로 destroy가
+> 막히면 `terraform state rm 'module.eks_addons.module.gitops_bridge_bootstrap.helm_release.bootstrap["addons"]'`로
+> state에서만 제거하고 계속 진행한다(K8s 쪽엔 이미 없으므로 안전).
 
 > **참고 (2026-07-18 갱신 — external-secrets webhook 사전 제거 단계 제거됨)**: 예전에는 이
 > Step 앞에 `externalsecret-validate`/`secretstore-validate` ValidatingWebhookConfiguration을

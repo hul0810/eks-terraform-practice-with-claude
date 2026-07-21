@@ -51,6 +51,14 @@ locals {
       # dev/eks-addons/karpenter.tf의 disruption.consolidateAfter(arm64/gpu/spot NodePool)와
       # 동일 값 — karpenter-resources 차트가 이 값을 그대로 템플릿에 주입한다(2026-07-21).
       karpenter_consolidate_after = "30s"
+      # 2026-07-21: SCP RunInstancesAuthCheckFailed 대응 요청 이후 devops-manifest 회신 —
+      # 워크로드(dev/prod)는 general/arm64/gpu/spot 4종 NodePool을 전부 쓰고, monitoring은
+      # GPU가 필요 없어 값을 아예 안 받고 devops-manifest values-override.yaml에서 false로
+      # 고정한다(그래서 monitoring-self의 metadata에는 이 3개 키가 없다 — 아래 module
+      # "gitops_bridge_spoke"의 metadata는 이 root가 spoke에만 넘긴다).
+      karpenter_nodepool_arm64_enabled = "true"
+      karpenter_nodepool_gpu_enabled   = "true"
+      karpenter_nodepool_spot_enabled  = "true"
     }
     prod = {
       enabled          = false
@@ -61,6 +69,14 @@ locals {
       # production/eks-addons/karpenter.tf와 동일 값(dev보다 긴 300s — 스파이크 직후 과도한
       # 노드 회수 방지).
       karpenter_consolidate_after = "300s"
+      # dev와 동일하게 미리 채워뒀다 — 지금은 addon_managed=false라 addon_iam_metadata의
+      # 삼항식이 {}를 반환해 spoke Secret에 실제로는 반영되지 않는다(terraform-reviewer
+      # 지적, 2026-07-21: 값과 "재확인 필요"라는 주석이 불일치했던 걸 정정). prod의
+      # addon_managed를 true로 바꾸는 시점에 이 값 그대로 둘지(워크로드 전체 NodePool
+      # 사용) 재검토할 것 — 그 전까지는 이 값 자체가 죽은 값이라 위험 없음.
+      karpenter_nodepool_arm64_enabled = "true"
+      karpenter_nodepool_gpu_enabled   = "true"
+      karpenter_nodepool_spot_enabled  = "true"
     }
   }
 
@@ -94,6 +110,12 @@ locals {
         karpenter_consolidate_after   = spoke.karpenter_consolidate_after
         external_dns_iam_role_arn     = "arn:aws:iam::${local.workload_account_id}:role/${spoke.aws_cluster_name}-external-dns-irsa"
         external_secrets_iam_role_arn = "arn:aws:iam::${local.workload_account_id}:role/${spoke.aws_cluster_name}-external-secrets-irsa"
+        # SCP RunInstancesAuthCheckFailed 대응 devops-manifest 요청(2026-07-21) — karpenter-resources
+        # 차트가 이 값으로 arm64/gpu/spot NodePool 생성 여부를 결정한다. karpenter-resources 자체가
+        # addon_managed spoke만 대상이라 이 3개도 같은 조건(addon_managed) 안에 둔다.
+        karpenter_nodepool_arm64_enabled = spoke.karpenter_nodepool_arm64_enabled
+        karpenter_nodepool_gpu_enabled   = spoke.karpenter_nodepool_gpu_enabled
+        karpenter_nodepool_spot_enabled  = spoke.karpenter_nodepool_spot_enabled
       } : {}
     )
   }

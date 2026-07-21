@@ -9,6 +9,12 @@ spec:
   # 그 아래 addon ApplicationSet들을 서로 다른 부모가 동시에 소유하려 해서
   # SharedResourceWarning이 발생한다(6-5에서 addon selector 범위 문제로 이미 겪은 것과 동일
   # 클래스의 사고).
+  # preserveResourcesOnDeletion: monitoring-self cluster Secret이 실수로 삭제되는 등
+  # generator가 매칭 대상을 잃는 경우에도, 이미 생성된 하위 addon ApplicationSet 18개가
+  # 연쇄 삭제되지 않도록 막는다 — vendor 공식 예제(multi-cluster/hub-spoke/hub/bootstrap/
+  # addons.yaml)가 최상위 ApplicationSet에 쓰는 것과 동일한 패턴(2026-07-21 적용).
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   generators:
     - clusters:
         selector:
@@ -42,3 +48,10 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        # 이 Application(root-app-addons) 자신의 sync는 addon 18개 전체의 진입점이라
+        # annotation 오타·devops-manifest 경로 일시 공백 등으로 git 쪽 콘텐츠가 비어 보여도
+        # 하위 addon ApplicationSet들을 자동으로 지우지 않는다 — selfHeal/자동 반영(추가·수정)은
+        # 그대로 유지하고 "삭제"만 수동 확인(argocd app sync --prune)을 거치게 한다
+        # (ArgoCD 공식 문서 Sync Options 권장 패턴, 2026-07-21).
+        syncOptions:
+          - Prune=false

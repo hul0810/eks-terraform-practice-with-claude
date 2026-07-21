@@ -15,8 +15,6 @@ locals {
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
   vpc_id            = data.aws_eks_cluster.this.vpc_config[0].vpc_id
-  # GitOps Bridge Hub(Phase 6-1): ArgoCD cluster Secret의 config.tlsClientConfig.caData에 필요
-  cluster_certificate_authority_data = data.terraform_remote_state.eks.outputs.cluster_certificate_authority_data
 
   # IRSA Trust Policy 조건 키(sub/aud)에 필요한 OIDC issuer 호스트.
   # blueprints가 내부적으로 처리하는 IRSA와 달리 argocd-image-updater는 blueprints 밖에서

@@ -467,11 +467,23 @@
 - 부수 발견: devops-manifest ApplicationSet 4종에 `CreateNamespace=true` 누락 — monitoring을
   처음부터 재구축하면 sync 실패 가능. 요청서 전달, 미반영
 
-**6-4 이후(백로그) — `gitops-bridge-irsa.tf` IRSA → Pod Identity 전환**
-- [ ] `argocd_application_controller` Role의 trust policy를 OIDC federated에서 Pod Identity로 교체
-- [ ] argo-cd Helm values의 SA IRSA annotation 주입 제거
-- WHY: 이 파일은 blueprints가 아니라 손코드라 프로젝트 IAM 정책(blueprints 미사용 →
-  Pod Identity)의 유일한 예외 상태 — 전환 시 컨트롤러 파드 재시작으로 짧은 공백 발생 가능
+**6-4 이후 — `gitops-bridge-irsa.tf`의 monitoring-self Access Entry+RBAC 완전 제거(완료, 2026-07-21)**
+> 원래는 "IRSA → Pod Identity 전환"으로 백로그에 있었으나, 검토 과정에서 그 인증 체인
+> 자체가 안 쓰이고 있다는 걸 확인해 전환이 아니라 제거로 방향을 바꿨다.
+
+- [x] CloudTrail + application-controller 로그로 실측 — monitoring 자신을 대상으로 하는
+  모든 Application이 `destination: name: in-cluster`(ArgoCD 내장 자격증명)를 쓰고 있어,
+  이 IRSA Role의 Access Entry+RBAC 경로로 monitoring 자신의 EKS API에 접근한 기록이
+  전혀 없음을 확인
+- [x] vendor 모듈(gitops-bridge-dev/gitops-bridge/helm) 소스 확인 — `cluster.server`/
+  `cluster.config`를 안 넘기면 `server=https://kubernetes.default.svc`,
+  `config={tlsClientConfig:{insecure:false}}`(awsAuthConfig 없음)로 자동 대체됨을 확인
+- [x] `aws_eks_access_entry.argocd_hub_self` + `kubernetes_cluster_role.argocd_read_all` +
+  `kubernetes_cluster_role_binding.argocd_read_all` 3개 리소스 삭제, cluster Secret의
+  `server`/`config` 필드 제거(vendor 기본값 사용). `aws_iam_role.argocd_application_controller`는
+  dev/prd spoke를 sts:AssumeRole하는 데 여전히 쓰이므로 유지
+- [x] apply 후 monitoring/dev addon Application 18개 전부 Synced/Healthy 유지 확인(회귀 없음)
+- 상세 경위: `temp/gitops-bridge-root-app-bootstrap.md`
 
 **6-5. Hub-Spoke 확장 — dev/prd를 spoke로 등록 (dev 완료·검증, prd는 코드만 — 2026-07-21)**
 - [x] dev/prd EKS Access Entry에 Hub ArgoCD의 IAM Role 등록
@@ -512,9 +524,6 @@
 - [x] production 동일 패턴 코드 작성(apply는 보류, CLAUDE.md Production 배포 정책)
 
 **백로그**
-- [ ] dev `public_access_cidrs`의 monitoring NAT Gateway IP 하드코딩을 `endpoint_private_access` +
-  기존 VPC Peering 경유로 전환 — 현재는 monitoring teardown/재provision마다 IP가 바뀌어
-  Hub→spoke 인증이 조용히 끊길 수 있음(SPOF)
 - [ ] prod를 실제 프로비저닝하기 전 monitoring `gitops-bridge-spokes.tf`에서 prod를
   spoke+addon_managed로 먼저 활성화해야 함 — 안 하면 addon Helm이 전혀 안 깔린 채 fresh
   apply될 위험(`/env-provision` 스킬에 가드 추가 완료)
@@ -540,9 +549,9 @@
   같이 부트스트랩, `multi-cluster/hub-spoke-shared`는 addons만). 인프라 프로비저닝과
   워크로드 배포는 라이프사이클이 다르다고 판단해 addons만 이 root가 담당하고, workload
   부트스트랩 방식은 Phase 6-6 착수 시점에 별도 결정하기로 함
-- devops-manifest에 `argocd/projects/workload.yaml`(AppProject)을
-  `argocd/applicationsets/workload/_project.yaml`로 이동 요청(eks-addons AppProject가
-  이미 같은 방식으로 반영된 전례) — 전달 대기 중
+- [x] devops-manifest에 `argocd/projects/workload.yaml`(AppProject)을
+  `argocd/applicationsets/workload/_project.yaml`로 이동 요청 — 반영 완료 확인(2026-07-21,
+  GitHub에서 새 경로 존재·옛 경로 404 직접 확인)
 - [x] 버그 수정: `destination: server: '{{server}}'` → `name: in-cluster`(devops-manifest
   리뷰로 발견, 2026-07-21) — `clusters` generator가 매칭하는 `monitoring-self`는 Phase
   6-1에서 의도적으로 읽기 전용 RBAC로 구성해뒀는데, 이걸 destination에 그대로 쓰면 이
@@ -552,12 +561,11 @@
   destination은 그 패턴을 그대로 따름
 
 **백로그 (aws-architect 리뷰, 2026-07-21)**
-- [ ] `env-teardown` 스킬이 이제 Terraform 소유가 된 `root-app-addons` 부트스트랩을
-  인지하지 못함 — `terraform destroy`가 ArgoCD bootstrap을 helm uninstall할 때 ArgoCD의
-  비동기 cascade delete(root-app → 하위 addon ApplicationSet들)를 기다리지 않고 바로
-  IAM/클러스터 destroy로 진행할 수 있어, LBC가 ALB finalize 전에 죽어 ALB orphan이 생길
-  위험이 있음. addon 정리를 명시적으로 기다리거나 `terraform state rm` 순서를 조정하는
-  방향으로 스킬 갱신 필요
+- [x] `env-teardown` 스킬이 Terraform 소유가 된 `root-app-addons` 부트스트랩을 인지 못하던
+  문제 — Step 2(과거 "실행 안 함"으로 비활성화)를 재활성화해 Step 3(Ingress 수동 삭제)
+  전에 `kubectl delete application/applicationset --all -n argocd`로 ArgoCD의 능동
+  조정(selfHeal)을 먼저 끊도록 수정. Step 6에는 root-app-addons가 이미 Step 2에서
+  지워진 상태로 도달한다는 참고와 `terraform state rm` 우회법을 추가
 - [ ] 라이브 클러스터에 이미 수동 kubectl apply된 동일 이름 `root-app-addons`가 있는
   상태로 이 변경을 처음 적용하면 Helm이 소유권 충돌로 실패할 수 있음(fresh
   destroy→재생성 경로에서는 해당 없음 — 선존 리소스가 없으므로) — 라이브 클러스터에
@@ -565,6 +573,44 @@
 - [ ] root-app-addons의 `syncPolicy.automated.prune: true`가 최상단에 걸려있어
   `addons_repo_path`/`revision` annotation 오타나 devops-manifest 경로 일시 공백 시
   하위 addon ApplicationSet 전체가 prune될 수 있음(선택 사항 — `prune: false` 전환 검토)
+
+**6-5 이후 — 라이브 검증: monitoring 단독/dev 등록 시 addon 자동 배포 확인(완료, 2026-07-21)**
+> 목표 2가지를 실제 `terraform apply`로 검증했다 — (1) monitoring만 apply해도
+> root-app-addons가 자동으로 18개 addon ApplicationSet을 만들고 sync까지 되는가,
+> (2) dev를 spoke로 등록하면 `-spoke` ApplicationSet들이 자동으로 dev에 addon을
+> 배포하는가. `kubectl apply`/`argocd app sync`를 손으로 한 번도 안 돌리고 둘 다 확인됨
+> (monitoring: 11개 Application 자동 sync, dev: 7개 자동 생성·sync).
+
+- [x] `env-provision` 스킬의 `-target=module.eks_addons` 선행 apply가 더 이상 안 먹힘 —
+  `gitops_bridge_bootstrap`의 `count = var.create && (var.cluster != null) ? 1 : 0`이
+  target 범위 밖 리소스(`aws_iam_role.argocd_image_updater`)를 참조해 "Invalid count
+  argument"로 막힘. `eks_blueprints_addons_gitops` 모듈 + `aws_iam_role.argocd_image_updater`를
+  먼저 target apply해 ARN을 확정한 뒤 전체 apply하는 2단계로 우회 — 스킬 문서 갱신 필요
+- [x] dev `public_access_cidrs`의 monitoring NAT Gateway IP 하드코딩 문제가 실제로
+  재현됨(백로그에 이미 예견돼 있던 것) — monitoring 재생성으로 IP가 바뀌자 Hub→dev
+  ExternalDNS/ArgoCD 인증이 실제로 끊겼고, IP를 갱신해 해결
+- [x] `env-provision` Step 4(cross-account ExternalDNS 신뢰 정책 갱신)를 이번 monitoring
+  프로비저닝에서 누락해 `argocd.pyhtest.com` Route53 레코드가 아예 안 생기는 문제로
+  이어짐 — ExternalDNS가 workload 계정 Role에 `sts:AssumeRole` 거부당함(재생성으로 새
+  unique ID를 받았는데 trust policy가 옛 ID 그대로였음). `external-dns-cross-account-role`
+  root apply로 해결
+- [x] dev의 Karpenter가 조직 SCP `RunInstancesAuthCheckFailed`로 NodePool 전체
+  "not ready" 판정을 받아 노드 프로비저닝 자체가 완전히 막힘(monitoring은 같은 조건에서
+  cosmetic 수준이었는데 dev는 실제로 막힘) — CloudTrail로 원인 추적: `general` NodePool만
+  `instance-size` 상한이 있고 `arm64`/`gpu`/`spot`은 상한이 없어 Karpenter의 IAM
+  dry-run 검증(`DryRun=true`, 과금 없음)이 대형 인스턴스(`m7gd.12xlarge`)를 후보로
+  잡아버림 — devops-manifest에 상한 추가 + 클러스터별 NodePool 선택 구성 요청 전달
+- [x] devops-manifest 회신 반영 — dev cluster Secret에 `karpenter_nodepool_arm64_enabled`/
+  `gpu_enabled`/`spot_enabled` annotation 3개 추가(전부 "true", 워크로드는 4종 전체
+  사용). monitoring은 이 값 자체를 안 받음(GPU 불필요, devops-manifest
+  values-override.yaml에서 기본 false 고정)
+- 부수 발견: monitoring-self의 IRSA Role+Access Entry+읽기 전용 ClusterRole(Phase 6-1)이
+  실제로는 안 쓰이고 있을 가능성 — self 대상 Application들이 `destination: name:
+  in-cluster`(ArgoCD 자신의 내장 자격증명)를 쓰므로 Secret의 `config.awsAuthConfig`(그
+  IRSA Role을 가리킴) 경로 자체가 참조되지 않음. cluster Secret 자체(metadata/label)는
+  annotation 브릿지 때문에 필요하지만, 그 뒤에 딸린 인증 체인은 불필요할 수 있음 — 6-4
+  이후 백로그의 "IRSA → Pod Identity 전환" 항목을 "이 인증 체인 자체가 필요한가"로
+  재검토할 필요
 
 **6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
 > devops-manifest의 workload(catalog/gateway/order) ApplicationSet은 이미 `clusters`

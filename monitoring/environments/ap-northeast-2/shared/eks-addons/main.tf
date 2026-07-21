@@ -165,18 +165,6 @@ module "eks_addons" {
 
   replica_counts  = local.replica_counts
   additional_tags = local.common_tags
-
-  # gitops_bridge_hub.cluster에 담긴 IAM Role ARN들이 실제로 유효하려면 Access Entry+RBAC
-  # 체인이 먼저 성립해 있어야 한다 — 원래 root가 직접 만들던 kubernetes_secret_v1에 걸려있던
-  # depends_on을 이 module 호출로 그대로 옮긴 것이다(gitops-bridge-irsa.tf 참고).
-  #
-  # [review-terraform 지적 — 이 depends_on의 실제 범위] 이 RBAC 바인딩이 필요한 건 모듈
-  # 내부의 gitops_bridge_bootstrap.cluster Secret 하나뿐인데, 모듈 경계상 그 리소스 하나만
-  # 겨냥해 depends_on을 줄 방법이 없어 module.eks_addons 전체(Karpenter/LBC/ExternalDNS 등
-  # 이 RBAC와 무관한 리소스까지)가 이 뒤로 직렬화된다. 실습 규모에서는 apply 시간 영향이
-  # 미미해 감수하지만, 이 RBAC 바인딩을 재생성해야 하는 상황이 생기면 전체 addon apply가
-  # 불필요하게 대기한다는 걸 알고 있어야 한다.
-  depends_on = [kubernetes_cluster_role_binding.argocd_read_all]
 }
 
 # ExternalDNS IRSA Role에 크로스 계정 assume 권한 추가
