@@ -3,7 +3,8 @@
 #
 # devops-manifest의 karpenter-resources Application이 EC2NodeClass "default"와
 # NodePool 4종(general/arm64/gpu/spot) 전부를 server-side-apply로 관리한다(dev와 동일
-# 패턴 — annotation karpenter_consolidate_after는 gitops-bridge-spokes.tf 참조).
+# 패턴 — annotation karpenter_consolidate_after는 이 root의 gitops-bridge-registry.tf가
+# publish하는 locals.tf의 gitops_bridge_registry_payload.karpenter_nodepool_metadata 참조).
 # production이 프로비저닝되어 spoke로 등록되면 같은 karpenter-resources 차트가 4종
 # 전부를 가져가므로, 이 root도 처음부터 그 최종 상태를 반영해뒀다 — 실제 라이브
 # state가 생긴 뒤에 별도 이관 작업이 필요 없다. 결과적으로 Karpenter의 Kubernetes

@@ -15,11 +15,10 @@
 # monitoring/environments/ap-northeast-2/shared/eks-addons/main.tf와 달리 production은:
 # - gitops_bridge_hub를 넘기지 않는다(기본값 null) — production은 Hub가 아니라 spoke
 #   (self-service 레지스트리 도입 이후: monitoring 쪽 코드를 고치는 게 아니라, 이 root
-#   자신이 develop과 동일한 gitops-bridge-registry.tf(+ locals.tf의
-#   gitops_bridge_registry_payload, providers.tf의 aws.gitops_bridge_registry provider)를
-#   신규 작성해서 자기 등록 정보를 SSM에 publish해야 spoke로 등록된다 — 아직 이 root에는
-#   그 파일이 없다. project/environments/develop/ap-northeast-2/shared/eks-addons/
-#   gitops-bridge-registry.tf를 그대로 본떠 작성한다)
+#   자신이 gitops-bridge-registry.tf(+ locals.tf의 gitops_bridge_registry_payload,
+#   providers.tf의 aws.gitops_bridge_registry provider)로 자기 등록 정보를 SSM에
+#   publish해야 spoke로 등록된다 — develop과 동일한 코드를 그대로 본떠 작성 완료했다.
+#   apply는 아직 안 됐다(CLAUDE.md "Production 배포 정책" — 사용자가 직접 실행))
 # - external_dns_assume_role_arn 불필요 — Route53 zone이 같은 워크로드 계정에 있음
 # - argo_rollouts_extension_enabled=false — production은 자체 ArgoCD를 운용하지 않음
 #   (enable_argocd=false, Hub-Spoke로 monitoring이 관리)

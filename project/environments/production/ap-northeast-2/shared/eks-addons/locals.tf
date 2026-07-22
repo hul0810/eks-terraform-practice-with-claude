@@ -86,3 +86,67 @@ locals {
   # devops-manifest의 karpenter-resources Application이 EC2NodeClass "default"와
   # 함께 관리한다(karpenter.tf 상단 WHY 참조).
 }
+
+################################################################################
+# GitOps Bridge Registry — self-service 등록 payload (gitops-bridge-registry.tf 참조)
+#
+# project/environments/develop/.../eks-addons/locals.tf의 동일 블록을 그대로 본떴다 —
+# 구조·필드는 전부 동일하고 값만 production 자신의 것으로 채운다.
+################################################################################
+locals {
+  # monitoring(Hub) 계정 ID 및 레지스트리 writer Role ARN — 크로스 계정 하드코딩 리소스.
+  # acm_certificate_arn 등 이 파일의 다른 하드코딩과 동일한 이유: 2계정 토폴로지 자체가
+  # 프로젝트 구조 상수라 remote_state로 조회할 이유가 없다(providers.tf가 이 값으로
+  # aws.gitops_bridge_registry provider의 assume_role.role_arn을 구성한다).
+  monitoring_account_id = "157325288431"
+  # 계정마다 별도 Role(monitoring/.../eks-addons/gitops-bridge-registry.tf 참조 — 이 계정
+  # 전용으로 Resource가 하드코딩된 정책만 가진 Role). 이름 접미사가 이 계정 ID와 일치해야 한다.
+  #
+  # [주의 — "eks-practice-mon" 리터럴은 Hub의 cluster_name 네이밍 규칙을 여기서 다시
+  # 하드코딩한 것] Hub monitoring의 environment_short("mon")가 바뀌면 이 문자열도 함께
+  # 갱신해야 하는데, 안 맞아도 컴파일 에러 없이 AccessDenied로 조용히 깨진다(develop의
+  # 동일 local과 같은 주의사항).
+  gitops_bridge_registry_writer_role_arn = "arn:aws:iam::${local.monitoring_account_id}:role/eks-practice-mon-gitops-bridge-registry-writer-${data.aws_caller_identity.current.account_id}"
+
+  # [스키마 계약]
+  # Hub(monitoring/environments/.../eks-addons/gitops-bridge-spokes.tf)가 이 구조를 그대로
+  # discovery해서 소비한다 — 필드를 추가/제거하면 Hub 쪽도 함께 맞춰야 한다.
+  # cluster_name은 "prod" 같은 논리적 별칭이 아니라 실제 EKS 클러스터 이름 그대로 담는다
+  # (대상 식별 가능해야 한다는 원칙, docs/terraform-principles.md 참조) — ArgoCD
+  # ApplicationSet 라우팅에 쓰는 "dev"/"prod" 별칭은 Hub가 environment 필드로부터 별도로
+  # 유도한다(monitoring locals.tf의 environment_spoke_alias).
+  gitops_bridge_registry_payload = {
+    schema_version   = 1
+    cluster_name     = local.cluster_name
+    environment      = local.environment
+    aws_account_id   = data.aws_caller_identity.current.account_id
+    aws_region       = "ap-northeast-2"
+    vpc_id           = local.vpc_id
+    cluster_endpoint = data.aws_eks_cluster.this.endpoint
+    cluster_ca_data  = data.aws_eks_cluster.this.certificate_authority[0].data
+    spoke_role_arn   = aws_iam_role.gitops_bridge_spoke.arn
+    addon_managed    = true
+    # aws-ia/eks-blueprints-addons 벤더 output을 그대로 통과시킨 값(modules/eks-addons/2.0.0/
+    # outputs.tf) — LBC/ExternalDNS/ExternalSecrets/Karpenter IAM Role ARN 등을 Hub가 이름
+    # 패턴으로 추측하지 않고 그대로 전달한다.
+    gitops_metadata = module.eks_addons.gitops_bridge_addon_metadata
+
+    # [벤더 output에 없는 project 고유 필드]
+    # karpenter_discovery_tag/consolidate_after/nodepool_*_enabled는 gitops_metadata(vendor
+    # pass-through)에 없는, 이 프로젝트가 독자로 도입한 필드다. devops-manifest의
+    # karpenter-resources-spoke ApplicationSet(charts/eks-addons/karpenter-resources)이
+    # nodeRole 외에 discoveryTag/consolidateAfter를 required 값으로 요구하고, arm64/gpu/spot
+    # NodePool on/off도 이 값들로 결정한다 — 빠지면 production의 NodePool 배포 자체가 깨진다.
+    karpenter_nodepool_metadata = {
+      # eks/locals.tf의 node_security_group_tags["karpenter.sh/discovery"]와 동일한 값 —
+      # 그 local도 "${project}${name_suffix}"로 local.cluster_name과 같은 값을 만든다.
+      karpenter_discovery_tag = local.cluster_name
+      # dev(30s)보다 긴 값 — 스파이크 직후 과도한 노드 회수를 방지한다(karpenter.tf 상단
+      # 주석 및 과거 monitoring gitops-bridge-spokes.tf의 prod 항목과 동일 값 유지).
+      karpenter_consolidate_after      = "300s"
+      karpenter_nodepool_arm64_enabled = "true"
+      karpenter_nodepool_gpu_enabled   = "true"
+      karpenter_nodepool_spot_enabled  = "true"
+    }
+  }
+}
