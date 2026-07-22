@@ -130,19 +130,6 @@ locals {
   # 계정이 늘면 여기에만 추가하면 된다.
   trusted_spoke_account_ids = [local.workload_account_id]
 
-  # [논리적 라우팅 별칭 — dev/prod]
-  # devops-manifest의 워크로드 ApplicationSet(order/gateway/catalog)이 ArgoCD 클러스터 Secret의
-  # `cluster_name` 라벨을 `matchLabels: cluster_name: dev|prod`로 선택하고, addon/workload
-  # ApplicationSet들은 destination/namespace를 `{{name}}`/`eks-practice-{{name}}`으로
-  # 템플릿한다(project/environments/develop이 이미 이 별칭으로 라우팅되고 있음, 실제 검증됨).
-  # 이 별칭을 실제 EKS 클러스터 이름(예: eks-practice-dev)으로 바꾸면 그 라우팅이 전부 깨진다.
-  # 레지스트리 payload의 environment(develop/production)는 이미 아는 값이라, 새 필드를
-  # 추가하지 않고 이 매핑 하나로 별칭을 유도한다.
-  environment_spoke_alias = {
-    develop    = "dev"
-    production = "prod"
-  }
-
   # aws_ssm_parameters_by_path는 names/values를 병렬 배열로 반환한다(공식 스키마 — 두 배열의
   # 순서가 항상 일치). zipmap으로 {parameter_name => JSON string} 맵을 만든 뒤 jsondecode한다.
   # values는 SecureString 여부와 무관하게 항상 sensitive로 마킹되는데(AWS provider 공식 동작),
@@ -156,11 +143,89 @@ locals {
     ) : name => jsondecode(value)
   }
 
-  # discovery된 spoke를 "dev"/"prod" 별칭으로 재색인 — module.gitops_bridge_spoke의 for_each
-  # 키가 된다(gitops-bridge-spokes.tf 참조). SSM 경로에 존재하는 것 자체가 "등록됨"이므로
+  # discovery된 spoke를 실제 EKS 클러스터 이름으로 재색인 — module.gitops_bridge_spoke의
+  # for_each 키가 된다(gitops-bridge-spokes.tf 참조). SSM 경로에 존재하는 것 자체가 "등록됨"이므로
   # 구버전의 enabled 플래그는 더 이상 필요 없다(파라미터 부재 = 미등록).
+  #
+  # [별칭 계층 제거 — "dev"/"prod" 대신 payload.cluster_name(실제 이름)을 그대로 키로 쓴다]
+  # 과거엔 이 자리에서 environment(develop/production) → "dev"/"prod" 1:1 맵으로 재색인했다.
+  # 이 맵은 environment당 spoke를 정확히 1개까지만 표현할 수 있어(같은 environment로 두 번째
+  # spoke가 등록되면 for 표현식 키가 중복돼 즉시 깨짐) 대규모 멀티 클러스터(같은 environment에
+  # 클러스터가 여러 개)를 구조적으로 지원하지 못했다. cluster_name은 애초에 SSM 레지스트리 경로
+  # 세그먼트 자체가 실제 EKS 클러스터 이름이라(gitops-bridge-registry.tf의 spoke 쪽
+  # aws_ssm_parameter.name 참조) 전역적으로 유일함이 이미 보장된다 — 별도 별칭 매핑 없이 그대로
+  # for_each 키로 써도 안전하다. environment-tier 라우팅(devops-manifest의 workload
+  # ApplicationSet이 dev/prod 중 어디로 배포할지 결정하는 것)은 이 cluster_name 값이 아니라
+  # vendor 모듈이 별도로 심어주는 `environment` 라벨(develop/production, 아래
+  # module.gitops_bridge_spoke의 cluster.environment)로 분리해서 처리한다 — addon-spoke
+  # ApplicationSet이 이미 cluster_name이 아니라 역할 라벨로 매칭하는 것과 동일한 원칙
+  # (식별자와 그룹핑 키를 분리한다).
   gitops_bridge_spokes = {
     for name, payload in local.gitops_bridge_registry_raw :
-    local.environment_spoke_alias[payload.environment] => payload
+    payload.cluster_name => payload
+  }
+}
+
+################################################################################
+# GitOps Bridge Hub — 자기 자신을 가리키는 cluster Secret 데이터 (gitops-bridge-irsa.tf 참조)
+################################################################################
+locals {
+  # monitoring 자기 자신을 가리키는 cluster Secret 데이터.
+  # server/config는 일부러 넣지 않는다 — vendor 모듈(gitops-bridge-dev/gitops-bridge/helm)이
+  # cluster.server/cluster.config를 안 받으면 `server = https://kubernetes.default.svc`,
+  # `config = {tlsClientConfig: {insecure: false}}`로 자동 채운다.
+  # 이 값이 ArgoCD 자신의 "in-cluster" 개념과 동일해서, 별도 IRSA/Access Entry/RBAC 체인 없이도
+  # 항상 유효하다(gitops-bridge-irsa.tf 파일 헤더 참고). 남기는 건 metadata뿐이고, 이건 addon
+  # ApplicationSet들의 `{{metadata.annotations.xxx}}` 브릿지용으로 여전히 필요하다.
+  #
+  # 스키마 근거: https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
+  #
+  # [metadata — ApplicationSet cluster generator용 메타데이터 브릿지]
+  # 공식 gitops-bridge-dev 패턴(https://github.com/gitops-bridge-dev/gitops-bridge)을 따른다:
+  # Terraform이 만든 addon IAM Role ARN 등을 이 Secret의 K8s object metadata.annotations로
+  # 기록해두면, ApplicationSet의 `clusters` generator가 이 Secret을 순회하며
+  # `{{metadata.annotations.lbc_role_arn}}` 같은 템플릿 표현식으로 각 Application에 주입할
+  # 수 있다. dev/prd를 spoke로 등록하면서 클러스터마다 IAM Role ARN 등의 값이 달라지므로,
+  # devops-manifest의 addon values-override.yaml에 값을 직접 하드코딩하는 대신 이 브릿지로
+  # 클러스터별 값을 동적으로 전달한다.
+  #
+  # [WHY — 이 local이 kubernetes_secret_v1 리소스가 아니라 module.eks_addons에 넘길 변수인 이유]
+  # ArgoCD 설치 주체(gitops-bridge-dev/gitops-bridge/helm)가 cluster Secret 생성까지
+  # 전담한다(modules/eks-addons/2.0.0/main.tf의 module "gitops_bridge_bootstrap" 참고). 그래서
+  # 이 root는 리소스를 직접 만들지 않고, "Hub 전용 값(root에서만 계산 가능한 것)"만 조립해
+  # module.eks_addons의 gitops_bridge_hub 변수로 넘긴다. addon별 IRSA Role ARN처럼 그 모듈
+  # 스스로 이미 계산해둔 값(gitops_metadata)까지 여기서 미리 합쳐 넣으면 "module.eks_addons의
+  # 출력을 같은 module.eks_addons의 입력으로 되먹이는" 순환 참조가 된다 — 그 merge는 공유
+  # 모듈 내부(형제 module 참조)에서 이뤄진다(modules/eks-addons/2.0.0/main.tf 참고).
+  gitops_bridge_hub_cluster = {
+    # [별칭 계층 제거] spoke와 동일하게 실제 EKS 클러스터 이름을 그대로 쓴다(과거
+    # "monitoring-self"라는 별도 별칭을 썼으나, spoke의 dev/prod 별칭을 없애면서 생기는
+    # 비대칭을 없애기 위해 Hub도 함께 전환했다). 이 값을 참조하는 두 곳(root-app-addons.yaml의
+    # selector, bootstrap/root-app-addons.yaml 참조)도 함께 갱신했다 — Hub는 spoke와 달리
+    # 인스턴스가 항상 1개뿐이라 "여러 개 등록" 문제는 없지만, cluster_name이 식별자 역할만
+    # 하도록 통일하는 편이 나머지 두 곳(spoke)과 같은 원칙을 유지한다.
+    cluster_name = local.cluster_name
+    # gitops-bridge-dev/gitops-bridge/helm은 이 값을 생략하면 내부 기본값 "dev"를 cluster
+    # Secret의 labels/annotations에 그대로 찍는다(모듈 소스: `environment = try(var.cluster.
+    # environment, "dev")`) — dev/prd를 spoke로 등록해 label 셀렉터를 실사용하는 상태에서는
+    # monitoring이 dev 전용 템플릿에 잘못 매칭될 수 있어 명시한다.
+    environment = "monitoring"
+    # server/config는 의도적으로 생략 — 위 참고(vendor 기본값이 in-cluster로 자동 대체).
+    metadata = {
+      aws_cluster_name              = local.cluster_name
+      aws_region                    = "ap-northeast-2"
+      aws_account_id                = data.aws_caller_identity.current.account_id
+      vpc_id                        = local.vpc_id
+      argocd_image_updater_role_arn = aws_iam_role.argocd_image_updater.arn
+      # workload 계정은 "클러스터마다 달라지는 값"은 아니지만(2계정 토폴로지 자체가
+      # 프로젝트 상수), 동적으로 받아올 수 있는 값은 하드코딩하지 않는다는 원칙에 따라
+      # 이 값도 devops-manifest에 직접 박아넣지 않고 동일한 브릿지로 전달한다 — workload
+      # 계정이 바뀌어도 이 값 한 곳만 갱신하면 되고 devops-manifest 코드는 안 건드려도 된다.
+      workload_account_id                 = local.workload_account_id
+      external_dns_cross_account_role_arn = local.external_dns_cross_account_role_arn
+      # devops-manifest 저장소 좌표(repoURL/path/revision)는 여기 없다 — bootstrap/
+      # root-app-addons.yaml에 직접 하드코딩돼 있다(그 파일 상단 WHY 참고). AWS 리소스
+      # output이 아니라 이 root 하나에만 쓰이는 정적 컨벤션이라 브릿지로 전달할 이유가 없다.
+    }
   }
 }

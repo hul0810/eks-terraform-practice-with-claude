@@ -1,17 +1,3 @@
-################################################################################
-# ⚠️ 첫 배포 또는 Karpenter 재설치 시 2단계 apply 필수
-#
-#   hashicorp/kubernetes provider의 kubernetes_manifest는 plan 단계에서
-#   클러스터 API에 CRD 스키마를 조회하여 manifest를 검증한다.
-#   depends_on은 apply 실행 순서만 제어하며 plan-time 검증에는 영향을 주지 않는다.
-#   Karpenter CRD가 없는 상태에서 plan을 실행하면 "no matches for kind EC2NodeClass" 에러가 발생한다.
-#
-#   1단계: terraform apply -target=module.eks_addons
-#          → Karpenter Helm chart 설치 → CRD 클러스터 등록
-#   2단계: terraform apply
-#          → EC2NodeClass / NodePool 생성
-################################################################################
-
 resource "terraform_data" "validate_tags" {
   lifecycle {
     precondition {
@@ -122,7 +108,7 @@ module "eks_addons" {
 
   # GitOps Bridge Hub: monitoring이 자기 자신을 spoke로 명시 등록하는 cluster Secret +
   # App-of-Apps 부트스트랩. develop/production은 이 변수를 안 넘기면(기본값 null) spoke로
-  # 동작한다 — gitops-bridge-irsa.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.
+  # 동작한다 — locals.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.
   #
   # [WHY — apps.addons가 devops-manifest의 실제 addon 매니페스트가 아닌 이유]
   # bootstrap/root-app-addons.yaml은 devops-manifest 저장소의 repoURL·path·targetRevision을
@@ -133,15 +119,23 @@ module "eks_addons" {
   # gitops-bridge-dev/gitops-bridge 공식 예제(getting-started, complete, multi-cluster/hub-spoke)가
   # bootstrap/addons.yaml을 정확히 이 패턴으로 쓴다.
   #
-  # repoURL/path/revision 자체는 YAML에 하드코딩하지 않고 '{{metadata.annotations.xxx}}'로
-  # 런타임에 cluster Secret annotation에서 읽는다(gitops-bridge-irsa.tf의
-  # local.gitops_bridge_hub_cluster.metadata가 실제 값을 소유) — 저장소 이전·브랜치 전략
-  # 변경으로 바뀔 수 있는 값을 정적 문자열로 박아두지 않기 위해서다. '{{}}' 템플릿 치환은
-  # Application이 아니라 ApplicationSet(+ generators.clusters)에서만 동작하므로
-  # ApplicationSet으로 작성했다 — selector로 Hub 자신(cluster_name=monitoring-self)에만
-  # 매칭시켜 dev/prd spoke까지 매칭돼 중복 생성되는 걸 막는다(bootstrap/root-app-addons.yaml
-  # 자체의 주석 참고). devops-manifest의 argocd/root-app-addons.yaml 원본은 삭제되어 이
-  # 로컬 사본이 유일한 source of truth다.
+  # repoURL/path/revision 자체는 bootstrap/root-app-addons.yaml에 하드코딩돼 있다 —
+  # 이 ApplicationSet은 selector가 Hub 자신에게만 매칭되는 인스턴스 1개뿐이라 클러스터마다
+  # 달라질 값이 아니고, AWS 리소스 output도 아닌 정적 컨벤션이라 cluster Secret annotation
+  # 브릿지로 전달할 이유가 없다(그 파일 자체의 주석 참고). '{{}}' 템플릿 치환은 Application이
+  # 아니라 ApplicationSet(+ generators.clusters)에서만 동작하므로 ApplicationSet으로
+  # 작성했다 — selector로 Hub 자신(cluster_name=local.cluster_name)에만 매칭시켜 dev/prd
+  # spoke까지 매칭돼 중복 생성되는 걸 막는다(bootstrap/root-app-addons.yaml 자체의 주석 참고).
+  # devops-manifest의 argocd/root-app-addons.yaml 원본은 삭제되어 이 로컬 사본이 유일한
+  # source of truth다.
+  #
+  # [WHY — file()이 아니라 templatefile()인 이유] bootstrap/root-app-addons.yaml의 selector가
+  # Hub 자신의 cluster_name(local.cluster_name, 예: eks-practice-mon)을 정확히 알아야 한다.
+  # YAML 안에 값을 리터럴로 박아두면 Hub가 재생성돼 이름이 바뀔 일은 없지만("$
+  # {project}${name_suffix}" 결정론적 조합) 그래도 이 root의 다른 모든 값(role_name 등)과
+  # 동일하게 root가 소유한 local.cluster_name 하나를 유일한 source of truth로 유지하기 위해
+  # 템플릿 변수로 주입한다 — YAML의 '{{...}}'(ArgoCD Go 템플릿)와 Terraform의 '${...}'는
+  # 서로 다른 문법이라 충돌하지 않는다.
   #
   # [WHY — workload(catalog/gateway/order) Application은 여기서 부트스트랩하지 않는 이유]
   # addon(LBC·karpenter·external-dns 등)은 "클러스터가 쓸 수 있는 상태인가"의 일부라 인프라
@@ -153,7 +147,9 @@ module "eks_addons" {
   gitops_bridge_hub = {
     cluster = local.gitops_bridge_hub_cluster
     apps = {
-      addons = file("${path.module}/bootstrap/root-app-addons.yaml")
+      addons = templatefile("${path.module}/bootstrap/root-app-addons.yaml", {
+        cluster_name = local.cluster_name
+      })
     }
   }
 
@@ -193,22 +189,6 @@ resource "aws_iam_role_policy" "external_dns_assume_cross_account_role" {
     ]
   })
 }
-
-################################################################################
-# ⚠️ ESO 최초 설치 시 2단계 apply 필수 (Karpenter/OTel과 동일한 제약)
-#
-#   hashicorp/kubernetes provider의 kubernetes_manifest는 plan 단계에서
-#   클러스터 API에 CRD 스키마를 조회하여 manifest를 검증한다. ClusterSecretStore/
-#   ExternalSecret CRD는 이 apply의 module.eks_addons(ESO Helm chart)가 설치하므로,
-#   depends_on으로 apply 순서는 보장되지만 plan-time 검증에는 영향을 주지 않는다.
-#   ESO가 클러스터에 아직 없는 상태(최초 설치, 또는 재설치)에서 plan을 실행하면
-#   "no matches for kind ClusterSecretStore/ExternalSecret" 에러가 발생한다.
-#
-#   1단계: terraform apply -target=module.eks_addons
-#          → ESO Helm chart 설치 → CRD 클러스터 등록
-#   2단계: terraform apply
-#          → ClusterSecretStore / ExternalSecret 생성
-################################################################################
 
 # aws-parameterstore ClusterSecretStore — GitOps Bridge(Phase 6-4)로 이관 완료.
 # eks-practice-devops-manifest 저장소의 ArgoCD Application이 관리한다. IAM Role

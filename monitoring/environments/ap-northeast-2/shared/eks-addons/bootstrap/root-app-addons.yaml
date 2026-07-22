@@ -4,13 +4,13 @@ metadata:
   name: root-app-addons
   namespace: argocd
 spec:
-  # Hub 자기 자신(cluster_name=monitoring-self)에만 매칭한다 — selector 없이 clusters: {}로
+  # Hub 자기 자신(cluster_name=${cluster_name})에만 매칭한다 — selector 없이 clusters: {}로
   # 두면 dev/prd spoke cluster Secret도 매칭돼 spoke마다 root-app-addons가 중복 생성되고,
   # 그 아래 addon ApplicationSet들을 서로 다른 부모가 동시에 소유하려 해서
   # SharedResourceWarning이 발생한다(6-5에서 addon selector 범위 문제로 이미 겪은 것과 동일
   # 클래스의 사고).
-  # preserveResourcesOnDeletion: monitoring-self cluster Secret이 실수로 삭제되는 등
-  # generator가 매칭 대상을 잃는 경우에도, 이미 생성된 하위 addon ApplicationSet 18개가
+  # preserveResourcesOnDeletion: Hub 자신의 cluster Secret이 실수로 삭제되는 등 generator가
+  # 매칭 대상을 잃는 경우에도, 이미 생성된 하위 addon ApplicationSet 17개(hub 10 + spoke 7)가
   # 연쇄 삭제되지 않도록 막는다 — vendor 공식 예제(multi-cluster/hub-spoke/hub/bootstrap/
   # addons.yaml)가 최상위 ApplicationSet에 쓰는 것과 동일한 패턴(2026-07-21 적용).
   syncPolicy:
@@ -19,22 +19,29 @@ spec:
     - clusters:
         selector:
           matchLabels:
-            cluster_name: monitoring-self
+            cluster_name: ${cluster_name}
   template:
     metadata:
       name: root-app-addons
     spec:
       project: default
       source:
-        # repoURL/path/revision을 하드코딩하지 않고 cluster Secret annotation에서 읽는다 —
-        # Terraform 쪽 local.gitops_bridge_hub_cluster.metadata(gitops-bridge-irsa.tf)가
-        # 실제 값을 소유한다. eks-addons/ 아래는 서브디렉토리 없이 파일이 바로 있어
-        # directory.recurse 불필요.
-        repoURL: '{{metadata.annotations.addons_repo_url}}'
-        targetRevision: '{{metadata.annotations.addons_repo_revision}}'
-        path: '{{metadata.annotations.addons_repo_basepath}}{{metadata.annotations.addons_repo_path}}'
+        # repoURL/path/revision은 하드코딩한다 — 이 ApplicationSet은 selector가 Hub
+        # 자신에게만 매칭되는 인스턴스 1개뿐이라 "클러스터마다 달라지는 값"이 아니고,
+        # AWS 리소스 output도 아닌 이 팀의 정적 컨벤션이라 cluster Secret annotation으로
+        # 우회할 이유가 없다.
+        repoURL: https://github.com/hul0810/eks-practice-devops-manifest.git
+        targetRevision: main
+        path: argocd/applicationsets/eks-addons
+        # devops-manifest가 argocd/applicationsets/eks-addons/ 아래를 hub/·spoke/
+        # 서브폴더로 분리했다(devops-manifest commit ca3f614, 근거는 그쪽
+        # argocd/CLAUDE.md 참조). ArgoCD directory 소스는 recurse: true가 없으면
+        # 서브디렉토리를 읽지 않아, 이 값이 없으면 root-app-addons가 addon 17개
+        # (hub 10 + spoke 7) 전부를 git에서 사라진 것으로 인식한다.
+        directory:
+          recurse: true
       # destination은 in-cluster로 고정한다 — clusters generator가 매칭한
-      # monitoring-self(IRSA 기반 등록)는 읽기 전용 RBAC(argocd-hub-read-all: get/list/watch만
+      # Hub 자신(IRSA 기반 등록)은 읽기 전용 RBAC(argocd-hub-read-all: get/list/watch만
       # 있음, Phase 6-1에서 의도적으로 least-privilege 검증용으로 구성)라 '{{server}}'를 그대로
       # destination에 쓰면 이 Application이 만드는 하위 addon ApplicationSet들의 write가 전부
       # 막혀 sync가 실패한다. devops-manifest의 실제 addon ApplicationSet
@@ -48,7 +55,7 @@ spec:
         automated:
           prune: true
           selfHeal: true
-        # 이 Application(root-app-addons) 자신의 sync는 addon 18개 전체의 진입점이라
+        # 이 Application(root-app-addons) 자신의 sync는 addon 17개 전체의 진입점이라
         # annotation 오타·devops-manifest 경로 일시 공백 등으로 git 쪽 콘텐츠가 비어 보여도
         # 하위 addon ApplicationSet들을 자동으로 지우지 않는다 — selfHeal/자동 반영(추가·수정)은
         # 그대로 유지하고 "삭제"만 수동 확인(argocd app sync --prune)을 거치게 한다

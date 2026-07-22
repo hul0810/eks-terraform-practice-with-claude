@@ -2,10 +2,13 @@
 name: env-provision
 description: >
   develop/monitoring/production 실습 환경의 비용 발생 리소스(VPC NAT Gateway, EKS 클러스터, eks-addons)를
-  올바른 순서로 생성한다. Karpenter/external-secrets CRD 순환 의존은 eks-addons 코드 주석이 명시한
-  2단계 apply(-target=module.eks_addons 선행)로 선제 회피하고, LBC-ArgoCD 웹훅 경쟁 상태,
-  ExternalDNS cross-account role 신뢰 정책 갱신(필요한 환경만) 등 나머지 반복 실패 패턴은
-  발생 시 감지해 재시도한다. 3개 환경 모두 실습용이므로 production도 대상이다.
+  올바른 순서로 생성한다. 모든 환경이 GitOps Bridge(modules/eks-addons/2.0.0)를 쓰는 지금은
+  Karpenter/ESO의 kubernetes_manifest가 ArgoCD 소관이라 CRD 순환 의존 자체가 없다 — ArgoCD
+  부트스트랩만 -target=module.eks_addons로 선행 apply하면 addon 17개 등록·sync는 전부 자동화돼
+  있어(devops-manifest의 automated syncPolicy) 사람이 순서를 정할 필요가 없다. LBC 웹훅 준비
+  전 다른 addon이 먼저 reconcile을 시도하는 일시적 경쟁 상태, ExternalDNS cross-account role
+  신뢰 정책 갱신(필요한 환경만) 등 반복 실패 패턴은 발생 시 감지해 재시도한다. 3개 환경 모두
+  실습용이므로 production도 대상이다.
 disable-model-invocation: false
 allowed-tools:
   - Bash(terraform *)
@@ -64,20 +67,15 @@ allowed-tools:
 > **현재 방식**: production 자신이 `project/environments/production/.../eks-addons/`에
 > `develop/.../eks-addons/gitops-bridge-registry.tf`·해당 `locals.tf`의
 > `gitops_bridge_registry_payload`·`providers.tf`의 `aws.gitops_bridge_registry` provider를
-> 그대로 본떠 자기 파일을 만들고(2026-07-22 시점 production에는 아직 이 파일이 없음 — 최초
-> 1회 신규 작성 필요), `addon_managed = true`로 apply해서 SSM에 자기 등록 정보를 publish해야
-> 한다. 그 후 monitoring(Hub) 쪽 `eks-addons`를 **한 번 더 apply**해야 discovery가
-> production을 인식하고 cluster Secret을 만든다(발행 시점과 Hub가 아는 시점이 다르다 —
+> 그대로 본떠 자기 파일을 만들고 apply해서 SSM에 자기 등록 정보를 publish해야 한다. 그 후
+> monitoring(Hub) 쪽 `eks-addons`를 **한 번 더 apply**해야 discovery가 production을 인식하고
+> cluster Secret을 만든다(발행 시점과 Hub가 아는 시점이 다르다 —
 > `temp/gitops-bridge-registry-summary.md` 참고). Step 3 진행 전 production의 registry 파일이
-> 있는지, monitoring이 이미 discovery했는지(`kubectl get secret prod -n argocd` 등)를 확인하고,
-> 없다면 사용자에게 먼저 이 등록 작업이 필요하다고 안내한 뒤 진행 여부를 다시 확인한다.
->
-> **참고(미해결 갭)**: `addon_managed = true`로 등록해도, devops-manifest의 `-spoke`
-> ApplicationSet들이 실제로는 이 값(라벨)을 selector에서 확인하지 않는 것으로 확인됐다
-> (`temp/gitops-bridge-addon-managed-label-unused-gap.md`) — 즉 지금은 `gitops-bridge-role:
-> spoke`만 있으면 addon_managed 값과 무관하게 addon이 배포될 수 있다. production을 처음
-> 등록하기 전 이 갭이 해소됐는지 먼저 확인할 것 — 안 그러면 production이 아직 자기
-> Terraform으로 addon을 관리 중인 상태에서 ArgoCD가 동시에 배포를 시도해 충돌할 수 있다.
+> 있는지, monitoring이 이미 discovery했는지(`kubectl get secret <cluster_name> -n argocd`
+> 등)를 확인하고, 없다면 사용자에게 먼저 이 등록 작업이 필요하다고 안내한 뒤 진행 여부를
+> 다시 확인한다. registry에 publish되는 순간 spoke로 등록되고, addon 7개가 곧바로 배포
+> 대상이 된다(`addon_managed` 같은 단계적 게이트는 없음 — 2026-07-22, 실제로 쓰이지 않던
+> 죽은 필드라 제거함).
 
 > **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
 > `environments/production` 경로의 모든 `terraform apply`를 무조건 차단한다 (CLAUDE.md
@@ -185,26 +183,31 @@ grep "source" {root}/eks-addons/main.tf | grep "modules/eks-addons"
 
 **3-A-1. 선행 CRD 설치 — 항상 먼저 실행 (전체 apply를 바로 시도하지 않는다)**
 
-`{root}/eks-addons/main.tf` 상단 주석(`⚠️ 첫 배포 또는 Karpenter 재설치 시 2단계 apply 필수`)이
-이미 명시하듯, Step 2에서 클러스터를 새로 만든 직후에는 Karpenter/external-secrets CRD가
-클러스터에 없어 `kubernetes_manifest` 리소스의 plan 자체가 **항상** 실패한다
+Step 2에서 클러스터를 새로 만든 직후에는 Karpenter/external-secrets CRD가 클러스터에
+없어, 이 root가 직접 선언하는 Karpenter NodeClass/NodePool·ESO ClusterSecretStore/
+ExternalSecret 등 `kubernetes_manifest` 리소스의 plan 자체가 **항상** 실패한다
 (`hashicorp/kubernetes` provider가 plan 단계에서 클러스터 API로 CRD 스키마를 직접 조회하기
-때문에 `depends_on`으로는 막을 수 없다). 이 실패가 예정돼 있다는 것을 코드가 이미 알려주므로,
-전체 apply를 먼저 시도해 실패를 확인하는 절차를 생략하고 module 전체를 target으로 먼저
-적용한다:
+때문에 `depends_on`으로는 막을 수 없다). 이 실패가 예정돼 있으므로, 전체 apply를 먼저
+시도해 실패를 확인하는 절차를 생략하고 module 전체를 target으로 먼저 적용한다:
 
 ```bash
 cd {root}/eks-addons && terraform apply -auto-approve -target=module.eks_addons
 ```
 
-> **WHY (2026-07-07 확인)**: 이전에는 3-2(전체 apply)를 먼저 시도해 매번 CRD 에러로
-> 실패를 확인한 뒤에야 `-target`으로 좁혀 재시도했다. `main.tf`의 코드 주석이 이미
-> "1단계: `terraform apply -target=module.eks_addons`"를 명시하고 있으므로, 실패가
-> 확정적인 시도를 거치지 않고 이 순서를 그대로 선행 실행한다. target 범위도 기존의
-> karpenter/external_secrets helm_release 2개만이 아니라 `module.eks_addons` 전체로
-> 넓혀, LBC/ArgoCD/external-dns/argo-rollouts 등 CRD와 무관한 나머지 애드온도 이
-> 1단계에서 함께 설치되게 한다 — 단, ArgoCD의 Ingress는 이 module 안에 포함되므로
-> 3-A-3의 LBC 웹훅 경쟁은 이 1단계에서도 여전히 발생할 수 있다(아래 참고).
+target 범위는 karpenter/external_secrets helm_release 2개만이 아니라 `module.eks_addons`
+전체로 넓혀, LBC/ArgoCD/external-dns/argo-rollouts 등 CRD와 무관한 나머지 애드온도 이
+1단계에서 함께 설치되게 한다 — 단, ArgoCD의 Ingress는 이 module 안에 포함되므로
+3-A-3의 LBC 웹훅 경쟁은 이 1단계에서도 여전히 발생할 수 있다(아래 참고).
+
+> **참고(2026-07-22)**: 2026-07-22 기준 이 3-A 절차 자체가 참조하는 `modules/eks-addons/1.0.0`을
+> 실제로 쓰는 환경이 없다(monitoring/develop/production 전부 2.0.0 — 아래 3-B). 게다가
+> 1.0.0 모듈 자신도 Karpenter NodeClass/NodePool·ESO ClusterSecretStore/ExternalSecret용
+> `kubernetes_manifest`를 갖고 있지 않다(그 모듈이 갖는 `kubernetes_manifest`는
+> OTel spoke collector 전용뿐 — `modules/eks-addons/1.0.0/main.tf` 확인). 즉 이 문단이
+> 설명하는 시나리오는 "환경 root가 그런 리소스를 직접 선언하는 경우"를 가정한 일반
+> 절차이고, 지금 이 리포지토리의 어떤 파일에도 그 형태로 매칭되는 코드가 없다 — 신규
+> 환경이 1.0.0을 참조하며 그런 리소스를 직접 추가하는 극히 예외적 상황이 아니면 3-A는
+> 실질적으로 죽은 절차다. 대부분의 경우 아래 3-B를 따르면 된다.
 
 **3-A-2. 전체 apply**
 
@@ -277,75 +280,43 @@ Karpenter의 SQS 인터럽션 큐·EventBridge Rule, `argocd-github-app-repo-cre
 직접 읽어 Terraform이 만듦 — ESO 비의존)까지 전부 준비된다. ArgoCD는 이 시점부터 자기
 저장소(devops-manifest)를 정상적으로 sync할 수 있다.
 
-**3-B-2. ArgoCD로 addon 등록 — 순서 중요**
+**3-B-2. addon 등록 확인 — 완전 자동화, 수동 개입 불필요 (2026-07-22 재확인)**
 
-> **갱신(2026-07-19, devops-manifest 커밋 0d0929c 이후)**: `argocd/eks-addons/*.yaml` 10개를
-> devops-manifest가 `argocd/applicationsets/eks-addons/`로 옮기고 root Application에
-> `directory.recurse: true`를 추가해, 이 10개 Application **객체 자체의 생성/유지는 이제
-> root Application이 자동으로 한다** — 파일을 가져와 `kubectl apply -f`로 등록하는 절차는
-> 더 이상 필요 없다.
->
-> **정정(2026-07-21)**: 진입점은 `root-app.yaml` 1개가 아니라 **2개로 분리**돼 있다 —
-> addon용 `argocd/root-app-addons.yaml`(path: `argocd/applicationsets/eks-addons`)과
-> workload용 `argocd/root-app-workload.yaml`(path: `argocd/applicationsets/workload`).
-> eks-addons만 다루는 이 스킬은 `root-app-addons.yaml`만 있으면 된다 — devops-manifest의
-> `argocd/CLAUDE.md`가 "App of Apps 진입점, 유일하게 수동 kubectl apply가 필요한 리소스"라고
-> 명시한 파일이 바로 이거다.
->
-> 다만 이 10개 Application은 `syncPolicy`가 여전히 `Manual`이다(라이브에서
-> `argocd app list --core`의 SYNCPOLICY 컬럼으로 직접 확인 — automated로 바뀐 게 아니다).
-> 즉 root-app-addons가 Application **객체**는 자동으로 만들어주지만, 그 안의 실제 Helm
-> release를 클러스터에 반영하는 것(`argocd app sync`)은 여전히 아래 절차대로 수동이다 —
-> "파일 등록"만 사라졌을 뿐 "sync 순서" 자체는 그대로 유효하다.
->
-> **부수 발견(2026-07-21) — `eks-addons` AppProject도 클러스터 재구축 시 함께 사라진다**:
-> `root-app-addons.yaml`이 감시하는 경로(`argocd/applicationsets/eks-addons/`)에
-> `eks-addons` AppProject(`argocd/projects/eks-addons.yaml`)가 포함되어 있지 않아서,
-> EKS 클러스터를 destroy하면 이 AppProject도 etcd와 함께 사라지고 재구축 시 자동으로
-> 안 돌아온다 — 없으면 10개 Application 전부 아래 에러로 막힌다:
-> `application destination server 'in-cluster' and namespace '' do not match any of
-> the allowed destinations in project 'eks-addons'`
-> devops-manifest 쪽에 이 AppProject를 root-app-addons의 감시 경로 안으로 옮겨달라고
-> 요청했다(2026-07-21) — 반영 전이면 아래처럼 두 파일 다 최초 1회 수동 적용해야 한다.
+> 아래는 여러 차례에 걸쳐 갱신되던 절차였는데, 지금은 사람이 할 일이 없는 상태로
+> 정리됐다 — devops-manifest를 직접 클론해 각 항목을 재확인했다:
+> - `root-app-addons.yaml`은 devops-manifest에 정적 파일로 더 이상 존재하지 않는다
+>   (devops-manifest 커밋 `9a5cc4d`로 삭제 — Terraform 자동 부트스트랩과 소유권 경합
+>   방지). 이 root(monitoring)의 `bootstrap/root-app-addons.yaml`(`main.tf`가
+>   `templatefile()`로 읽어 `gitops_bridge_hub.apps.addons`로 전달)이 유일한 source다
+>   — `terraform apply`만으로 자동 생성되고, `kubectl apply`나 `gh api` 수동 등록 절차는
+>   더 이상 없다.
+> - devops-manifest가 `argocd/applicationsets/eks-addons/`를 `hub/`·`spoke/` 서브폴더로
+>   분리했다(커밋 `ca3f614`). `bootstrap/root-app-addons.yaml`의 `directory.recurse: true`
+>   (2026-07-22 반영)가 이 서브폴더까지 재귀적으로 읽는다 — 같은 경로에 있는
+>   `_project.yaml`(AppProject, 옛 `argocd/projects/eks-addons.yaml`에서 이미 이쪽으로
+>   이동함)도 이 재귀 스캔에 포함되므로 별도 부트스트랩이 필요 없다.
+> - addon 17개(hub 10 + spoke 7) 전부 `syncPolicy.automated: {prune: true, selfHeal:
+>   true}`다(devops-manifest 커밋 `5ac4e68` — 라이브에서 `Manual`이던 시절과 달리 지금은
+>   `argocd app sync` 수동 실행이 필요 없다).
+> - `eks-addons` AppProject의 `destinations`에 `{namespace: '*', server:
+>   https://kubernetes.default.svc}` 와일드카드 항목이 이미 있어(devops-manifest 커밋
+>   `da6e5bb`) cluster-scoped Application(`karpenter-resources` 등)의
+>   `InvalidSpecError`는 재현되지 않는다.
+> - `argo-rollouts`/`external-dns`/`external-secrets`/`karpenter` 4개 addon 전용
+>   namespace도 각 ApplicationSet에 `CreateNamespace=true`가 이미 있어(직접 확인)
+>   fresh apply에서 namespace 부재로 막히지 않는다.
 
-`root-app-addons`가 없다면 아래 순서로 최초 1회 부트스트랩한다:
+`terraform apply` 완료 후 확인만 한다:
 
 ```bash
-gh api repos/hul0810/eks-practice-devops-manifest/contents/argocd/root-app-addons.yaml --jq '.content' | base64 -d | kubectl apply -f -
-gh api repos/hul0810/eks-practice-devops-manifest/contents/argocd/projects/eks-addons.yaml --jq '.content' | base64 -d | kubectl apply -f -
+kubectl get application -n argocd -l app.kubernetes.io/component=addon
 ```
 
-그 후 `argocd app sync <name> --core`로 sync한다(`--core`는 kubeconfig 권한으로 로그인 없이
-동작 — `docs/`나 이전 세션 기록 참고).
-
-순서:
-1. **LBC를 가장 먼저** sync하고 `kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller`로 `Running` 확인 (다른 addon의 Service 생성이 LBC의 mutating webhook을 거치는데, LBC가 안 뜬 상태면 아래 3-B-3과 같은 웹훅 경쟁이 재발한다)
-2. 나머지(Karpenter, ExternalDNS, ExternalSecrets, metrics-server, argo-rollouts, argocd-image-updater)를 순서 무관하게 sync
-3. 마지막으로 `karpenter-resources`/`argocd-image-updater-resources`/`notifications-resources`(CRD 의존 3종) sync — 2번의 addon들이 뜬 뒤에만 가능
-
-**3-B-2-보조. cluster-scoped 리소스 Application이 `InvalidSpecError`로 막힐 때**
-
-`karpenter-resources`/`argocd-image-updater-resources`/`notifications-resources` 3개는
-namespace 없는 cluster-scoped 리소스라 `destination.namespace`가 빈 문자열이다. `eks-addons`
-AppProject의 `destinations` 목록에 이걸 허용하는 항목이 없으면 위와 같은
-`InvalidSpecError`("namespace '' do not match")로 막힌다(2026-07-21 실제 발생, devops-manifest에
-근본 수정 요청함 — AppProject 자체에 `{namespace: "*", server: "https://kubernetes.default.svc"}`
-destination 추가). 반영 전이면 임시로 라이브 패치한다:
-
-```bash
-kubectl patch appproject eks-addons -n argocd --type=json \
-  -p='[{"op": "add", "path": "/spec/destinations/-", "value": {"namespace": "*", "server": "https://kubernetes.default.svc"}}]'
-```
-
-**3-B-2-보조 2. addon 전용 namespace가 없어서 apply/sync가 막힐 때**
-
-`argo-rollouts`/`external-dns`/`external-secrets`/`karpenter` 같은 addon 전용 namespace는
-과거 Terraform Helm이 만들어주던 게 이관 후 사라졌다 — devops-manifest ApplicationSet에
-`CreateNamespace=true`가 없으면 클러스터를 처음부터 재구축했을 때 그 namespace가 존재하지
-않는다(karpenter는 2026-07-20 devops-manifest 쪽에서 이미 수정됨, 나머지는 미확인). 이
-namespace가 없으면 `terraform apply`의 `kubernetes_service_account_v1`류 리소스나
-`argocd app sync`가 `namespaces "X" not found`로 막힌다 — `kubectl create namespace <name>`으로
-수동 생성 후 재시도한다(devops-manifest 쪽 수정 요청서는 이미 전달됨, 반영되면 이 단계 불필요).
+17개(hub 10 + spoke 7) 전부 `Synced`/`Healthy`인지 확인한다. LBC의 mutating webhook이 아직
+준비되지 않은 상태에서 다른 addon이 먼저 reconcile를 시도하면 일시적으로
+`no endpoints available for service "aws-load-balancer-webhook-service"` 에러가 보일 수
+있다 — automated `selfHeal`이 재시도하므로 보통 자동으로 해소된다. 몇 분 뒤에도 안 풀리면
+아래 3-B-3 참고.
 
 **3-B-3. sync 중 LBC 웹훅 경쟁 감지 시**
 

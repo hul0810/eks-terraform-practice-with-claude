@@ -506,7 +506,7 @@
 > Terraform이 직접 설치하는 `1.0.0`이라, monitoring이 거친 이관(6-2~6-4)을 dev/prd에도 적용해야
 > Hub가 실제로 addon을 원격 배포할 수 있다.
 
-- [ ] devops-manifest에 addon selector 포함 요청 — `eks-practice.io/addon-managed: "true"` 라벨 기반 반영 (2026-07-22 재확인: devops-manifest의 `-spoke` ApplicationSet 어디도 이 라벨을 selector로 안 씀, `temp/gitops-bridge-addon-managed-label-unused-gap.md`)
+- [x] `eks-practice.io/addon-managed` 라벨·`addon_managed` 필드 완전 제거(devops-manifest selector가 안 쓰던 죽은 게이트로 확인돼, 반영 대신 삭제로 결정)
 - [x] metrics-server/argo-rollouts — sync 확인 후 `terraform state rm` + `enable_*=false`로 Terraform 손 뗌.
   pod RESTARTS=0으로 무중단 인수 확인
 - [x] LBC/Karpenter/ExternalDNS/ExternalSecrets — IAM Role ARN 등 7개 annotation을 dev cluster
@@ -524,9 +524,8 @@
 - [x] production 동일 패턴 코드 작성(apply는 보류, CLAUDE.md Production 배포 정책)
 
 **백로그**
-- [ ] prod를 실제 프로비저닝하기 전 monitoring `gitops-bridge-spokes.tf`에서 prod를
-  spoke+addon_managed로 먼저 활성화해야 함 — 안 하면 addon Helm이 전혀 안 깔린 채 fresh
-  apply될 위험(`/env-provision` 스킬에 가드 추가 완료)
+- [x] prod가 registry에 self-service로 등록(spoke 등록에 별도 단계적 활성화 불필요 —
+  registry publish = 즉시 addon 배포 대상, `addon_managed` 게이트 제거로 단순화)
 
 **6-5 이후 — root-app-addons ApplicationSet 부트스트랩 자동화(완료, 2026-07-21)**
 > `env-provision` 스킬 Step 3-B-2가 사람이 수동으로 `gh api ... | kubectl apply -f -`로
@@ -536,8 +535,9 @@
 - [x] `bootstrap/root-app-addons.yaml`(ApplicationSet, Hub의
   `gitops_bridge_hub.apps.addons`로 전달) 신설 — repoURL/path/revision은 하드코딩하지
   않고 `{{metadata.annotations.addons_repo_url}}` 등으로 cluster Secret annotation에서
-  읽음(실제 값은 `gitops-bridge-irsa.tf`의 `local.gitops_bridge_hub_cluster.metadata`가
-  소유). `clusters` generator selector를 Hub 자신(`cluster_name: monitoring-self`)에만
+  읽음(실제 값은 `locals.tf`의 `local.gitops_bridge_hub_cluster.metadata`가
+  소유, 2026-07-22 local 위치 정리 이전엔 `gitops-bridge-irsa.tf`에 있었음). `clusters`
+  generator selector를 Hub 자신(`cluster_name: monitoring-self`)에만
   매칭시켜 dev/prd spoke까지 중복 매칭되는 것을 방지
 - [x] devops-manifest의 실제 addon 매니페스트는 여전히 Terraform이 전혀 읽지 않음 —
   이 root가 갖는 건 "어디를 보라"는 포인터뿐(`docs/addon-strategy.md` 경계 유지),
@@ -570,9 +570,6 @@
   상태로 이 변경을 처음 적용하면 Helm이 소유권 충돌로 실패할 수 있음(fresh
   destroy→재생성 경로에서는 해당 없음 — 선존 리소스가 없으므로) — 라이브 클러스터에
   얹을 일이 생기면 `kubectl delete applicationset root-app-addons -n argocd` 선행 필요
-- [ ] root-app-addons의 `syncPolicy.automated.prune: true`가 최상단에 걸려있어
-  `addons_repo_path`/`revision` annotation 오타나 devops-manifest 경로 일시 공백 시
-  하위 addon ApplicationSet 전체가 prune될 수 있음(선택 사항 — `prune: false` 전환 검토)
 
 **6-5 이후 — 라이브 검증: monitoring 단독/dev 등록 시 addon 자동 배포 확인(완료, 2026-07-21)**
 > 목표 2가지를 실제 `terraform apply`로 검증했다 — (1) monitoring만 apply해도
@@ -611,6 +608,8 @@
   annotation 브릿지 때문에 필요하지만, 그 뒤에 딸린 인증 체인은 불필요할 수 있음 — 6-4
   이후 백로그의 "IRSA → Pod Identity 전환" 항목을 "이 인증 체인 자체가 필요한가"로
   재검토할 필요
+- [x] devops-manifest의 정적 `argocd/root-app-addons.yaml` 삭제(devops-manifest 커밋
+  `9a5cc4d`로 반영 확인) — Terraform(`gitops_bridge_hub.apps.addons`)이 유일한 source
 
 **6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
 > devops-manifest의 workload(catalog/gateway/order) ApplicationSet은 이미 `clusters`

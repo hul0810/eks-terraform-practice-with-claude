@@ -184,6 +184,14 @@ module "vpc" {
 
 4. `terraform init && terraform plan && terraform apply`
 
+**root-level `local`은 전부 `locals.tf`에 집중한다** — 리소스 주제 파일(예:
+`gitops-bridge-irsa.tf` 같은 `*.tf`)에 별도 `locals { ... }` 블록을 두지 않는다. 계산
+로직이 특정 파일의 리소스와 밀접해 보여도 예외를 두지 않는다 — `local` 블록과 그 WHY
+주석은 통째로 옮기면 colocation을 잃지 않으므로 분산해야 할 이유가 없다. `locals.tf`
+하나만 봐도 이 root의 모든 local 값을 파악할 수 있어야 한다(monitoring
+`eks-addons` root에서 이 규칙이 지켜지지 않아 발견이 어려웠던 사례가 있었음 —
+2026-07-22 정리).
+
 ---
 
 ## 신규 프로젝트 추가 절차

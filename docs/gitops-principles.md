@@ -64,7 +64,7 @@
 
 | 갭 | 위반 원칙 | 현재 상태 | 추적 |
 |----|-----------|-----------|------|
-| `monitoring-self` cluster Secret이 SPOF | 자동으로 Pull됨 | 이 Secret 또는 `argocd.argoproj.io/secret-type: cluster` 라벨이 사라지면 `clusters` generator가 매칭 대상을 못 찾아 addon 전체가 **에러 없이** 배포 대상에서 사라진다 | `temp/gitops-bridge-overview.md` 9절 |
+| Hub 자신(monitoring)의 cluster Secret이 SPOF | 자동으로 Pull됨 | 이 Secret 또는 `argocd.argoproj.io/secret-type: cluster` 라벨이 사라지면 `clusters` generator가 매칭 대상을 못 찾아 addon 전체가 **에러 없이** 배포 대상에서 사라진다 | `temp/gitops-bridge-overview.md` 9절 |
 | Hub(monitoring) 자체의 관리 평면 가용성이 간헐적 | 자동으로 Pull됨 / 지속적으로 조정됨 | monitoring은 비용 절감을 위해 `/env-teardown`으로 상시 내려간다(이 프로젝트의 정상 운영 패턴) — Hub가 없는 동안은 spoke(dev/prod)에 대한 reconciliation 자체가 멈춘다. 다만 spoke에 이미 배포된 addon·워크로드는 각자의 K8s 컨트롤러로 계속 동작하므로(데이터 평면 무중단) 이 갭은 관리 평면에 한정된다 — aws-architect 리뷰 지적, 2026-07-21 | 없음(신규 기록) |
 
 `syncPolicy.automated` 도입 여부(자동화 시 예기치 않은 배포 리스크 vs 수동 부담의

@@ -4,9 +4,9 @@
 #
 # [self-service 레지스트리로 전환 (gitops-bridge-registry.tf)]
 # spoke 정보의 출처가 이 파일의 손으로 유지하던 map에서 SSM Parameter Store discovery로
-# 바뀌었다 — local.gitops_bridge_spokes(locals.tf)가 discovery 결과를 "dev"/"prod" 별칭으로
-# 재색인한 맵이다. spoke가 자신의 엔드포인트/CA/Role ARN/addon IAM 메타데이터를 이미 정확히
-# 알고 있으므로, 이 root는 더 이상 크로스 계정 data source(aws_eks_cluster)로 조회하거나
+# 바뀌었다 — local.gitops_bridge_spokes(locals.tf)가 discovery 결과를 실제 EKS 클러스터
+# 이름으로 재색인한 맵이다. spoke가 자신의 엔드포인트/CA/Role ARN/addon IAM 메타데이터를 이미
+# 정확히 알고 있으므로, 이 root는 더 이상 크로스 계정 data source(aws_eks_cluster)로 조회하거나
 # role_name 네이밍 패턴으로 IAM ARN을 추측 재조합하지 않는다.
 #
 # [monitoring-self와의 차이 — 왜 module.eks_addons(공유 모듈) 안이 아니라 root에 직접 두는가]
@@ -28,14 +28,14 @@
 # Role을 sts:AssumeRole로 넘겨받아 그 계정의 EKS API에 접근한다(gitops-bridge-irsa.tf의
 # 크로스 계정 assume 권한과 대칭).
 #
-# [cluster_name — 실제 EKS 이름과 라우팅 별칭을 분리해서 쓴다]
-# each.key("dev"/"prod")는 devops-manifest ApplicationSet이 매칭하는 라우팅 별칭이고,
-# each.value.cluster_name(레지스트리 payload)은 실제 EKS 클러스터 이름이다. 이 둘을
-# 섞으면 안 된다 — config.awsAuthConfig.clusterName처럼 AWS IAM Authenticator가 실제로
-# 인증에 쓰는 값은 반드시 실제 클러스터 이름이어야 하고, cluster.cluster_name처럼
-# ApplicationSet이 `{{name}}`으로 셀렉터·destination에 쓰는 값은 반드시 별칭이어야 한다
-# (locals.tf의 environment_spoke_alias 주석 참조 — 이미 devops-manifest의 workload
-# ApplicationSet들이 이 별칭으로 라우팅되고 있어 바꾸면 실제 배포가 깨진다).
+# [cluster_name — 이제 식별자 하나로 통일, 라우팅은 environment 라벨이 전담]
+# each.key(=each.value.cluster_name, 실제 EKS 클러스터 이름)가 cluster.cluster_name(ArgoCD
+# 등록 이름, `{{name}}`)과 config.awsAuthConfig.clusterName(IAM Authenticator 인증 값)
+# 양쪽에 동일하게 쓰인다 — 더 이상 "라우팅 별칭"과 "실제 이름"을 분리하지 않는다(locals.tf의
+# gitops_bridge_spokes 주석 참조). devops-manifest의 workload/addon ApplicationSet은
+# cluster_name 값이 아니라 `environment`(아래 cluster.environment, develop/production)
+# 라벨로 dev/prod를 구분한다 — cluster_name은 이제 순수하게 "이 클러스터가 무엇인가"만
+# 답하고, "어느 tier로 배포할지"는 별도 라벨이 답한다(식별자와 그룹핑 키 분리).
 ################################################################################
 
 module "gitops_bridge_spoke" {
@@ -47,14 +47,13 @@ module "gitops_bridge_spoke" {
   install = false
 
   cluster = {
-    cluster_name = each.key # "dev"/"prod" — ApplicationSet의 {{name}}으로 노출되는 라우팅 별칭
+    cluster_name = each.key # 실제 EKS 클러스터 이름 — ApplicationSet의 {{name}}으로 그대로 노출됨
     environment  = each.value.environment
     # [WHY] devops-manifest의 addon selector가 이 라벨이 있는 spoke만 addon 배포 대상으로
     # 포함한다.
-    addons = merge(
-      { "eks-practice.io/gitops-bridge-role" = "spoke" },
-      each.value.addon_managed ? { "eks-practice.io/addon-managed" = "true" } : {}
-    )
+    addons = {
+      "eks-practice.io/gitops-bridge-role" = "spoke"
+    }
     server = each.value.cluster_endpoint
     config = jsonencode({
       awsAuthConfig = {
@@ -69,7 +68,9 @@ module "gitops_bridge_spoke" {
     # `{{metadata.annotations.<key>}}`로 이 addon들의 IAM Role ARN을 Helm values에 주입한다.
     # gitops_metadata는 spoke가 자기 module.eks_addons의 공식 output(gitops_bridge_addon_metadata,
     # aws-ia/eks-blueprints-addons 벤더 output을 그대로 통과)을 레지스트리에 실어 보낸 값이다
-    # — 계정 ID·네이밍 패턴을 몰라도 항상 정확하다.
+    # — 계정 ID·네이밍 패턴을 몰라도 항상 정확하다. 이 레지스트리에 payload를 publish할 수
+    # 있는 spoke는 이미 module.eks_addons(2.0.0)로 이관을 마친 상태라 gitops_metadata가
+    # 항상 존재한다 — 별도 게이트 없이 그대로 병합한다.
     metadata = merge(
       {
         aws_cluster_name = each.value.cluster_name
@@ -77,16 +78,14 @@ module "gitops_bridge_spoke" {
         aws_account_id   = each.value.aws_account_id
         vpc_id           = each.value.vpc_id
       },
-      each.value.addon_managed ? merge(
-        try(each.value.gitops_metadata, {}),
-        # [벤더 output에 없는 project 고유 필드]
-        # karpenter_discovery_tag/consolidate_after/nodepool_*_enabled는 aws-ia/eks-blueprints-addons의
-        # gitops_metadata에 없다 — 이 프로젝트가 독자로 도입한 필드라 vendor가 알 수 없다.
-        # devops-manifest의 karpenter-resources-spoke가 이 값들을 required로 요구하므로
-        # (charts/eks-addons/karpenter-resources/templates/ec2nodeclass.yaml) 빠지면 dev의
-        # NodePool 배포 자체가 깨진다 — spoke가 이미 알고 있는 값이라 레지스트리에 함께 싣는다.
-        try(each.value.karpenter_nodepool_metadata, {})
-      ) : {}
+      try(each.value.gitops_metadata, {}),
+      # [벤더 output에 없는 project 고유 필드]
+      # karpenter_discovery_tag/consolidate_after/nodepool_*_enabled는 aws-ia/eks-blueprints-addons의
+      # gitops_metadata에 없다 — 이 프로젝트가 독자로 도입한 필드라 vendor가 알 수 없다.
+      # devops-manifest의 karpenter-resources-spoke가 이 값들을 required로 요구하므로
+      # (charts/eks-addons/karpenter-resources/templates/ec2nodeclass.yaml) 빠지면 dev의
+      # NodePool 배포 자체가 깨진다 — spoke가 이미 알고 있는 값이라 레지스트리에 함께 싣는다.
+      try(each.value.karpenter_nodepool_metadata, {})
     )
   }
 

@@ -112,9 +112,11 @@ locals {
   # Hub(monitoring/environments/.../eks-addons/gitops-bridge-spokes.tf)가 이 구조를 그대로
   # discovery해서 소비한다 — 필드를 추가/제거하면 Hub 쪽도 함께 맞춰야 한다.
   # cluster_name은 "prod" 같은 논리적 별칭이 아니라 실제 EKS 클러스터 이름 그대로 담는다
-  # (대상 식별 가능해야 한다는 원칙, docs/terraform-principles.md 참조) — ArgoCD
-  # ApplicationSet 라우팅에 쓰는 "dev"/"prod" 별칭은 Hub가 environment 필드로부터 별도로
-  # 유도한다(monitoring locals.tf의 environment_spoke_alias).
+  # (대상 식별 가능해야 한다는 원칙, docs/terraform-principles.md 참조) — Hub는 이 값을
+  # cluster.cluster_name(ArgoCD 등록 이름, `{{name}}`)에 그대로 쓴다. ArgoCD ApplicationSet의
+  # dev/prod tier 라우팅은 cluster_name이 아니라 이 payload의 environment 필드가 그대로
+  # cluster Secret의 `environment` 라벨로 실리는 것으로 처리한다 — 별도 별칭 매핑 없음
+  # (monitoring locals.tf의 gitops_bridge_spokes 주석 참조).
   gitops_bridge_registry_payload = {
     schema_version   = 1
     cluster_name     = local.cluster_name
@@ -125,7 +127,6 @@ locals {
     cluster_endpoint = data.aws_eks_cluster.this.endpoint
     cluster_ca_data  = data.aws_eks_cluster.this.certificate_authority[0].data
     spoke_role_arn   = aws_iam_role.gitops_bridge_spoke.arn
-    addon_managed    = true
     # aws-ia/eks-blueprints-addons 벤더 output을 그대로 통과시킨 값(modules/eks-addons/2.0.0/
     # outputs.tf) — LBC/ExternalDNS/ExternalSecrets/Karpenter IAM Role ARN 등을 Hub가 이름
     # 패턴으로 추측하지 않고 그대로 전달한다.

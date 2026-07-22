@@ -94,8 +94,9 @@ resource "kubernetes_service_account_v1" "notifications_eso_argo_rollouts" {
 
   # [주의] argo-rollouts 네임스페이스는 이 root(Terraform)도 module.eks_addons도 만들지 않는다.
   # Argo Rollouts는 Terraform이 전혀 관여하지 않는 addon(IAM도 없음)이라, 네임스페이스는
-  # 오직 ArgoCD Application(devops-manifest, argo-rollouts-monitoring-self)의 sync가
-  # 만든다 — 그런데 그 Application의 syncOptions에는 CreateNamespace=true가 없어, 클러스터를
+  # 오직 ArgoCD Application(devops-manifest, argo-rollouts-{Hub의 cluster_name} — 별칭 계층
+  # 제거 이후 argo-rollouts-eks-practice-mon)의 sync가 만든다 — 그런데 그 Application의
+  # syncOptions에는 CreateNamespace=true가 없어, 클러스터를
   # 처음부터 재생성하면(env-teardown → env-provision) 이 SA도, ArgoCD의 argo-rollouts
   # sync도 namespace 부재로 실패할 수 있다 — devops-manifest ApplicationSet 템플릿에
   # CreateNamespace=true 추가가 필요할 수 있음(이 저장소 밖의 변경이라 여기서 직접 고치지 않음).
