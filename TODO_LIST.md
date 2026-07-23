@@ -612,13 +612,11 @@
   `9a5cc4d`로 반영 확인) — Terraform(`gitops_bridge_hub.apps.addons`)이 유일한 source
 
 **6-6. GitOps 저장소 구조화 및 애플리케이션 배포**
-> devops-manifest의 workload(catalog/gateway/order) ApplicationSet은 이미 `clusters`
-> generator 기반으로 코드 전환됐지만, 그 진입점(`root-app-workload.yaml`)이 Hub에
-> 부트스트랩된 적이 없어 아직 라이브 검증 전이다 — 이 Phase에서 부트스트랩과 실배포를 확인한다.
+> `root-app-workload.yaml` Hub 부트스트랩 및 dev/prd 실배포 라이브 검증 완료(2026-07-23).
 
-- [ ] `eks-practice-devops-manifest` repo에 ApplicationSet 작성(애드온 values + MSA 배포 매니페스트)
-- [ ] App-of-Apps로 dev/prd 애드온 전체를 6-1~6-4 패턴대로 원격 배포
-- [ ] MSA 애플리케이션(`eks-practice-application-with-claude`) ArgoCD Application 등록, dev 배포 확인
+- [x] `eks-practice-devops-manifest` repo에 ApplicationSet 작성(catalog/gateway/order, dev+prd 각각 독립 ApplicationSet)
+- [x] `root-app-workload` Hub(monitoring) 부트스트랩 — `clusters` generator가 dev/prd를 자동 감지해 Application 6개 생성 확인
+- [x] MSA 애플리케이션(catalog/gateway/order) dev+prd 배포 확인 — Ingress→ALB(LBC)→Route53(ExternalDNS)까지 end-to-end 실접속 검증(dev: `api-develop.pyhtest.com`, prd: `api.pyhtest.com`)
 - [ ] Hub 장애 시 spoke 워크로드 정상 동작 검증(SPOF 아님 확인)
 - [ ] GitHub Actions CI/CD: 이미지 빌드 → ECR push → ArgoCD Image Updater/Argo Rollouts 배포 루프
   - [ ] OIDC 기반 ECR 접근(IAM User 장기 키 제거)

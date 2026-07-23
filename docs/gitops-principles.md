@@ -1,8 +1,8 @@
 # GitOps 원칙 정책
 
 이 문서는 이 프로젝트가 GitOps Bridge 패턴(Phase 5~6)을 도입하면서 준수해야 할 원칙을
-정책으로 명문화한다. "무엇을 왜 하는가"에 대한 서사·경위는 `temp/gitops-bridge-overview.md`에
-이미 정리되어 있으므로 이 문서는 그 내용을 반복하지 않고, **앞으로의 변경이 지켜야 할 기준**만
+정책으로 명문화한다. 도입 경위의 핵심 결론은 memory `project_gitops_bridge_metadata_gap.md`에
+보존되어 있으므로 이 문서는 그 내용을 반복하지 않고, **앞으로의 변경이 지켜야 할 기준**만
 간결하게 규정한다.
 
 ---
@@ -64,8 +64,9 @@
 
 | 갭 | 위반 원칙 | 현재 상태 | 추적 |
 |----|-----------|-----------|------|
-| Hub 자신(monitoring)의 cluster Secret이 SPOF | 자동으로 Pull됨 | 이 Secret 또는 `argocd.argoproj.io/secret-type: cluster` 라벨이 사라지면 `clusters` generator가 매칭 대상을 못 찾아 addon 전체가 **에러 없이** 배포 대상에서 사라진다 | `temp/gitops-bridge-overview.md` 9절 |
+| Hub 자신(monitoring)의 cluster Secret이 SPOF | 자동으로 Pull됨 | 이 Secret 또는 `argocd.argoproj.io/secret-type: cluster` 라벨이 사라지면 `clusters` generator가 매칭 대상을 못 찾아 addon 전체가 **에러 없이** 배포 대상에서 사라진다 | 없음(신규 기록) |
 | Hub(monitoring) 자체의 관리 평면 가용성이 간헐적 | 자동으로 Pull됨 / 지속적으로 조정됨 | monitoring은 비용 절감을 위해 `/env-teardown`으로 상시 내려간다(이 프로젝트의 정상 운영 패턴) — Hub가 없는 동안은 spoke(dev/prod)에 대한 reconciliation 자체가 멈춘다. 다만 spoke에 이미 배포된 addon·워크로드는 각자의 K8s 컨트롤러로 계속 동작하므로(데이터 평면 무중단) 이 갭은 관리 평면에 한정된다 — aws-architect 리뷰 지적, 2026-07-21 | 없음(신규 기록) |
+| `root-app-workload`가 클러스터 재생성마다 수동 `kubectl apply` 필요 | 자동으로 Pull됨 | `root-app-addons`와 달리 Terraform이 부트스트랩하지 않는다 — 3절의 부트스트랩 예외 판단 기준(ArgoCD가 아직 sync 불가능한 상태인가)으로는 해당되지 않는다(적용 시점에 ArgoCD는 이미 `root-app-addons`로 정상 동작 중이라 얼마든지 선언적으로 관리 가능하다). 실서비스 워크로드 배포를 클러스터 생성만으로 자동 트리거하고 싶지 않다는 의도적 결정(사용자 확인, 2026-07-21/22) — 기술적 제약이 아니라 정책적 선택이다 | 없음(신규 기록) |
 
 `syncPolicy.automated` 도입 여부(자동화 시 예기치 않은 배포 리스크 vs 수동 부담의
 트레이드오프)는 `devops-manifest` 저장소 쪽 판단 사항이며, 이 저장소가 강제하지 않는다 —
@@ -91,6 +92,6 @@
 ## 관련 문서
 
 - `docs/addon-strategy.md` — GitOps 관리 경계(부트스트랩 순환 의존성) 판단 기준 원본
-- `temp/gitops-bridge-overview.md` — GitOps Bridge 도입 전체 경위·설계 논리 (세션 정리 대상,
-  핵심 결론은 memory `project_gitops_bridge_metadata_gap.md`에도 보존됨)
+- memory `project_gitops_bridge_metadata_gap.md` — GitOps Bridge 도입 경위·설계 논리의
+  핵심 결론
 - `TODO_LIST.md` Phase 5~6 — 타임라인·체크리스트

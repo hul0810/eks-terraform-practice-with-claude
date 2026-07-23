@@ -1,6 +1,16 @@
 #!/bin/bash
-# PreToolUse 훅: project/environments/production/ 에서 terraform apply 강제 차단
+# PreToolUse 훅: project/environments/production/ 에서 terraform apply 감시
 # stdin: {"tool_name": "Bash", "cwd": "...", "tool_input": {"command": "..."}, ...}
+
+# ============================================================================
+# [모드 스위치] 이 한 줄만 바꿔서 즉시 전환한다 (주석 처리/해제 또는 true<->false).
+#   HARD_BLOCK=true  → production apply를 exit 2로 완전 차단 (기본값, CLAUDE.md "Production
+#                       배포 정책" 참조 — 실수로 인한 운영 환경 변경 방지)
+#   HARD_BLOCK=false → apply를 막지 않고 경고문만 띄운 뒤 통과시킨다 (임시 실습 완화 모드)
+# 검증이 끝나면 반드시 true로 되돌린다 — false로 남겨두면 이 훅이 사실상 무력화된 채
+# 방치될 위험이 있다.
+# ============================================================================
+HARD_BLOCK=true
 
 input_json=$(cat)
 
@@ -35,6 +45,22 @@ if echo "$normalized_command" | grep -q "environments/production" || echo "$norm
     cat >&2 <<'EOF'
 [WARNING] production apply 임시 허용됨 (ALLOW_PRODUCTION_TEARDOWN_APPLY=1 마커 감지)
 teardown 실습 목적 외 사용 금지. 이 마커 없이 실행하면 다시 차단됩니다.
+EOF
+    exit 0
+  fi
+
+  if [[ "$HARD_BLOCK" == "false" ]]; then
+    cat >&2 <<'EOF'
+╔═══════════════════════════════════════════════════════════╗
+║  [WARNING] production terraform apply 허용됨 (임시 완화 모드) ║
+╚═══════════════════════════════════════════════════════════╝
+
+production은 원래 매우 엄격하게 관리하기로 한 환경입니다. 지금은
+.claude/hooks/block-production-apply.sh의 HARD_BLOCK 스위치가 일시적으로
+false로 풀려 있어 apply가 차단 없이 그대로 진행됩니다.
+
+검증 목적 외 변경은 신중히 진행하고, 끝나면 HARD_BLOCK을 true로 되돌리세요.
+
 EOF
     exit 0
   fi

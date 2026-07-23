@@ -53,29 +53,35 @@ allowed-tools:
 
 `y`가 아니면 중단한다.
 
-> **production eks-addons 선행조건 가드(2026-07-22 갱신 — SSM 레지스트리 self-service 방식으로 전환)**:
-> production의 `eks-addons` root는 이미 코드상 `modules/eks-addons/2.0.0`(GitOps Bridge)을
-> 가리킨다 — 즉 Terraform은 addon Helm을 아예 설치하지 않고 IAM만 만든다. 이 상태로 Step 3을
-> 그대로 진행하면 **addon Helm이 전혀 설치되지 않는 클러스터**(LBC/Karpenter/ExternalDNS/
-> ExternalSecrets 파드가 없는 상태)가 될 수 있다 — ArgoCD가 이 addon들을 가져가려면 먼저
-> production이 monitoring(Hub)에 spoke로 등록되어 있어야 한다.
+> **develop/production 선행조건 — monitoring(Hub)이 먼저 provision되어 있어야 한다
+> (2026-07-23 도입)**: develop/production의 `eks-addons`가 Step 3에서 SSM에 자기
+> registry payload를 publish하려면(`gitops-bridge-registry.tf`), monitoring의
+> `eks-addons`가 만든 `<monitoring-cluster-name>-gitops-bridge-registry-writer-<이 환경의
+> account_id>` IAM Role을 assume해야 한다. monitoring이 아직 없거나(최초 provision) 최근에
+> teardown된 상태면 이 Role이 없어 publish가 provider 단계에서부터 막힌다. 여러 환경을 한
+> 요청으로 provision하면(예: "monitoring이랑 develop 둘 다 켜줘") **항상 monitoring을 먼저
+> 끝내고 develop/production을 그 다음에 처리한다.** `develop`/`production` 단독 호출이어도
+> Step 3 진입 전 아래로 선행조건을 확인한다:
 >
-> **구 방식(더 이상 없음)**: monitoring의 `gitops-bridge-spokes.tf`에 있던
-> `gitops_bridge_spokes.prod.enabled` 플래그를 손으로 뒤집는 방식은 2026-07-22 self-service
-> 레지스트리 도입으로 사라졌다 — 이 필드 자체가 코드에 없다.
+> ```bash
+> aws iam get-role --profile terraform-monitoring \
+>   --role-name "<monitoring cluster_name>-gitops-bridge-registry-writer-<이 환경의 account_id>" 2>&1
+> ```
 >
-> **현재 방식**: production 자신이 `project/environments/production/.../eks-addons/`에
-> `develop/.../eks-addons/gitops-bridge-registry.tf`·해당 `locals.tf`의
-> `gitops_bridge_registry_payload`·`providers.tf`의 `aws.gitops_bridge_registry` provider를
-> 그대로 본떠 자기 파일을 만들고 apply해서 SSM에 자기 등록 정보를 publish해야 한다. 그 후
-> monitoring(Hub) 쪽 `eks-addons`를 **한 번 더 apply**해야 discovery가 production을 인식하고
-> cluster Secret을 만든다(발행 시점과 Hub가 아는 시점이 다르다 —
-> `temp/gitops-bridge-registry-summary.md` 참고). Step 3 진행 전 production의 registry 파일이
-> 있는지, monitoring이 이미 discovery했는지(`kubectl get secret <cluster_name> -n argocd`
-> 등)를 확인하고, 없다면 사용자에게 먼저 이 등록 작업이 필요하다고 안내한 뒤 진행 여부를
-> 다시 확인한다. registry에 publish되는 순간 spoke로 등록되고, addon 7개가 곧바로 배포
-> 대상이 된다(`addon_managed` 같은 단계적 게이트는 없음 — 2026-07-22, 실제로 쓰이지 않던
-> 죽은 필드라 제거함).
+> (`<monitoring cluster_name>`은 `monitoring/environments/ap-northeast-2/shared/eks/locals.tf`의
+> `cluster_name`, 이 환경의 `account_id`는 이 root `providers.tf`의 `profile`로 `aws sts
+> get-caller-identity`.) `NoSuchEntity`면 monitoring이 아직 이 환경을 신뢰 계정으로
+> 등록하지 않은 것이니, 진행 전 monitoring을 먼저 `/env-provision monitoring`하라고
+> 안내하고 중단한다.
+>
+> **eks-addons가 GitOps Bridge(2.0.0)인 spoke 환경은 registry publish + Hub 재apply
+> 없이는 addon Helm이 전혀 설치되지 않는다**: Terraform은 IAM만 만들고 Helm release는
+> ArgoCD가 만들기 때문에, 이 단계를 빠뜨리면 LBC/Karpenter/ExternalDNS/ExternalSecrets
+> 파드가 하나도 없는 클러스터로 끝난다. 이 작업 자체는 Step 3의 정식 절차로 승격되어
+> 있다 — 아래 3-B-1.5 참조. `production 자신의 eks-addons에 gitops-bridge-registry.tf가
+> 없으면` develop의 동일 파일(`gitops-bridge-registry.tf`/`locals.tf`의
+> `gitops_bridge_registry_payload`/`providers.tf`의 `aws.gitops_bridge_registry`)을
+> 그대로 본떠 먼저 만들어야 한다.
 
 > **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
 > `environments/production` 경로의 모든 `terraform apply`를 무조건 차단한다 (CLAUDE.md
@@ -279,6 +285,41 @@ cd {root}/eks-addons && terraform apply -auto-approve -target=module.eks_addons
 Karpenter의 SQS 인터럽션 큐·EventBridge Rule, `argocd-github-app-repo-creds` Secret(SSM에서
 직접 읽어 Terraform이 만듦 — ESO 비의존)까지 전부 준비된다. ArgoCD는 이 시점부터 자기
 저장소(devops-manifest)를 정상적으로 sync할 수 있다.
+
+**3-B-1.5. registry publish + Hub 재apply — spoke(develop/production) 환경은 필수
+(2026-07-23 도입 — 이전까지 절차에 빠져있던 단계, 실제로 매번 수동 처리했었다)**
+
+이 root(`{root}/eks-addons`)에 `gitops-bridge-registry.tf`가 있는 환경(현재 develop/
+production — monitoring은 Hub 자신이라 해당 없음)은 3-B-1만으로 끝나지 않는다.
+`module.eks_addons` 바깥의 `aws_ssm_parameter.gitops_bridge_registry`가 아직 apply되지
+않아 SSM에 이 클러스터의 registry payload가 없고, Hub(monitoring)도 아직 이 클러스터를
+spoke로 discovery하지 못한 상태다 — addon Application 자체가 생성되지 않는다.
+
+```bash
+cd {root}/eks-addons && terraform apply -auto-approve
+```
+
+이 전체 apply로 SSM에 registry payload가 publish된다(`gitops-bridge-registry.tf`). 이어서
+**반드시 Hub(monitoring) 쪽 eks-addons를 한 번 더 apply**해야 한다 — publish 시점과
+Hub가 discovery하는 시점이 다르기 때문이다(Hub의 `data.aws_ssm_parameter`/`for_each`가
+plan 시점에 SSM을 다시 읽어야 새 spoke를 인식한다):
+
+```bash
+cd monitoring/environments/ap-northeast-2/shared/eks-addons && terraform apply -auto-approve
+```
+
+plan에 `module.gitops_bridge_spoke["<cluster_name>"].kubernetes_secret_v1.cluster[0]`가
+`will be created`로 나오면 정상이다(적용 후 `kubectl get secret <cluster_name> -n argocd
+--context <monitoring-cluster-context>`로 확인 가능). 이 Secret이 생성되는 순간부터
+3-B-2의 자동 등록이 실제로 시작된다 — 이 Secret 없이는 어떤 `-spoke` ApplicationSet도
+이 클러스터용 Application을 만들지 않는다.
+
+> **WHY (2026-07-23, dev/production provision 중 실제로 매번 수동 처리)**: 이 스킬은
+> 원래 이 단계 없이 3-B-1 → 3-B-2로 바로 넘어가는 것처럼 쓰여 있었다. 실제로 develop과
+> production을 provision할 때 둘 다 이 단계를 빠뜨리면 addon Application이 전혀
+> 생성되지 않아(Hub가 그 spoke의 존재 자체를 모름) 매번 그때그때 판단해 수동으로
+> 끼워넣었다 — 정식 Step으로 없으면 다음에 이 스킬만 보고 따라가는 세션이 똑같이
+> 빠뜨릴 위험이 있어 절차로 승격한다.
 
 **3-B-2. addon 등록 확인 — 완전 자동화, 수동 개입 불필요 (2026-07-22 재확인)**
 

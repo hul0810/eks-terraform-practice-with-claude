@@ -80,6 +80,24 @@ allowed-tools:
 > 먼저 끝내고 monitoring을 마지막에 처리한다** — spoke가 아직 살아있는 동안 monitoring을
 > 먼저 지우면 이 문제가 반드시 재현된다.
 
+> **`monitoring` 단독 호출 시에도 항상 아래 체크를 Step 6 진입 전에 수행한다 (2026-07-23
+> 갱신 — 실제 고아 SSM 파라미터 재현)**: 위 순서 규칙은 "한 요청에 여러 환경"일 때만이
+> 아니라, `/env-teardown monitoring`을 단독으로 호출해도 develop/production이 과거
+> 세션에서 이미 spoke로 등록된 채 남아있을 수 있어 동일하게 적용된다(2026-07-23 develop
+> 재provision 중 `ParameterAlreadyExists`로 실제 재현 — 원인은 이전 세션이 이 순서를
+> 지키지 않고 monitoring을 먼저 지운 것). `monitoring`이 대상이면 Step 6 전에 항상:
+>
+> ```bash
+> MSYS_NO_PATHCONV=1 aws ssm get-parameters-by-path --path "/eks-practice/gitops-bridge/spokes" \
+>   --recursive --profile terraform-monitoring --query "Parameters[].Name" --output text
+> ```
+>
+> (Git Bash에서 `/`로 시작하는 인자는 Windows 경로로 오변환되니 `MSYS_NO_PATHCONV=1` 필수.)
+> 결과가 비어있지 않으면 Step 6을 진행하지 않고 중단한다 — 경로에서 계정 ID/클러스터
+> 이름을 읽어 "먼저 `/env-teardown <해당 spoke 환경>`을 실행하라"고 안내한다. 사용자가
+> "그래도 진행"을 명시적으로 요청하면(예: 그 spoke가 이미 별도 경로로 완전히 삭제된 게
+> 확실한 경우) 진행하되, SSM에 고아 파라미터가 남을 수 있음을 미리 알린다.
+
 > **참고**: `production`은 `.claude/hooks/block-production-apply.sh`(PreToolUse 훅)가
 > `environments/production` 경로의 `terraform apply`를 기본적으로 차단한다
 > (`terraform destroy`는 정규식 대상이 아니므로 차단되지 않는다). 즉 Step 6·8의
