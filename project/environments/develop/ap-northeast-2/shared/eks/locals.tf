@@ -37,17 +37,13 @@ locals {
     # production: false로 변경 후 VPN/Bastion 경유
     endpoint_public_access = true
 
-    # 로컬 kubectl 접근을 허용할 IP 목록. 공인 IP가 변경되면 갱신 후 terraform apply.
-    # 두 번째 IP는 monitoring의 ArgoCD Hub가 이 클러스터의 EKS API에 접근하기 위한
-    # monitoring NAT Gateway 공인 IP다(monitoring vpc/outputs.tf의 nat_public_ips 참고) —
-    # 이 클러스터의 endpoint_private_access가 꺼져있어 지금은 public 경로로만 접근 가능하다.
-    #
-    # [알려진 리스크] NAT Gateway는 EIP를 고정하지 않으므로 monitoring teardown→재provision
-    # 마다 이 IP가 바뀐다. 갱신을 깜빡하면 Hub→spoke 크로스 계정 인증이 에러 없이 타임아웃만
-    # 나며 실패한다. 근본 해결책은 CIDR을 계속 갱신하는 게 아니라
-    # `endpoint_private_access = true`로 켜고 기존 VPC Peering(pcx-07fa1a0e9eb100e47) 경로로
-    # 완전히 옮기는 것 — TODO_LIST.md "Phase 6 이후 백로그" 참조.
-    public_access_cidrs = [var.operator_ip_cidr, "52.78.200.247/32"]
+    # 로컬 kubectl 접근을 허용할 IP 목록. 두 번째 IP는 monitoring의 ArgoCD Hub가 이 클러스터의
+    # EKS API에 접근하기 위한 monitoring NAT Gateway 공인 IP다 — VPC Peering(mon-to-dev,
+    # docs/network-design.md)이 이미 연결돼 있어도 EKS 관리형 private hosted zone은 피어링된
+    # VPC에 자동 연결되지 않아 Hub→spoke 트래픽은 여전히 public 엔드포인트를 탄다.
+    # NAT Gateway는 EIP를 고정하지 않아 monitoring teardown→재provision마다 IP가 바뀌므로
+    # data.aws_nat_gateway.monitoring(data.tf)으로 매 plan/apply 시점에 동적으로 읽는다.
+    public_access_cidrs = [var.operator_ip_cidr, "${data.aws_nat_gateway.monitoring.public_ip}/32"]
 
     # 컨트롤 플레인 로그: CloudWatch Logs 비용 발생 (로그 타입당 약 $0.50/GB~)
     # 기본 비활성화. 디버깅 필요 시 원하는 타입 추가 후 terraform apply.

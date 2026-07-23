@@ -29,3 +29,16 @@ data "terraform_remote_state" "vpc" {
     profile = "terraform-workload"
   }
 }
+
+# monitoring(Hub)이 이 spoke의 EKS API에 접근할 때 나가는 출발 IP(locals.tf 참고).
+# tag:Name은 monitoring cluster_name과 동일한 값으로, project 네이밍 컨벤션상 결정론적이다
+# (monitoring/environments/ap-northeast-2/shared/vpc/locals.tf의 additional_tags.Name).
+data "aws_nat_gateway" "monitoring" {
+  provider = aws.monitoring
+  state    = "available"
+
+  filter {
+    name   = "tag:Name"
+    values = ["eks-practice-mon"]
+  }
+}

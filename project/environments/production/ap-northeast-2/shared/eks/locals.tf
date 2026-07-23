@@ -50,7 +50,15 @@ locals {
     endpoint_public_access = true
 
     # 공인 IP 변경 시 갱신 후 terraform apply 필요. 0.0.0.0/0 등 광범위한 CIDR로 변경 금지.
-    endpoint_public_access_cidrs = [var.operator_ip_cidr]
+    #
+    # 두 번째 IP는 monitoring의 ArgoCD Hub가 이 클러스터의 EKS API에 접근하기 위한 monitoring
+    # NAT Gateway 공인 IP다 — VPC Peering(mon-to-prd, docs/network-design.md)이 이미 연결돼
+    # 있어도 EKS 관리형 private hosted zone은 피어링된 VPC에 자동 연결되지 않아 Hub→spoke
+    # 트래픽은 여전히 public 엔드포인트를 탄다(gitops-bridge-registry.tf로 spoke 등록됨 —
+    # eks-addons/gitops-bridge-registry.tf 참고). NAT Gateway는 EIP를 고정하지 않아 monitoring
+    # teardown→재provision마다 IP가 바뀌므로 data.aws_nat_gateway.monitoring(data.tf)으로 매
+    # plan/apply 시점에 동적으로 읽는다.
+    endpoint_public_access_cidrs = [var.operator_ip_cidr, "${data.aws_nat_gateway.monitoring.public_ip}/32"]
 
     # 컨트롤 플레인 로그: CloudWatch Logs 비용 발생 (로그 타입당 약 $0.50/GB~)
     # 기본 비활성화. 디버깅 필요 시 원하는 타입 추가 후 terraform apply.

@@ -23,7 +23,7 @@ locals {
     private_subnets    = ["10.10.32.0/19", "10.10.64.0/19", "10.10.96.0/19", "10.10.128.0/19"]
     database_subnets   = ["10.10.4.0/24", "10.10.5.0/24", "10.10.6.0/24", "10.10.7.0/24"]
     tgw_subnets        = ["10.10.8.0/28", "10.10.8.16/28", "10.10.8.32/28", "10.10.8.48/28"]
-    enable_nat_gateway = false
+    enable_nat_gateway = true
     single_nat_gateway = true # 비용 우선: 단일 NAT GW 구성 (HA 정책 예외 — CLAUDE.md 비용 예외 항목 참조)
     # Karpenter가 프라이빗 서브넷을 자동 탐색할 수 있도록 클러스터 이름 태그를 부여한다.
     # eks/locals.tf의 cluster_name과 동일한 패턴으로 생성하여 하드코딩 불일치를 방지한다.

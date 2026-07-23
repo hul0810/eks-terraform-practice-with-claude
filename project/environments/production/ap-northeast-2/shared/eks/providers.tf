@@ -28,3 +28,12 @@ provider "aws" {
     tags = local.common_tags
   }
 }
+
+# monitoring NAT Gateway 공인 IP를 읽기 전용으로 조회하기 위한 provider(data.tf 참고).
+# 읽기 전용이라 admin SSO 프로필을 그대로 swap한다 — eks-addons/providers.tf의
+# aws.gitops_bridge_registry(쓰기, scoped assume_role)와 다른 이유는 그 주석 참고.
+provider "aws" {
+  alias   = "monitoring"
+  region  = "ap-northeast-2"
+  profile = "terraform-monitoring"
+}
