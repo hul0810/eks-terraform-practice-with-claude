@@ -216,7 +216,15 @@ locals {
       aws_region                    = "ap-northeast-2"
       aws_account_id                = data.aws_caller_identity.current.account_id
       vpc_id                        = local.vpc_id
-      argocd_image_updater_role_arn = aws_iam_role.argocd_image_updater.arn
+      # aws_iam_role.argocd_image_updater.arn(Computed 속성) 대신 같은 리소스의 .name을
+      # 쓴다 — .arn은 최초(state 비어있는) apply 시점에 미지값이라, 이 값을 담는
+      # gitops_bridge_hub_cluster 전체가 미지로 취급되어 kubernetes_secret_v1.cluster의
+      # count 계산이 실패한다(vendor 모듈 gitops-bridge-dev/gitops-bridge/helm,
+      # `count = var.create && (var.cluster != null)`). .name은 config에 정적으로
+      # 지정한 값이라 plan 시점에 이미 알려져 있어 이 문제를 회피하면서도, 이름 패턴을
+      # argocd-image-updater.tf 한 곳에서만 정의하도록 유지한다(리터럴 문자열로 다시
+      # 조합하면 그 파일의 name이 바뀔 때 여기서도 따로 갱신해야 하는 이중 관리가 된다).
+      argocd_image_updater_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${aws_iam_role.argocd_image_updater.name}"
       # workload 계정은 "클러스터마다 달라지는 값"은 아니지만(2계정 토폴로지 자체가
       # 프로젝트 상수), 동적으로 받아올 수 있는 값은 하드코딩하지 않는다는 원칙에 따라
       # 이 값도 devops-manifest에 직접 박아넣지 않고 동일한 브릿지로 전달한다 — workload
