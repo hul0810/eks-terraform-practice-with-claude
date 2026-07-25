@@ -195,6 +195,13 @@ module "eks" {
       # vpc-cni는 Pod Identity로 IAM 권한을 획득하므로 노드 IAM Role에 AmazonEKS_CNI_Policy 불필요.
       # AWS 권장 사항: Pod Identity/IRSA 사용 시 노드 Role에서 CNI 정책 제거.
       iam_role_attach_cni_policy = false
+
+      # Cluster Autoscaler --node-group-auto-discovery 대상 지정은 별도 설정이 필요 없다.
+      # AWS EKS가 관리형 노드 그룹의 ASG에 k8s.io/cluster-autoscaler/enabled,
+      # k8s.io/cluster-autoscaler/{cluster_name}=owned, kubernetes.io/cluster/{cluster_name}=owned
+      # 태그를 생성 시점에 자동으로 부여한다(실측 확인 — eks-managed-node-group 서브모듈에는
+      # 애초에 autoscaling_group_tags 같은 옵션도 없다. self-managed-node-group 서브모듈에만
+      # 있는 옵션이라 이 프로젝트(관리형 노드 그룹)에는 해당하지 않는다).
     }
   }
 

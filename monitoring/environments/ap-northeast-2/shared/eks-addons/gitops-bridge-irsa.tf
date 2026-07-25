@@ -14,13 +14,18 @@
 # false}}`(awsAuthConfig 없음)로 자동 대체한다(local.gitops_bridge_hub_cluster — locals.tf 참고).
 ################################################################################
 
-# STS AssumeRoleWithWebIdentity(OIDC federation) 자체는 별도 IAM 권한(inline policy)이
-# 필요 없다 — 이 Role은 "누가 이 신원인지"만 증명하는 용도이고, 실제로 쓰는 권한은 아래
+# Pod Identity(pods.eks.amazonaws.com) 자체는 별도 IAM 권한(inline policy)이 필요 없다 —
+# 이 Role은 "누가 이 신원인지"만 증명하는 용도이고, 실제로 쓰는 권한은 아래
 # aws_iam_role_policy.argocd_hub_assume_spokes(dev/prd spoke Role을 assume하는 권한)뿐이다.
 # dev/prd 같은 크로스 계정 spoke를 awsAuthConfig.roleARN으로 등록하려면 이 Role이 그
 # 계정의 spoke Role을 sts:AssumeRole로 불러올 권한이 별도로 필요하다 — 신뢰 정책(대상
 # Role 쪽에서 "누가 나를 assume할 수 있는가")과 권한 정책(이 Role 쪽에서 "내가 무엇을
 # assume할 수 있는가")은 양방향으로 각각 허용돼야 하는 별개의 정책이다.
+#
+# blueprints 미사용 → Pod Identity 우선 원칙(docs/addon-strategy.md "IAM 전략") 적용.
+# Pod Identity association의 Role은 클러스터와 같은 계정에만 있으면 되므로(이 Role은
+# monitoring 자신의 Role) 이 조건을 만족한다 — 크로스 계정 assume은 이 Role의 identity
+# 부여 방식과 무관하게 아래 argocd_hub_assume_spokes(inline policy)가 별도로 처리한다.
 resource "aws_iam_role" "argocd_application_controller" {
   name = "${local.cluster_name}-argocd-hub-irsa"
 
@@ -28,19 +33,22 @@ resource "aws_iam_role" "argocd_application_controller" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "ArgocdApplicationControllerIrsa"
+        Sid       = "ArgocdApplicationControllerPodIdentity"
         Effect    = "Allow"
-        Principal = { Federated = local.oidc_provider_arn }
-        Action    = "sts:AssumeRoleWithWebIdentity"
-        Condition = {
-          StringEquals = {
-            "${local.oidc_provider_url}:aud" = "sts.amazonaws.com"
-            "${local.oidc_provider_url}:sub" = "system:serviceaccount:argocd:argocd-application-controller"
-          }
-        }
+        Principal = { Service = "pods.eks.amazonaws.com" }
+        Action    = ["sts:AssumeRole", "sts:TagSession"]
       }
     ]
   })
+
+  tags = local.common_tags
+}
+
+resource "aws_eks_pod_identity_association" "argocd_application_controller" {
+  cluster_name    = local.cluster_name
+  namespace       = "argocd"
+  service_account = "argocd-application-controller"
+  role_arn        = aws_iam_role.argocd_application_controller.arn
 
   tags = local.common_tags
 }
@@ -78,10 +86,10 @@ resource "aws_iam_role_policy" "argocd_hub_assume_spokes" {
 }
 
 # argocd-application-controller ServiceAccount는 이미 argo-cd Helm chart(module.eks_addons)가
-# 만들어둔다 — 여기서 kubernetes_service_account_v1을 새로 선언하지 않는다. annotation
-# (eks.amazonaws.com/role-arn)을 이 SA에 주입하는 작업은 modules/eks-addons/1.0.0의
-# argocd_controller_irsa_role_arn 변수(main.tf의 module.eks_addons 호출부 참조)를 통해
-# Helm values(controller.serviceAccount.annotations) 경로로 이루어진다.
+# 만들어둔다 — 여기서 kubernetes_service_account_v1을 새로 선언하지 않는다. Pod Identity는
+# IRSA와 달리 SA에 annotation을 주입할 필요가 없다 — 위 aws_eks_pod_identity_association이
+# (cluster, namespace, service_account) 조합만으로 EKS Pod Identity Agent(DaemonSet)를 통해
+# credential을 연결하므로, Helm values 쪽 변경이 전혀 필요 없다.
 #
 # monitoring 자기 자신을 가리키는 cluster Secret 데이터(local.gitops_bridge_hub_cluster)는
 # locals.tf에 있다 — root-level local은 리소스 파일에 분산하지 않고 locals.tf에 집중한다

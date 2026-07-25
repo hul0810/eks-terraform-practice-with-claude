@@ -39,12 +39,18 @@ locals {
     karpenter_chart_version        = "1.12.1"
     argocd_chart_version           = "9.5.21"
     external_secrets_chart_version = "2.7.0"
+    # 클러스터 K8s 마이너 버전(1.34)과 앱 버전을 맞춘다 — CA 공식 권고: 클러스터 마이너
+    # 버전과 다른 마이너의 CA를 쓰면 호환성 보장 대상에서 벗어난다(1.35.x는 K8s 1.35 대상).
+    cluster_autoscaler_chart_version = "9.53.0" # app version 1.34.2
 
     enable_aws_load_balancer_controller = true
     enable_external_dns                 = true
     # pyhtest.com zone ARN — workload 계정 hosted zone, Terraform 외부 관리 리소스 (하드코딩)
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
     enable_karpenter               = true
+    # 시스템 노드 그룹(modules/eks) 전용 오토스케일러 — Karpenter의 general NodePool과는
+    # 별개 대상(Karpenter는 ASG를 안 씀). temp/system-node-scaling-and-repair-design.md 참조.
+    enable_cluster_autoscaler = true
     # dev는 monitoring ArgoCD Hub의 spoke로 등록되어 개별 ArgoCD 설치를 쓰지 않는다
     # (gitops-bridge-spoke-irsa.tf가 그 spoke 등록을 담당). 아래 argocd_* 값들은
     # enable_argocd=false인 동안 전부 미사용이지만, argocd_chart_version 등 일부는 모듈

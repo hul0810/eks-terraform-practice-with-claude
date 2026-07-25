@@ -18,18 +18,6 @@ locals {
       }]
     }
     dex = { enabled = false }
-    # GitOps Bridge 패턴: ArgoCD가 클러스터를 awsAuthConfig로 명시 등록하려면
-    # application-controller ServiceAccount에 IRSA Role이 붙어 있어야 AWS IAM 인증이 가능하다.
-    # 이 값이 Helm chart의 controller.serviceAccount.annotations 경로에 정확히 대응한다는 것을
-    # `helm show values argo/argo-cd --version 9.5.21`로 직접 확인했다. null이면(기본값) 이
-    # 블록 자체를 생략해 기존 in-cluster 암묵 등록만 쓰는 환경(dev/prd)에는 영향이 없다.
-    controller = var.argocd_controller_irsa_role_arn != null ? {
-      serviceAccount = {
-        annotations = {
-          "eks.amazonaws.com/role-arn" = var.argocd_controller_irsa_role_arn
-        }
-      }
-    } : {}
     # secret.create=false가 필요한 이유: argo-cd Helm chart의 notifications.secret.create 기본값이
     # true라 이대로 두면 Helm이 argocd-notifications-secret을 직접 생성하려 시도하고, 우리 쪽
     # ExternalSecret(argocd-notifications.tf)도 같은 이름의 Secret을 만들려 해서 소유권이 충돌한다.

@@ -56,6 +56,9 @@ locals {
     external_dns_chart_version     = "1.14.5"
     karpenter_chart_version        = "1.12.1"
     external_secrets_chart_version = "2.7.0"
+    # 클러스터 K8s 마이너 버전(1.34)과 앱 버전을 맞춘다 — CA 공식 권고: 클러스터 마이너
+    # 버전과 다른 마이너의 CA를 쓰면 호환성 보장 대상에서 벗어난다(1.35.x는 K8s 1.35 대상).
+    cluster_autoscaler_chart_version = "9.53.0" # app version 1.34.2
     # argocd_image_updater_chart_version — GitOps Bridge(Phase 6-4)로 이관 완료. 버전은 이제
     # eks-practice-devops-manifest 저장소의 Application이 관리한다.
 
@@ -72,6 +75,10 @@ locals {
     external_dns_route53_zone_arns = ["arn:aws:route53:::hostedzone/Z0947901KS8HHREY0RFC"]
     enable_karpenter               = true
     enable_external_secrets        = true
+    # 시스템 노드 그룹(modules/eks) 전용 오토스케일러 — Karpenter의 general NodePool과는
+    # 별개 대상(Karpenter는 ASG를 안 씀). temp/system-node-scaling-and-repair-design.md
+    # 참조.
+    enable_cluster_autoscaler = true
     # ArgoCD GitHub App 인증 정보(SSM SecureString)만 읽도록 스코프 — 계정 내 모든 파라미터
     # 와일드카드(blueprints 기본값) 대신 이 prefix로 제한한다.
     # argocd-image-updater/* : Image Updater가 이미지 태그 갱신을 커밋할 때 쓰는 GitHub App
@@ -212,10 +219,10 @@ locals {
     environment = "monitoring"
     # server/config는 의도적으로 생략 — 위 참고(vendor 기본값이 in-cluster로 자동 대체).
     metadata = {
-      aws_cluster_name              = local.cluster_name
-      aws_region                    = "ap-northeast-2"
-      aws_account_id                = data.aws_caller_identity.current.account_id
-      vpc_id                        = local.vpc_id
+      aws_cluster_name = local.cluster_name
+      aws_region       = "ap-northeast-2"
+      aws_account_id   = data.aws_caller_identity.current.account_id
+      vpc_id           = local.vpc_id
       # aws_iam_role.argocd_image_updater.arn(Computed 속성) 대신 같은 리소스의 .name을
       # 쓴다 — .arn은 최초(state 비어있는) apply 시점에 미지값이라, 이 값을 담는
       # gitops_bridge_hub_cluster 전체가 미지로 취급되어 kubernetes_secret_v1.cluster의

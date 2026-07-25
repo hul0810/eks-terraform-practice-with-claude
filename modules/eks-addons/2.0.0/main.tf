@@ -197,6 +197,15 @@ module "eks_blueprints_addons_gitops" {
   karpenter_node = var.karpenter_node_config
   karpenter_sqs  = var.karpenter_sqs_config
 
+  # ── Cluster Autoscaler ─────────────────────────────────────────────────────────
+  # Helm release는 ArgoCD Application(devops-manifest charts/eks-addons/cluster-autoscaler)이
+  # 관리한다. 여기서는 IRSA(IAM Role/Policy)만 유지한다 — 시스템 노드 그룹(modules/eks) 전용
+  # 오토스케일러로, Karpenter가 관리하는 NodePool과는 별도 대상이다(Karpenter는 ASG를 쓰지
+  # 않으므로 이 IAM Role의 sts:AssumeRole 권한과 겹칠 일이 없다). chart_version/role_name 등은
+  # root가 결정한다(var.cluster_autoscaler_config).
+  enable_cluster_autoscaler = var.enable_cluster_autoscaler
+  cluster_autoscaler        = var.cluster_autoscaler_config
+
   tags = var.additional_tags
 }
 

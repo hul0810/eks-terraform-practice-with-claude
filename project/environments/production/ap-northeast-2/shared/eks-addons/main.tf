@@ -64,6 +64,15 @@ module "eks_addons" {
     queue_name = "${local.cluster_name}-karpenter"
   }
 
+  enable_cluster_autoscaler = local.eks_addons.enable_cluster_autoscaler
+  cluster_autoscaler_config = {
+    chart_version          = local.eks_addons.cluster_autoscaler_chart_version
+    role_name              = "${local.cluster_name}-cluster-autoscaler-irsa"
+    role_name_use_prefix   = false
+    policy_name            = "${local.cluster_name}-cluster-autoscaler-irsa"
+    policy_name_use_prefix = false
+  }
+
   enable_external_secrets             = local.eks_addons.enable_external_secrets
   external_secrets_ssm_parameter_arns = local.eks_addons.external_secrets_ssm_parameter_arns
   external_secrets_kms_key_arns       = local.eks_addons.external_secrets_kms_key_arns

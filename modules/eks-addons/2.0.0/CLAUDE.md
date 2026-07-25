@@ -1,5 +1,10 @@
 # modules/eks-addons 설계 원칙
 
+> **`1.0.0`은 DEPRECATED다** — GitOps Bridge 패턴으로 구성되어 있지 않은 구버전이며
+> 신규 기능·버그 수정 대상이 아니다. monitoring/develop/production 3개 환경 전부 이
+> `2.0.0`을 쓴다(production은 코드만, apply는 보류 중). 새 addon은 전부 이 버전에만
+> 추가한다.
+
 ## 1.0.0 → 2.0.0 변경 사항 (2026-07-17)
 
 `1.0.0`을 그대로 두고 새 버전으로 분리한 이유는 이 변경이 **파괴적**이기 때문이다 —
@@ -57,7 +62,7 @@ Terraform은 같은 디렉토리의 `.tf` 파일을 전부 하나로 합쳐서 �
 
 ---
 
-## 이 모듈이 관리하는 애드온 (10종)
+## 이 모듈이 관리하는 애드온 (11종)
 
 | 애드온 | 설치 방법 | IAM 방식 | 활성화 조건 |
 |--------|-----------|---------|------------|
@@ -66,7 +71,8 @@ Terraform은 같은 디렉토리의 `.tf` 파일을 전부 하나로 합쳐서 �
 | metrics-server | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-2)** | 없음 | 기본 활성 |
 | external-secrets | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-4)**, IAM만 Terraform 유지 | IRSA(스코프는 호출자가 명시, 미지정 시 blueprints 기본 와일드카드) | `enable_external_secrets=true` |
 | karpenter | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-4)**, IAM(컨트롤러 IRSA+노드 IAM Role+SQS+EventBridge)만 Terraform 유지 | IRSA | 기본 활성 |
-| argocd | Helm (`gitops-bridge-dev/gitops-bridge/helm`) — **GitOps Bridge 대상에서 영구 제외**(부트스트랩 예외, 아래 참조) | 없음(단, Hub 자신의 IRSA는 root `gitops-bridge-irsa.tf`에 손코드로 별도 존재) | 기본 활성 |
+| cluster-autoscaler | Helm은 ArgoCD(GitOps Bridge, devops-manifest), IAM만 Terraform 유지 | IRSA(blueprints의 `cluster_autoscaler` 서브모듈이 `oidc_providers`만 받음 — Pod Identity 미지원, docs/addon-strategy.md IAM 전략 참조) | `enable_cluster_autoscaler=true`. Karpenter가 관리하는 general NodePool이 아니라 `modules/eks`의 시스템 노드 그룹(정적 Managed Node Group) 전용 — 두 오토스케일러는 서로 다른 노드 집합을 관리해 충돌하지 않는다(Karpenter는 ASG를 쓰지 않음) |
+| argocd | Helm (`gitops-bridge-dev/gitops-bridge/helm`) — **GitOps Bridge 대상에서 영구 제외**(부트스트랩 예외, 아래 참조) | 없음(단, Hub 자신의 Pod Identity는 root `gitops-bridge-irsa.tf`에 손코드로 별도 존재) | 기본 활성 |
 | argo-rollouts | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-4)** | 없음 | 이 모듈은 전혀 관여하지 않음 — devops-manifest의 ArgoCD Application이 처음부터 전담(아래 1.0.0→2.0.0 표 참고) |
 | opentelemetry-operator | Helm (직접) | 없음 | `enable_otel_spoke_collector=true` |
 | otel-spoke-node (DaemonSet) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
@@ -128,7 +134,7 @@ argo-rollouts 등)은 이제 이 모듈이 아예 관여하지 않는다:
 | 인스턴스 | 벤더 모듈 | `create_kubernetes_resources` | 담는 addon | 존재 이유 |
 |---|---|---|---|---|
 | `gitops_bridge_bootstrap` | `gitops-bridge-dev/gitops-bridge/helm` | 해당 없음(이 벤더는 이 변수 자체가 없음) | ArgoCD 설치 + GitOps Bridge Hub 부트스트랩(cluster Secret) | **부트스트랩 예외** — ArgoCD가 자기 자신을 GitOps로 관리할 수 없으므로 영원히 Terraform이 Helm까지 관리. `var.enable_argocd`가 `create`/`install`을 동시에 게이팅한다. `cluster`/`apps`는 `var.gitops_bridge_hub`(nullable)로 받는다 — null이면 이 클러스터는 spoke로 동작(develop/production이 나중에 이 모듈로 이관되면 이 값을 안 넘기면 된다). 원래 `aws-ia/eks-blueprints-addons`의 별도 인스턴스(`eks_blueprints_addons_argocd`)였으나 그 wrapper가 ArgoCD 자리에서 IRSA 인자를 forward하지 않아 교체했다(`temp/gitops-bridge-terraform-notes.md` 7~11번) |
-| `eks_blueprints_addons_gitops` | `aws-ia/eks-blueprints-addons` | 항상 `false`로 고정(하드코딩 — 변수가 아니라 코드를 고쳐야만 바뀐다) | IAM이 필요한 addon(LBC/ExternalDNS/ExternalSecrets/Karpenter) | IAM은 유지하되 Helm release는 절대 만들지 않음 — ArgoCD가 그 자리를 대신함. `false`를 변수가 아니라 하드코딩으로 고정한 건 "ArgoCD가 이미 인수한 addon의 Helm을 실수로 다시 Terraform이 만들지 못하게" 하는 영구적 안전장치를 걸어두기 위해서다 |
+| `eks_blueprints_addons_gitops` | `aws-ia/eks-blueprints-addons` | 항상 `false`로 고정(하드코딩 — 변수가 아니라 코드를 고쳐야만 바뀐다) | IAM이 필요한 addon(LBC/ExternalDNS/ExternalSecrets/Karpenter/Cluster Autoscaler) | IAM은 유지하되 Helm release는 절대 만들지 않음 — ArgoCD가 그 자리를 대신함. `false`를 변수가 아니라 하드코딩으로 고정한 건 "ArgoCD가 이미 인수한 addon의 Helm을 실수로 다시 Terraform이 만들지 못하게" 하는 영구적 안전장치를 걸어두기 위해서다 |
 
 IAM이 필요 없는 새 addon(metrics-server, argo-rollouts 등)이 생기면 이 모듈은 아예
 관여하지 않는다 — devops-manifest의 ArgoCD Application이 처음부터 전담한다. IAM이 필요한
@@ -201,8 +207,11 @@ ValidatingWebhookConfiguration에 3개 항목이 있어 `/webhooks/0/...`만으�
 ## 고정 버전 (2026-06-17 기준)
 
 > **GitOps Bridge로 이관된 addon(argocd 제외 전부 — metrics-server,
-> aws-load-balancer-controller, external-dns, external-secrets, karpenter, argo-rollouts)의
-> chart 버전은 이 표가 아니라 `eks-practice-devops-manifest` 저장소가 실제 기준이다.**
+> aws-load-balancer-controller, external-dns, external-secrets, karpenter, argo-rollouts,
+> cluster-autoscaler)의 chart 버전은 이 표가 아니라 `eks-practice-devops-manifest` 저장소가
+> 실제 기준이다.** cluster-autoscaler는 devops-manifest 쪽 작업이 아직 안 끝나
+> 실제로는 IAM만 존재하는 과도기 상태다(`temp/devops-manifest-request-cluster-autoscaler.md`
+> 참조) — 아래 표의 `9.53.0`은 이 IAM을 만들 때 Terraform이 함께 결정한 목표 버전이다.
 > monitoring/develop 둘 다 이관 완료(production은 코드만) — 아래 표의 값은 Terraform이
 > 마지막으로 설치했던 시점의 기록일 뿐이며, 이관 이후 devops-manifest에서 버전을 올려도
 > 이 표는 자동으로 갱신되지 않는다. `1.0.0`을 실제로 참조하는 환경이 남아있다면(신규
@@ -215,6 +224,7 @@ ValidatingWebhookConfiguration에 3개 항목이 있어 `/webhooks/0/...`만으�
 | external-dns (Helm chart) | `1.14.5` |
 | metrics-server (Helm chart) | `3.12.2` |
 | karpenter (Helm chart) | `1.12.1` |
+| cluster-autoscaler (Helm chart) | `9.53.0`(app version 1.34.2 — 클러스터 K8s 마이너와 일치시킴) |
 | argo-cd (Helm chart) | `9.5.21` |
 | argo-rollouts (Helm chart) | `2.38.1` |
 | external-secrets (Helm chart) | `2.7.0` |
@@ -224,8 +234,12 @@ ValidatingWebhookConfiguration에 3개 항목이 있어 `/webhooks/0/...`만으�
 
 ## IAM 전략: IRSA (blueprints가 강제하는 방식)
 
-이 모듈의 IAM 연동은 IRSA를 사용한다. **blueprints 모듈이 IRSA만 지원하기 때문이다.**
-Pod Identity 전환 계획이 공식적으로 없어 blueprints를 사용하는 한 IRSA를 벗어날 수 없다.
+**프로젝트 전체 기본 원칙은 Pod Identity 우선이다**(`docs/addon-strategy.md` "IAM 전략"
+참조) — IRSA는 Pod Identity를 지원하지 않는 도구를 쓸 수밖에 없을 때만 예외다. 이 모듈
+(`eks_blueprints_addons_gitops` 인스턴스)이 관리하는 addon(LBC/ExternalDNS/Karpenter/
+ExternalSecrets/Cluster Autoscaler)은 전부 그 예외에 해당한다 — **blueprints 모듈이
+IRSA만 지원하기 때문이다.** Pod Identity 전환 계획이 공식적으로 없어 blueprints를 사용하는
+한 IRSA를 벗어날 수 없다.
 (github.com/aws-ia/terraform-aws-eks-blueprints-addons/issues/289 — Closed as Not Planned)
 
 blueprints 외부에서 관리하는 `aws_eks_addon`(EBS CSI)은 Pod Identity를 사용한다.
@@ -300,6 +314,8 @@ IAM이 필요 없어 2026-07-20에 이 모듈이 아예 손을 뗐다(위 "GitOp
 | LBC IRSA Role | `lbc_config.role_name` | `{cluster_name}-lbc-irsa` | `eks-practice-mon-lbc-irsa` |
 | ExternalDNS IRSA Role | `external_dns_config.role_name` | `{cluster_name}-external-dns-irsa` | `eks-practice-mon-external-dns-irsa` |
 | External Secrets IRSA Role | `external_secrets_config.role_name` | `{cluster_name}-external-secrets-irsa` | `eks-practice-mon-external-secrets-irsa` |
+| Cluster Autoscaler IRSA Role | `cluster_autoscaler_config.role_name` | `{cluster_name}-cluster-autoscaler-irsa` | `eks-practice-mon-cluster-autoscaler-irsa` |
+| Cluster Autoscaler IAM Policy | `cluster_autoscaler_config.policy_name` | `{cluster_name}-cluster-autoscaler-irsa` | 동일 |
 
 **접미사 의미**(monitoring이 선택한 패턴 기준):
 - `-irsa`: Pod ServiceAccount가 assume하는 IAM Role (IRSA 목적)
@@ -419,11 +435,14 @@ ArgoCD 차트 자신은 AWS API를 호출하지 않으므로 IRSA/Pod Identity�
 `enable_argocd`만 `module "gitops_bridge_bootstrap"`(`gitops-bridge-dev/gitops-bridge/helm`,
 2026-07-19 이전엔 blueprints)에 전달하고 이 모듈 자체는 별도 IAM Role을 선언하지 않는다.
 
-이것과는 별개로 **GitOps Bridge Hub(monitoring)가 자기 자신을 spoke로 명시 등록하기 위한
-IRSA**(argocd-application-controller SA가 awsAuthConfig로 K8s API를 인증하는 용도)는
-root의 `gitops-bridge-irsa.tf`에 손코드로 존재한다 — "ArgoCD 차트가 AWS API를 안 부른다"와
-"Hub가 자기 자신을 K8s API에 IAM으로 인증한다"는 서로 다른 문제라, 후자는 blueprints든
-gitops-bridge-dev 모듈이든 대신 해주지 않는다(`temp/gitops-bridge-terraform-notes.md` 8번 참고).
+이것과는 별개로 **GitOps Bridge Hub(monitoring)가 dev/prd spoke 클러스터를 크로스 계정으로
+원격 관리하기 위한 Pod Identity**(argocd-application-controller SA가 spoke Role을
+`sts:AssumeRole`하는 용도)는 root의 `gitops-bridge-irsa.tf`에 손코드로 존재한다 —
+"ArgoCD 차트가 AWS API를 안 부른다"와 "Hub가 spoke 계정에 IAM으로 인증한다"는 서로 다른
+문제라, 후자는 blueprints든 gitops-bridge-dev 모듈이든 대신 해주지 않는다
+(`temp/gitops-bridge-terraform-notes.md` 8번 참고). blueprints를 쓰지 않는 손코드 Role이라
+`docs/addon-strategy.md` "IAM 전략" 기본 원칙(Pod Identity 우선)에 따라 IRSA가 아닌 Pod
+Identity를 사용한다.
 
 ### dex(SSO) 비활성화 / notifications 조건부 활성화
 

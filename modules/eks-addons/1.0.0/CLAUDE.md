@@ -1,12 +1,19 @@
-# modules/eks-addons 설계 원칙
+# modules/eks-addons 설계 원칙 — 이 버전(1.0.0)은 DEPRECATED
 
-> **버전 분리 안내(2026-07-17 도입, 2026-07-21 갱신).** `2.0.0`은 addon Helm 관리 주체를
+> **DEPRECATED — 신규 기능·버그 수정 대상 아님. 모든 작업은 `modules/eks-addons/2.0.0`에서
+> 진행한다.** `1.0.0`은 addon Helm release를 Terraform이 직접 관리하는 구조로, **GitOps
+> Bridge 패턴으로 구성되어 있지 않다**(`2.0.0`부터 ArgoCD가 Helm을 관리하고 Terraform은
+> IAM만 유지하는 구조로 전환됨) — 이후 도입되는 Cluster Autoscaler 등 신규 addon도 `2.0.0`
+> 에만 추가하고 이 버전에는 백포트하지 않는다. 이 파일은 과거 구조를 이해하기 위한 참고
+> 용도로만 남긴다.
+>
+> **버전 분리 경위(2026-07-17 도입, 2026-07-21 갱신)**: `2.0.0`은 addon Helm 관리 주체를
 > Terraform에서 ArgoCD(GitOps Bridge)로 넘기는 **파괴적 변경**이라 `1.0.0`을 그대로 두고
 > 새 버전 디렉토리로 분리했다(`docs/terraform-principles.md` "커스텀 모듈 — 디렉토리 기반
 > 버전 관리" 참조). **2026-07-21 기준 이 `1.0.0`을 실제로 참조하는 환경은 없다** —
 > monitoring(Phase 6-4)에 이어 develop(Phase 6-5)도 `2.0.0`으로 전환 완료했고,
 > production도 코드는 `2.0.0`으로 이미 전환됐다(apply는 CLAUDE.md "Production 배포
-> 정책"에 따라 보류 중). `1.0.0`은 과거 버전으로만 남아있다 — 두 버전의 정확한 차이는
+> 정책"에 따라 보류 중). 두 버전의 정확한 차이는
 > `modules/eks-addons/2.0.0/CLAUDE.md` 상단의 "1.0.0 → 2.0.0 변경 사항" 참조.
 
 ## 이 모듈이 관리하는 애드온 (10종)

@@ -146,6 +146,18 @@ variable "karpenter_sqs_config" {
   type        = any
 }
 
+variable "enable_cluster_autoscaler" {
+  description = "Cluster Autoscaler 설치 여부. false이면 blueprints가 관련 IAM Role과 Helm release를 생성하지 않는다. blueprints의 cluster_autoscaler 서브모듈은 Pod Identity를 지원하지 않아(oidc_providers만 받음) IRSA로 고정된다 — docs/addon-strategy.md IAM 전략 참조"
+  type        = bool
+  default     = false # 신규 애드온이므로 opt-in
+}
+
+# 기본값 없음 — lbc_config와 동일한 이유(위 참고).
+variable "cluster_autoscaler_config" {
+  description = "aws-ia/eks-blueprints-addons의 cluster_autoscaler 객체를 그대로 전달한다(chart_version/role_name 등). 이 모듈은 내용을 모른다 — 전부 호출자가 결정"
+  type        = any
+}
+
 variable "enable_argocd" {
   description = "ArgoCD 설치 여부 (GitOps 전환 Phase 5)"
   type        = bool
@@ -325,13 +337,6 @@ variable "external_dns_assume_role_arn" {
     condition     = var.external_dns_assume_role_arn == "" || can(regex("^arn:aws:iam::[0-9]{12}:role/", var.external_dns_assume_role_arn))
     error_message = "external_dns_assume_role_arn은 빈 문자열이거나 유효한 IAM Role ARN(arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME) 형식이어야 합니다."
   }
-}
-
-variable "argocd_controller_irsa_role_arn" {
-  description = "ArgoCD application-controller ServiceAccount(argocd-application-controller)에 붙일 IRSA Role ARN. GitOps Bridge 패턴에서 ArgoCD가 다른/자기 자신 클러스터를 awsAuthConfig로 명시 등록할 때 필요. null이면 이 값을 주입하지 않는다(기존 in-cluster 암묵 등록만 쓰는 환경은 불필요)."
-  type        = string
-  nullable    = true
-  default     = null
 }
 
 # [WHY — Hub 여부를 코드 위치가 아니라 변수의 null 여부로 가르는 이유]

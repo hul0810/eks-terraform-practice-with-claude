@@ -302,6 +302,25 @@ Karpenter는 Pod이므로 이 노드가 Spot 중단되면 클러스터 자가 �
 시스템 노드는 사양이 작으므로(t3.medium) 일반 워크로드와 리소스를 공유하면 시스템 컴포넌트가 OOM으로 종료될 위험이 있다.
 시스템 애드온은 `tolerations: [{key: "CriticalAddonsOnly", value: "true", effect: "NoSchedule"}]`을 명시하여 허용한다.
 
+### Cluster Autoscaler 자동탐색 — 별도 설정 불필요 (실측 확인)
+
+이 시스템 노드 그룹은 Terraform이 `min/max/desired_size`를 고정값으로 관리하는 정적
+그룹이라, 애드온이 늘어나 pod 슬롯이 부족해져도 자동으로 확장되지 않는다. Karpenter는
+이 노드 그룹을 전혀 관리하지 않으므로(자기 NodePool 대상만 관리) 대신 Cluster Autoscaler로
+이 노드 그룹만 별도 스코프해 동적 확장을 붙인다 — Karpenter는 ASG를 쓰지 않아 두
+오토스케일러가 노드 집합을 두고 충돌할 여지가 구조적으로 없다.
+
+CA의 `--node-group-auto-discovery`가 찾는 태그(`k8s.io/cluster-autoscaler/enabled`,
+`k8s.io/cluster-autoscaler/{cluster_name}=owned`)와 확장/축소 쓰기 권한 조건에 쓰이는
+`kubernetes.io/cluster/{cluster_name}=owned` 태그 전부, **AWS EKS가 관리형 노드 그룹의
+ASG 생성 시점에 자동으로 부여한다** — Terraform에서 별도로 설정할 게 없다(2026-07-25
+`aws autoscaling describe-tags`로 실측 확인: 노드 그룹 생성 직후, 이 프로젝트가 태그 관련
+코드를 추가하기 전부터 이미 4개 태그가 모두 존재했다). `terraform-aws-modules/eks/aws`의
+`eks-managed-node-group` 서브모듈에는 애초에 `autoscaling_group_tags` 같은 옵션 자체가
+없다 — `self-managed-node-group` 서브모듈에만 있는 옵션이라 관리형 노드 그룹을 쓰는 이
+프로젝트에는 해당하지 않는다(IAM 정책 쪽 상세는 `modules/eks-addons/2.0.0/CLAUDE.md`
+cluster-autoscaler 절 참조).
+
 ### 실행 환경 구조: eks/ 한 폴더로 관리
 
 EKS 클러스터, 시스템 노드 그룹, bootstrap addon 7종을

@@ -96,7 +96,8 @@ Bootstrap 애드온 6종은 모두 `module "eks"` 내 `addons` 블록에 선언�
 `aws-ia/eks-blueprints-addons` 모듈(`modules/eks-addons/2.0.0`)로 관리하되, **GitOps
 Bridge 이관 완료 이후로는 이 모듈이 IAM(필요한 addon만)만 유지하고 실제 Helm release
 설치는 ArgoCD(devops-manifest)가 담당한다** — blueprints가 IAM+Helm을 함께 자동 처리하던
-것은 과거(`modules/eks-addons/1.0.0`, 현재 참조하는 환경 없음) 이야기다. 정확한 인스턴스
+것은 과거(`modules/eks-addons/1.0.0`, DEPRECATED — GitOps Bridge 패턴이 아닌 구조,
+현재 참조하는 환경 없음) 이야기다. 정확한 인스턴스
 구성·state 이전 절차는 `modules/eks-addons/2.0.0/CLAUDE.md`가 최신 기준이다.
 
 | 애드온 | Helm 설치 주체 | IAM | 비고 |
@@ -105,7 +106,8 @@ Bridge 이관 완료 이후로는 이 모듈이 IAM(필요한 addon만)만 유�
 | ExternalDNS | ArgoCD(GitOps Bridge) | IRSA(Terraform 유지) | `enable_external_dns = false`로 IAM 자체 비활성화 가능 |
 | Metrics Server | ArgoCD(GitOps Bridge) | 없음 | Terraform은 이 addon에 전혀 관여하지 않음 |
 | Karpenter | ArgoCD(GitOps Bridge, EC2NodeClass/NodePool 포함) | IRSA(컨트롤러+노드 IAM Role+SQS+EventBridge, Terraform 유지) | `enable_karpenter = false`로 IAM 자체 비활성화 가능 |
-| ArgoCD | **Terraform**(`gitops-bridge-dev/gitops-bridge/helm`) — 영구 부트스트랩 예외 | 없음(Hub 자신의 K8s API 인증용 IRSA는 root `gitops-bridge-irsa.tf`에 별도 손코드로 존재) | 자기 자신을 GitOps로 관리할 수 없어 유일하게 계속 Terraform이 Helm까지 관리 |
+| Cluster Autoscaler | ArgoCD(GitOps Bridge) | IRSA(Terraform 유지) | `modules/eks`의 시스템 노드 그룹(정적 Managed Node Group) 전용 — Karpenter의 general NodePool과는 별개 대상. `enable_cluster_autoscaler = false`로 IAM 자체 비활성화 가능 |
+| ArgoCD | **Terraform**(`gitops-bridge-dev/gitops-bridge/helm`) — 영구 부트스트랩 예외 | 없음(Hub 자신의 크로스 계정 spoke 관리용 Pod Identity는 root `gitops-bridge-irsa.tf`에 별도 손코드로 존재) | 자기 자신을 GitOps로 관리할 수 없어 유일하게 계속 Terraform이 Helm까지 관리 |
 | Argo Rollouts | ArgoCD(GitOps Bridge) | 없음 | Terraform은 이 addon에 전혀 관여하지 않음(devops-manifest의 ArgoCD Application이 처음부터 전담) |
 | External Secrets Operator | ArgoCD(GitOps Bridge) | IRSA(Terraform 유지, 스코프는 호출자가 명시) | `enable_external_secrets = false`로 IAM 자체 비활성화 가능. ArgoCD repo-creds는 ESO를 거치지 않고 Terraform이 SSM을 직접 읽어 만든다(아래 "GitOps 관리 경계" 참조) |
 
@@ -180,6 +182,16 @@ ApplicationSet 정의·selector·폴더 구조(`hub/`, `spoke/`)의 최종 소�
 |-----------|----------|------|
 | `aws_eks_addon` (Bootstrap) | **Pod Identity** | blueprints 미사용 → Pod Identity 우선 |
 | Helm (blueprints) | **IRSA** | blueprints 모듈이 IRSA만 지원 (Pod Identity 미지원) |
+| Helm (non-blueprints, 손코드 IAM) | **Pod Identity** | blueprints 미사용 → Pod Identity 우선 (아래 "기본 원칙" 참조) |
+
+**기본 원칙: Pod Identity를 사용할 수 있는 경우 항상 Pod Identity를 우선한다.** AWS가
+IRSA의 후속으로 권장하는 방식이고(OIDC Provider 불필요, `sts:AssumeRoleWithWebIdentity`
+없이 `pods.eks.amazonaws.com` 서비스 principal로 단순화), Role ARN을 Helm values
+annotation 경로로 직접 주입할 필요가 없어 IRSA 대비 배관(plumbing)이 단순하다. **IRSA는
+Pod Identity를 지원하지 않는 도구(blueprints 등)를 쓸 수밖에 없을 때만 예외로 허용한다** —
+"Helm으로 설치한다"는 사실 자체가 IRSA를 정당화하지 않는다. `gitops-bridge-dev/gitops-bridge/helm`로
+설치하는 ArgoCD Hub Controller(root `gitops-bridge-irsa.tf`)가 이 원칙의 실제 예시다 —
+아래 "ArgoCD Hub Controller" 절 참조.
 
 blueprints의 Pod Identity 미지원 근거:
 github.com/aws-ia/terraform-aws-eks-blueprints-addons/issues/289 — Closed as Not Planned
@@ -229,6 +241,24 @@ blueprints가 하지 않는다** — blueprints는 이제 이 IAM Role만 만들
 기록해두면, devops-manifest의 ApplicationSet이 `{{metadata.annotations.xxx}}`로 읽어
 `helm.parameters`에 주입한다(`docs/gitops-principles.md`, `modules/eks-addons/2.0.0/CLAUDE.md`
 참조).
+
+### ArgoCD Hub Controller (root `gitops-bridge-irsa.tf`) — Pod Identity
+
+`argocd-application-controller`가 dev/prd(다른 AWS 계정) spoke Role을 `sts:AssumeRole`하기
+위한 Hub 자신의 identity(`monitoring/.../eks-addons/gitops-bridge-irsa.tf`의
+`aws_iam_role.argocd_application_controller`)는 blueprints가 아니라 손코드로 만든 Role이라
+위 "기본 원칙"에 따라 Pod Identity(`aws_eks_pod_identity_association`)를 사용한다 — `argo-cd`
+Helm chart의 `controller.serviceAccount.annotations` 경로(IRSA annotation)는 쓰지 않는다.
+
+Pod Identity association의 Role은 클러스터와 같은 계정에만 있으면 되므로(이 Role은
+monitoring 자신의 Role) 이 조건을 만족한다. Hub가 spoke 계정 Role을 assume하는 크로스 계정
+체인은 Hub Role의 inline policy(`aws_iam_role_policy.argocd_hub_assume_spokes`)가 별도로
+담당하며, Hub 자신의 identity 부여 방식(IRSA vs Pod Identity)과는 무관하다 — "spoke Role
+ARN을 알아야 assume할 수 있다"는 요구사항은 크로스 계정 IAM의 본질이지 IRSA 특유의 제약이
+아니다. spoke 쪽(`project/environments/{develop,production}/.../eks-addons/gitops-bridge-spoke-irsa.tf`)의
+`aws_eks_access_entry`는 Hub Role이 아니라 spoke 자신이 소유하는 spoke Role의 ARN에 대해서만
+걸려있으므로(원문: `principal_arn = aws_iam_role.gitops_bridge_spoke.arn`), Hub의 identity
+부여 방식 변경은 spoke 쪽 access entry에 전혀 영향을 주지 않는다.
 
 ---
 

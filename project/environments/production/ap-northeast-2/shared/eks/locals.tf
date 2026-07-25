@@ -71,7 +71,7 @@ locals {
       # 비용 우선: 시스템 노드 1개 운영 (HA 정책 예외 — CLAUDE.md 비용 예외 항목 참조)
       # HA 복원 시: min_size = 2, desired_size = 2 로 변경 (시스템 노드 2개 상시 운영)
       min_size     = 1
-      max_size     = 4
+      max_size     = 3
       desired_size = 1
       # ON_DEMAND 유지 — production은 가용성 우선. SPOT은 develop/monitoring에서만 실습
       # 목적으로 선택(SPOT 중단 시 Karpenter 자가 회복 능력 상실 리스크, 루트 CLAUDE.md 참조).

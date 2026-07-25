@@ -71,6 +71,15 @@ module "eks_addons" {
     queue_name = "${local.cluster_name}-karpenter"
   }
 
+  enable_cluster_autoscaler = local.eks_addons.enable_cluster_autoscaler
+  cluster_autoscaler_config = {
+    chart_version          = local.eks_addons.cluster_autoscaler_chart_version
+    role_name              = "${local.cluster_name}-cluster-autoscaler-irsa"
+    role_name_use_prefix   = false
+    policy_name            = "${local.cluster_name}-cluster-autoscaler-irsa"
+    policy_name_use_prefix = false
+  }
+
   enable_external_secrets             = local.eks_addons.enable_external_secrets
   external_secrets_ssm_parameter_arns = local.eks_addons.external_secrets_ssm_parameter_arns
   external_secrets_kms_key_arns       = local.eks_addons.external_secrets_kms_key_arns
@@ -92,10 +101,6 @@ module "eks_addons" {
   argocd_admin_password_mtime        = local.eks_addons.argocd_admin_password_mtime
 
   argocd_notifications_slack_enabled = local.eks_addons.argocd_notifications_slack_enabled
-  # GitOps Bridge Hub: ArgoCD application-controller가 다른 클러스터를 크로스 계정으로
-  # 관리할 때 assume하는 IRSA Role ARN(gitops-bridge-irsa.tf 참조). 다른
-  # local.eks_addons.xxx 참조와 달리 이 값은 리터럴이 아니라 같은 root의 다른 리소스 참조다.
-  argocd_controller_irsa_role_arn = aws_iam_role.argocd_application_controller.arn
 
   # Argo Rollouts는 Terraform이 전혀 관여하지 않는 addon(devops-manifest의 ArgoCD Application이
   # 전담)이라, 이 모듈은 "클러스터에 실제로 있는가"를 알 방법이 없다 — ArgoCD UI의
