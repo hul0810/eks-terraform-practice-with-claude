@@ -37,7 +37,7 @@ resource "aws_iam_role" "gitops_bridge_spoke" {
         Sid    = "ArgocdHubAssumeSpokeRole"
         Effect = "Allow"
         Principal = {
-          AWS = "arn:aws:iam::157325288431:role/eks-practice-mon-argocd-hub-irsa"
+          AWS = "arn:aws:iam::157325288431:role/eks-practice-mon-argocd-hub-pod-id"
         }
         Action = ["sts:AssumeRole", "sts:TagSession"]
       }

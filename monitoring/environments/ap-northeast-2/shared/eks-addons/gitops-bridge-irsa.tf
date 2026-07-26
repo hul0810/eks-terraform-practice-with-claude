@@ -1,9 +1,9 @@
 ################################################################################
-# GitOps Bridge Hub — argocd-application-controller IRSA
+# GitOps Bridge Hub — argocd-application-controller Pod Identity
 #
 # 이 Role은 monitoring 자기 자신을 위한 것이 아니라, Hub가 dev/prd(workload 계정)
 # spoke 클러스터를 원격 관리하기 위한 크로스 계정 identity다 — argocd-application-controller
-# 파드가 이 Role을 IRSA로 assume한 뒤, 그 신원으로 dev/prd 각각의 spoke Role
+# 파드가 이 Role을 Pod Identity로 assume한 뒤, 그 신원으로 dev/prd 각각의 spoke Role
 # (gitops-bridge-spoke-irsa.tf)을 추가로 sts:AssumeRole한다(아래
 # aws_iam_role_policy.argocd_hub_assume_spokes). monitoring 자신에 대한 K8s 인가(RBAC)는
 # 이 파일의 책임이 아니다 — ArgoCD 자신을 대상으로 하는 모든 ApplicationSet이
@@ -27,7 +27,7 @@
 # monitoring 자신의 Role) 이 조건을 만족한다 — 크로스 계정 assume은 이 Role의 identity
 # 부여 방식과 무관하게 아래 argocd_hub_assume_spokes(inline policy)가 별도로 처리한다.
 resource "aws_iam_role" "argocd_application_controller" {
-  name = "${local.cluster_name}-argocd-hub-irsa"
+  name = "${local.cluster_name}-argocd-hub-pod-id"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
