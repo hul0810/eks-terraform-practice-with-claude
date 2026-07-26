@@ -11,6 +11,13 @@ allowed-tools:
   - Bash(git diff*)
 ---
 
+## 공통 전제 — 근거 기반 분석
+
+상세: `docs/terraform-principles.md` → "근거 기반 작업 원칙"
+
+- **단가·비용 delta를 기억으로 추정하지 않는다.** infracost 또는 AWS Billing MCP(`aws-pricing`, `cost-explorer`)로 조회한다. 조회 불가 시 "조회 불가"로 남기고, 추정치를 확정 수치처럼 제시하지 않는다.
+- **실측 데이터·공식 단가·사용량 가정을 구분해 표기한다.** 특히 사용량 가정(트래픽·실행 시간 등)은 근거를 함께 밝힌다.
+
 ## 실행 절차
 
 아래 순서를 반드시 지킨다.

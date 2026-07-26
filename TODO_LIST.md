@@ -90,6 +90,25 @@
   - [x] `providers.tf`, `backend.tf`, `data.tf`, `locals.tf`, `main.tf`, `outputs.tf`
   - [x] EKS 클러스터 생성 완료
 
+> 아래는 모듈 완성 후 추가로 식별된 항목. `modules/eks/1.0.0`은 dev/prd/monitoring 3개가 공유하므로
+> 모듈 변경 1회 + 3개 환경 `eks/locals.tf` 값 주입으로 반영한다. 순서 의존 있음(1 → 2).
+
+- [ ] **IPv4 Prefix Delegation** — 노드당 max-pods 상향 (t3.medium 17 → 최대 110, 추가 비용 $0)
+  - [ ] `vpc_cni_configuration_values` 변수 신설 → `addons["vpc-cni"]` 배선
+        (기존 `coredns_configuration_values`와 동일 패턴, 값은 환경별 `locals.tf`에서 주입)
+  - [ ] apply 후 `.status.allocatable.pods` 상향 확인 (미반영 시 launch template `--max-pods` 별도 설계)
+  - [ ] 서브넷 IPv4 여유 확인 (노드당 `/28` 프리픽스 예약)
+- [ ] **EKS Node Auto Repair** — `Ready=true`인데 고장난 노드(`IPAMDNotRunning` 등) 감지·교체.
+      ASG 헬스체크(EC2 물리 장애)·CA(용량) 어느 쪽으로도 안 덮이는 구간
+  - [ ] `eks-node-monitoring-agent` 애드온 + MNG `node_repair_config` **세트로 도입**
+        (repair 단독은 `Ready` 조건만 잡고, 그건 5분 축출 후 좀비 노드 정리에 그침)
+  - [ ] `max_unhealthy_node_threshold_count` 명시 필수
+        (기본 브레이크는 "노드 5개 초과 && 20% 초과 unhealthy" 조건이라 1~3대 규모에서 미발동)
+  - [ ] production은 HA 복원(`min/desired = 2`)과 세트로 (단일 노드에서는 교체 = 블랙아웃)
+  - [ ] 애드온이 전 노드 DaemonSet 슬롯을 소비하므로 Prefix Delegation 완료 후 착수
+- [ ] 시스템 ASG에 `k8s.io/cluster-autoscaler/node-template/label/role=system` 태그 존재 확인
+      (없으면 `nodeAffinity(role=system)` 파드가 Pending이어도 CA가 scale-out 미시도)
+
 ### 2-3. modules/eks-addons + environments/dev eks-addons 추가
 
 > **아키텍처**: 분리 root module 패턴 (Option C)
@@ -727,3 +746,4 @@
 - [ ] EKS Audit Log 활성화 (prd만) → CloudWatch 집계
 - [ ] (선택) Falco 런타임 위협 탐지 배포
 - [ ] Git 태그: `enterprise/hub-spoke-eks` (2단계 완료)
+
