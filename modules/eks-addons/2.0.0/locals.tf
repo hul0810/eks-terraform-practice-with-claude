@@ -9,6 +9,27 @@ locals {
   # 배포된 아티팩트가 바뀌는 상태가 된다. 업그레이드 시 이 값만 변경한다.
   rollout_extension_version = "v0.4.0"
 
+  # devops-manifest가 관리하는 addon(LBC/ExternalDNS/Karpenter/ExternalSecrets/Cluster
+  # Autoscaler 등)은 role=system nodeAffinity(requiredDuringSchedulingIgnoredDuringExecution)로
+  # 시스템 노드에 강제 고정되어 있다. ArgoCD 자신(이 파일이 만드는 Helm release)만 이 강제가
+  # 없어서, 시스템 노드가 pod 슬롯 부족으로 꽉 찬 순간 Karpenter가 만든 general 노드로 실제로
+  # 새어나간 사례가 있었다(2026-07-26 monitoring provision 중 argocd-server/repo-server가
+  # Karpenter nodeclaim에 스케줄됐다가 그 노드가 Underutilized로 disrupt되며 재배치된 것을
+  # 이벤트 히스토리로 확인) — 다른 addon과 동일한 강제를 ArgoCD 자신에도 적용한다.
+  argocd_system_node_affinity = {
+    nodeAffinity = {
+      requiredDuringSchedulingIgnoredDuringExecution = {
+        nodeSelectorTerms = [{
+          matchExpressions = [{
+            key      = "role"
+            operator = "In"
+            values   = ["system"]
+          }]
+        }]
+      }
+    }
+  }
+
   argocd_values = {
     global = {
       tolerations = [{
@@ -16,6 +37,17 @@ locals {
         operator = "Exists"
         effect   = "NoSchedule"
       }]
+      # global.affinity.nodeAffinity(type/matchExpressions 프리셋 스키마)는 server/repoServer/
+      # applicationSet/notifications-controller/application-controller/dex-server/redis(단일)에는
+      # 전파되지만 redis-ha 서브차트에는 전파되지 않는다(`helm template`으로 직접 렌더링해 확인
+      # — global.tolerations가 redis-ha에 전파 안 되는 것과 동일한 차트 구조) — 아래 "redis-ha"
+      # 블록에서 별도로 명시한다.
+      affinity = {
+        nodeAffinity = {
+          type             = "hard"
+          matchExpressions = local.argocd_system_node_affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions
+        }
+      }
     }
     dex = { enabled = false }
     # secret.create=false가 필요한 이유: argo-cd Helm chart의 notifications.secret.create 기본값이
@@ -36,6 +68,12 @@ locals {
         operator = "Exists"
         effect   = "NoSchedule"
       }]
+      # additionalAffinities(객체)를 사용한다 — 이 서브차트의 최상위 affinity 필드는 YAML을
+      # 문자열로 받는 템플릿(`affinity: |`)이라 Terraform 객체로 직접 표현할 수 없다.
+      additionalAffinities = local.argocd_system_node_affinity
+      haproxy = {
+        additionalAffinities = local.argocd_system_node_affinity
+      }
     }
     server = merge(
       { replicas = var.argocd_ha_enabled ? var.replica_counts.argocd_server : 1 },
