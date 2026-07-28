@@ -78,3 +78,37 @@ kubectl access-matrix for pods --sa <namespace>:<sa-name>   # 특정 리소스�
 
 > `rbac-lookup`(Fairwinds)은 기능은 유사하지만 플랫폼에 따라 미지원일 수 있다 —
 > 설치 전 `kubectl krew search`로 가용 여부를 먼저 확인한다.
+
+---
+
+## IAM 인증 방식 변경이 파드에 반영되지 않을 때
+
+Pod Identity / IRSA 관련 변경 후 파드가 여전히 옛 권한으로 동작하면, **무엇을 바꿨는지에
+따라 재시작 필요 여부가 갈린다.**
+
+| 변경 내용 | 파드 재시작 | 근거 |
+|---|---|---|
+| Pod Identity association의 **내용**(연결된 Role, 세션 정책) 변경 | 불필요 | Pod Identity Agent가 다음 크레덴셜 갱신 때 자동 반영 (AWS 공식 문서) |
+| **인증 방식 자체** 전환 (IRSA ↔ Pod Identity) | **필요** | 파드에 주입되는 환경변수가 통째로 바뀌는데, 이미 떠 있는 파드에는 소급 적용되지 않음 (실측 확인) |
+
+인증 방식 전환은 Terraform이 `helm_release`를 in-place update해도 파드가 자동 재시작되지
+않는다. ServiceAccount annotation은 파드 템플릿이 아니라 별개 오브젝트라 롤아웃을
+유발하지 않기 때문이다. 결과적으로 **IAM 신뢰 정책은 새 방식인데 파드 환경변수는 옛
+방식인 불일치 상태**가 조용히 유지된다.
+
+현재 파드가 어느 방식으로 인증 중인지 확인:
+
+```bash
+# IRSA면 AWS_ROLE_ARN / AWS_WEB_IDENTITY_TOKEN_FILE
+# Pod Identity면 AWS_CONTAINER_CREDENTIALS_FULL_URI / AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
+kubectl exec -n <ns> <pod> -- env | grep AWS_
+
+# association 자체가 걸려 있는지는 AWS 쪽에서 확인
+aws eks list-pod-identity-associations --cluster-name <cluster>
+```
+
+옛 방식 환경변수가 남아 있으면 파드를 강제 재생성한다.
+
+```bash
+kubectl delete pod <pod> -n <ns>
+```
