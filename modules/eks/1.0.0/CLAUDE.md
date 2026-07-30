@@ -99,6 +99,26 @@ aws eks describe-addon-versions --kubernetes-version 1.33 --addon-name <name> \
 
 ---
 
+## gp3 기본 StorageClass 옵션
+
+### 변수: `enable_default_storage_class` (기본값 `false`)
+
+EKS 기본 제공 StorageClass는 gp2(레거시 in-tree provisioner `kubernetes.io/aws-ebs`)이며 default 지정도 없다 — 차트가 `storageClassName`을 생략하면 PVC가 전부 Pending된다. gp3는 gp2보다 저렴하고 성능도 높으며 이 모듈이 addon으로 관리하는 EBS CSI Driver(`ebs.csi.aws.com`)를 사용한다. EBS CSI addon과 동일한 부트스트랩 레이어에 속하므로 `modules/eks-addons`가 아닌 이 모듈이 `kubernetes_storage_class_v1.gp3`(`storage-class.tf`)를 소유한다.
+
+`count = var.enable_default_storage_class ? 1 : 0`으로 토글한다 — `for_each`가 아닌 `count`를 쓰는 이유: on/off 두 상태만 존재하는 단일 리소스라 stable key로 관리할 다중 인스턴스가 없다(`docs/terraform-principles.md`의 `count` 금지 규칙은 인덱스 이동으로 인한 재생성 리스크가 있는 다중 리소스 관리에 적용되는 것이지, 단일 리소스의 on/off 토글에는 해당하지 않는다).
+
+### 이 옵션을 켜는 root의 요구사항
+
+`enable_default_storage_class = true`로 설정하는 root는 **kubernetes provider를 반드시 구성해야 한다**(exec 인증, `aws eks get-token`). `false`(기본값)인 root는 kubernetes provider와 전혀 상호작용하지 않으므로 provider 미구성 상태에서도 안전하다 — dev/prod처럼 클러스터를 아직 생성하지 않은 root가 이 모듈을 호출해도 planning이 깨지지 않는다.
+
+| 환경 | 값 | 비고 |
+|------|-----|------|
+| monitoring | `true` | 기존 root에 직접 선언되어 있던 리소스를 `moved` 블록으로 이전(재생성 없음) |
+| develop | `true` | 신규 kubernetes provider 구성 필요 |
+| production | `true` | 신규 kubernetes provider 구성 필요 |
+
+---
+
 ## KMS 암호화 전략
 
 ### 설계 결정: AWS 관리형 키 사용 (CMK 비활성화)

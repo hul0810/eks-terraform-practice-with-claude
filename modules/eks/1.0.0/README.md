@@ -4,13 +4,18 @@
 
 ## Requirements
 
-No requirements.
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.9 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.46 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.36 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
 | <a name="provider_aws"></a> [aws](#provider\_aws) | 6.47.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.36 |
 
 ## Modules
 
@@ -26,6 +31,7 @@ No requirements.
 | [aws_iam_role.vpc_cni](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy_attachment.ebs_csi](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.vpc_cni](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
+| [kubernetes_storage_class_v1.gp3](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/storage_class_v1) | resource |
 
 ## Inputs
 
@@ -38,6 +44,7 @@ No requirements.
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | EKS 클러스터 이름 (IAM Role, Security Group 등 연관 리소스의 Name에도 사용됨) | `string` | n/a | yes |
 | <a name="input_coredns_configuration_values"></a> [coredns\_configuration\_values](#input\_coredns\_configuration\_values) | CoreDNS EKS 관리형 애드온 configuration\_values JSON 문자열. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용 | `string` | `null` | no |
 | <a name="input_ebs_csi_configuration_values"></a> [ebs\_csi\_configuration\_values](#input\_ebs\_csi\_configuration\_values) | EBS CSI Driver EKS 관리형 애드온 configuration\_values JSON 문자열. dev에서 controller.replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용 | `string` | `null` | no |
+| <a name="input_enable_default_storage_class"></a> [enable\_default\_storage\_class](#input\_enable\_default\_storage\_class) | true면 gp3 기본 StorageClass(ebs.csi.aws.com, is-default-class)를 생성한다. 이 옵션을 켜는 root는 kubernetes provider를 반드시 구성해야 한다(exec 인증). false(기본)면 kubernetes provider 상호작용이 전혀 없다 — provider 미구성 root에서도 안전. | `bool` | `false` | no |
 | <a name="input_enabled_log_types"></a> [enabled\_log\_types](#input\_enabled\_log\_types) | 활성화할 컨트롤 플레인 로그 타입 목록. 빈 리스트이면 비활성화 (CloudWatch Logs 비용 절감). 가능한 값: api, audit, authenticator, controllerManager, scheduler | `list(string)` | `[]` | no |
 | <a name="input_endpoint_public_access"></a> [endpoint\_public\_access](#input\_endpoint\_public\_access) | EKS API 서버 퍼블릭 엔드포인트 활성화 여부. develop=true(로컬 kubectl 접근), production=false(VPN/Bastion 경유) | `bool` | `false` | no |
 | <a name="input_endpoint_public_access_cidrs"></a> [endpoint\_public\_access\_cidrs](#input\_endpoint\_public\_access\_cidrs) | EKS API 서버 퍼블릭 엔드포인트 허용 CIDR 목록. endpoint\_public\_access=true 시 반드시 IP를 제한해야 한다. 기본값 0.0.0.0/0은 인터넷 전체 노출이므로 환경별로 반드시 재정의할 것. | `list(string)` | <pre>[<br/>  "0.0.0.0/0"<br/>]</pre> | no |

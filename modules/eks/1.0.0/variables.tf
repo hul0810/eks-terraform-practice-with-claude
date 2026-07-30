@@ -173,6 +173,12 @@ variable "cert_manager_configuration_values" {
   default     = null
 }
 
+variable "enable_default_storage_class" {
+  description = "true면 gp3 기본 StorageClass(ebs.csi.aws.com, is-default-class)를 생성한다. 이 옵션을 켜는 root는 kubernetes provider를 반드시 구성해야 한다(exec 인증). false(기본)면 kubernetes provider 상호작용이 전혀 없다 — provider 미구성 root에서도 안전."
+  type        = bool
+  default     = false
+}
+
 variable "access_entries" {
   description = "EKS Access Entry 목록. IAM 엔티티(User/Role)에 Kubernetes 권한을 부여한다. principal_arn별로 policy_associations를 중첩 map으로 선언한다. 클러스터가 재생성되어도 terraform apply 한 번으로 접근 권한이 자동 복원된다."
   type = map(object({
