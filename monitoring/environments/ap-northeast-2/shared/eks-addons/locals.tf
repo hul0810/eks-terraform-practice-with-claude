@@ -89,6 +89,11 @@ locals {
     external_secrets_ssm_parameter_arns = [
       "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd/github-app/*",
       "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/argocd-image-updater/*",
+      # grafana/* : Grafana admin 자격증명(admin-user/admin-password, SecureString)을 ESO가
+      # grafana-admin Secret으로 동기화한다. 컴포넌트별 prefix로 최소권한 유지(전역 monitoring/*
+      # 와일드카드 대신). 새 LGTM 컴포넌트가 SSM 경로를 추가하면 여기에 그 prefix도 함께 추가한다 —
+      # 빠뜨리면 ExternalSecret이 AccessDenied로 조용히 실패한다.
+      "arn:aws:ssm:ap-northeast-2:${data.aws_caller_identity.current.account_id}:parameter/eks-practice/monitoring/grafana/*",
     ]
     # SSM SecureString 기본 키(alias/aws/ssm)만 복호화 허용 — 계정 내 모든 KMS 키 와일드카드 대신 최소 권한
     external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]
