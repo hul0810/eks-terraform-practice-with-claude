@@ -73,6 +73,10 @@ locals {
     node_security_group_tags = {
       "karpenter.sh/discovery" = "${local.project}${local.name_suffix}"
     }
+
+    # gp3 기본 StorageClass 생성(modules/eks/1.0.0/storage-class.tf) — LGTM 스택 등
+    # storageClassName을 생략하는 차트를 위해 필요. providers.tf에 kubernetes provider 이미 구성됨.
+    enable_default_storage_class = true
   }
 
   access_entries = {
