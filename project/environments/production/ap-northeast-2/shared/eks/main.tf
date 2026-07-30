@@ -49,5 +49,7 @@ module "eks" {
 
   cert_manager_configuration_values = local.eks.cert_manager_configuration_values
 
+  enable_default_storage_class = local.eks.enable_default_storage_class
+
   access_entries = local.access_entries
 }

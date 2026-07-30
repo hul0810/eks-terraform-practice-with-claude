@@ -15,6 +15,11 @@ terraform {
       source  = "hashicorp/time"
       version = "~> 0.14"
     }
+    # enable_default_storage_class = true (locals.tf) — gp3 기본 StorageClass 생성에 사용
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.36"
+    }
   }
 }
 
@@ -36,4 +41,22 @@ provider "aws" {
   alias   = "monitoring"
   region  = "ap-northeast-2"
   profile = "terraform-monitoring"
+}
+
+# 이 root가 클러스터 생성 주체라 data.aws_eks_cluster 대신 module.eks 출력에서
+# endpoint/CA를 받는다(monitoring eks/providers.tf와 동일 근거). enable_default_storage_class를
+# 켰기 때문에(locals.tf) kubernetes provider가 필요하다.
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args = [
+      "eks", "get-token",
+      "--cluster-name", local.eks.cluster_name,
+      "--region", "ap-northeast-2",
+      "--profile", "terraform-workload",
+    ]
+  }
 }
