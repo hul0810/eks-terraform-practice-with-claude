@@ -93,6 +93,10 @@ locals {
     node_security_group_tags = {
       "karpenter.sh/discovery" = "${local.project}${local.name_suffix}"
     }
+
+    # gp3 기본 StorageClass 생성(modules/eks/1.0.0/storage-class.tf) — providers.tf에
+    # kubernetes provider 구성 필요(이 옵션이 그 이유).
+    enable_default_storage_class = true
   }
 
   # EKS 클러스터 접근 주체 목록
