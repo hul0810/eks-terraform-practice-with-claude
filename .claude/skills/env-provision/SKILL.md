@@ -8,8 +8,10 @@ description: >
   IAM까지 한 번에 끝난다 — addon 17개 등록·sync는 전부 자동화돼 있어(devops-manifest의
   automated syncPolicy) 사람이 순서를 정할 필요가 없다. LBC 웹훅 준비 전 다른 addon이 먼저
   reconcile을 시도하는 일시적 경쟁 상태, ExternalDNS cross-account role 신뢰 정책 갱신(필요한
-  환경만) 등 반복 실패 패턴은 발생 시 감지해 재시도한다. 3개 환경 모두 실습용이므로 production도
-  대상이다.
+  환경만) 등 반복 실패 패턴은 발생 시 감지해 재시도한다. observability 루트가 있는 환경
+  (monitoring)은 클러스터 생성 후 그 루트도 apply해 LGTM S3/IAM/Pod Identity Association을
+  (재)생성한다 — Association은 teardown 시 클러스터와 함께 삭제되므로 재provision 시 필수. 3개
+  환경 모두 실습용이므로 production도 대상이다.
 disable-model-invocation: false
 allowed-tools:
   - Bash(terraform *)
@@ -383,6 +385,56 @@ kubectl get application -n argocd -l app.kubernetes.io/component=addon
 
 LBC 파드가 `Running`인지 재확인 후 실패한 addon의 sync만 재실행한다(최대 2회).
 
+**3-B-3-2. Ingress/ALB 생성 시 x509 unknown authority 감지 시 (webhook caBundle 불일치 —
+3-B-3과 다른 문제)**
+
+`kubectl describe ingress`나 LBC 로그에 아래 패턴이 보이면 3-B-3(webhook 아직 미기동)과는
+다른 원인이다 — webhook 서비스 자체는 응답하지만 TLS 인증서 체인이 안 맞는 상태다:
+
+- `x509: certificate signed by unknown authority (... "aws-load-balancer-controller-ca")`
+- `remote error: tls: bad certificate` (LBC 파드 로그)
+
+**원인**: `aws-load-balancer-controller` Helm chart가 `ValidatingWebhookConfiguration`/
+`MutatingWebhookConfiguration`의 `caBundle`을 차트 렌더링 시점에 고정값으로 굽는다
+(`kubectl get validatingwebhookconfiguration aws-load-balancer-webhook -o yaml`의
+`last-applied-configuration` 확인 시 정적 caBundle이 박혀있음). 반면 LBC 파드 자신은
+매 fresh 기동마다 스스로 새 self-signed CA+cert를 생성해 `aws-load-balancer-tls` Secret에
+쓴다. eks-addons destroy→재provision으로 클러스터가 완전히 새로 생기면 이 둘이 서로 다른
+세대의 인증서를 가리키게 되어 webhook 호출이 항상 실패한다.
+
+**검증된 해결 절차 — 이름 기준으로 9개 webhook 항목 전체를 한 번에 patch한다 (index
+추측·부분 patch·파드 재시작은 전부 불필요하고 시간만 소모함, 2026-07-29 monitoring
+provision에서 실제로 index 0/1만 patch → 재확인 → 파드 재시작 → 나머지 재발견의 순서로
+30분 가까이 낭비한 뒤 아래 방식으로 확정):
+
+```bash
+CA=$(kubectl get secret aws-load-balancer-tls -n kube-system -o jsonpath='{.data.ca\.crt}')
+for kind in validatingwebhookconfiguration mutatingwebhookconfiguration; do
+  count=$(kubectl get "$kind" aws-load-balancer-webhook -o json | jq '.webhooks | length')
+  for idx in $(seq 0 $((count-1))); do
+    kubectl patch "$kind" aws-load-balancer-webhook --type='json' \
+      -p="[{\"op\": \"replace\", \"path\": \"/webhooks/${idx}/clientConfig/caBundle\", \"value\":\"$CA\"}]" >/dev/null
+  done
+done
+```
+
+패치 후 실패했던 Ingress에 아무 annotation이나 touch해 admission을 재시도시킨다(같은 값
+재적용도 무방, 목적은 API 서버가 해당 객체를 다시 admission review에 태우는 것뿐이다):
+
+```bash
+kubectl annotate ingress <name> -n <namespace> force-reconcile="$(date +%s)" --overwrite
+```
+
+**[주의] `kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration
+aws-load-balancer-webhook`로 지우고 재생성을 유도하는 방법은 시도하지 않는다** — 실제로
+검증해본 결과 ArgoCD/Helm이 수 초 내로 재생성하긴 하지만, 그 재생성本이 Helm 차트에 구운
+바로 그 옛 정적 caBundle이라 원인이 전혀 해소되지 않는다(2026-07-29 monitoring에서 실측 —
+delete 후 재생성된 9개 항목 전부 다시 mismatch로 확인, 결국 위 patch를 재실행해야 했다).
+ArgoCD의 `automated selfHeal`이 이 patch를 되돌리지 않는 이유는 `ignoreDifferences`가
+caBundle 필드를 추적 대상에서 제외하기 때문으로 보인다(patch 후 Application이 계속
+`Synced` 유지, `OutOfSync`로 전환되지 않음) — 즉 **패치는 안전하게 유지되지만, 객체 자체를
+지우면 그 보호가 의미 없어진다.**
+
 **3-B-4. ESO/Karpenter가 뜬 뒤 나머지 Terraform 리소스 apply**
 
 3-B-2에서 ExternalSecrets와 Karpenter의 sync가 `Healthy`인지 확인한 뒤:
@@ -406,6 +458,36 @@ cd {root}/eks-addons && terraform apply -auto-approve
 - `no matches for kind "ClusterSecretStore" in group "external-secrets.io"`
 
 **3-B-5.** 위 패턴에 해당하지 않는 다른 에러는 재시도하지 말고 사용자에게 보고 후 중단한다.
+
+### Step 3.5: observability 루트 apply — LGTM 저장소/IAM/Pod Identity (observability root가 있는 환경만 — 현재 monitoring)
+
+`{root}/observability`가 존재하는 환경(monitoring)만 실행한다. 없으면 이 단계를 건너뛴다.
+
+**LGTM(Loki/Mimir/Tempo/Grafana)은 monitoring 클러스터에만 구축된다** — monitoring이 관측성
+백엔드 Hub이고, develop/production에는 observability 루트도 LGTM 워크로드도 없다(dev/prod는
+자기 텔레메트리를 monitoring Hub로 보내는 spoke이며 LGTM 백엔드를 직접 돌리지 않는다). 따라서
+이 Step은 monitoring provision에서만 수행된다.
+
+이 root는 LGTM 스택(Loki/Mimir/Tempo)의 S3 버킷 3개 + 버킷별 IAM Role 3개 + **EKS Pod Identity
+Association 3개**를 만든다. **Pod Identity Association은 EKS 클러스터의 하위 리소스라 teardown 시
+클러스터와 함께 AWS가 자동 삭제**하므로, 재provision 때 반드시 재apply해 새 클러스터로 다시
+연결해야 한다 — 빠뜨리면 LGTM 파드가 S3 자격증명을 못 받아 Grafana 등이 기동 실패한다.
+
+이 root의 `data.aws_eks_cluster`가 클러스터 존재를 전제하므로 **반드시 Step 2(클러스터 생성)
+이후**에 실행한다:
+
+```bash
+cd {root}/observability && terraform apply -auto-approve
+```
+
+- S3 버킷/IAM Role은 teardown에서 유지됐다면 그대로 재사용되고(변경 없음), Association만
+  새 클러스터로 재생성된다(state에 남아있던 옛 Association은 refresh 시 사라진 것으로 감지되어
+  교체된다).
+- LGTM 차트 자체(Loki/Mimir/Tempo/Grafana Helm)는 이 Terraform이 아니라 devops-manifest의
+  ArgoCD(observability ApplicationSet/app-of-apps)가 배포한다 — workload 앱과 마찬가지로 이
+  스킬의 Terraform 범위 밖이다. Grafana admin 자격증명은 SSM→ESO 경로이며, 그 SSM 경로
+  (`/eks-practice/monitoring/grafana/*`)는 ESO IRSA 정책(eks-addons/locals.tf의
+  `external_secrets_ssm_parameter_arns`)에 이미 포함되어 있어야 한다.
 
 ### Step 4: cross-account ExternalDNS 신뢰 정책 갱신 (조건부)
 

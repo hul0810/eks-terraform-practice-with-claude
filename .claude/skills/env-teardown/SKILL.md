@@ -6,9 +6,11 @@ description: >
   (ArgoCD Application/ApplicationSet가 재조정 중인 Ingress·ALB, workload 계정 Route53에
   ExternalDNS가 만든 레코드, VPC CNI secondary ENI 잔존, 삭제된 클러스터를 가리키는
   ~/.kube/config 잔여 context/cluster/user 항목, Terraform state가 영향을 받는 addon
-  IAM/AWS 리소스 사후 검증)까지 함께 관리한다.
-  VPC 자체·서브넷·파라미터 스토어 등 비용이 없는 리소스는 삭제하지 않는다. 3개 환경 모두
-  실습용이므로 production도 대상이다.
+  IAM/AWS 리소스 사후 검증, monitoring의 LGTM 스택(Loki/Mimir/Tempo/Grafana) StatefulSet
+  PVC가 남기는 고아 EBS 볼륨 회수 및 observability 루트의 S3 데이터 비우기)까지 함께 관리한다.
+  observability의 S3 버킷·IAM Role·Pod Identity Association(클러스터와 함께 자동 삭제됨)은
+  유지한다. VPC 자체·서브넷·파라미터 스토어 등 비용이 없는 리소스는 삭제하지 않는다. 3개
+  환경 모두 실습용이므로 production도 대상이다.
 disable-model-invocation: false
 allowed-tools:
   - Bash(terraform *)
@@ -352,6 +354,67 @@ aws elbv2 delete-target-group --region ap-northeast-2 --profile <profile> --targ
 aws ec2 delete-security-group --region ap-northeast-2 --profile <profile> --group-id <sg-id>
 ```
 
+**2-4-B. LGTM(observability) 워크로드·PVC 정리 → EBS 볼륨 회수 (observability root가 있는 환경만 — 현재 monitoring)**
+
+**LGTM(Loki/Mimir/Tempo/Grafana)은 monitoring 클러스터에만 구축된다**(monitoring이 관측성
+백엔드 Hub — develop/production에는 observability 루트도 LGTM 워크로드도 없다). 따라서 이
+단계는 monitoring teardown에서만 해당한다.
+
+`{root}/observability`가 존재하는 환경(monitoring)은 LGTM 스택(Loki/Mimir/Tempo/Grafana)이
+StatefulSet PVC로 **EBS 볼륨**을 쓴다(monitoring 최초의 스테이트풀 워크로드). **클러스터를 그냥
+destroy하면 이 EBS 볼륨이 삭제되지 않고 고아로 남아 계속 과금된다** — reclaimPolicy=Delete는
+PVC가 삭제될 때만 트리거되고 클러스터 destroy는 PVC 삭제를 거치지 않기 때문이다. EBS CSI
+컨트롤러가 살아있는 지금(Step 8 이전) 반드시 정리한다.
+
+먼저 EBS 볼륨 ID를 기록한다(사후 안전망용 — Step 11에서 재확인):
+
+```bash
+kubectl get pv -o jsonpath='{range .items[*]}{.spec.csi.volumeHandle}{"\n"}{end}' | grep '^vol-'
+```
+
+이 프로젝트의 ArgoCD 앱은 resources-finalizer가 없어 **앱만 지워도 관리 리소스가 cascade되지
+않는다**(2026-07-30 실측 — 앱 삭제 후에도 StatefulSet/Ingress/PVC가 그대로 Running). 따라서
+재조정만 멈추고 리소스는 직접 삭제한다:
+
+```bash
+# 1) 재조정 중단 (root-app-observability + 관측성 child 앱). grafana Ingress는 2-3의
+#    kubectl get ingress -A 스캔이 이미 잡아 ALB까지 정리됨(별도 처리 불필요).
+kubectl delete application root-app-observability grafana loki mimir tempo observability-resources \
+  -n argocd --ignore-not-found --wait=false
+# 2) 워크로드 컨트롤러 삭제 → 파드 종료 → PVC 해제
+kubectl delete statefulset,deployment --all -n monitoring
+for i in $(seq 1 24); do [ "$(kubectl get pods -n monitoring --no-headers 2>/dev/null | wc -l)" -eq 0 ] && break; sleep 5; done
+# 3) PVC 삭제 → EBS CSI(살아있음)가 볼륨 자동 삭제
+kubectl delete pvc --all -n monitoring
+```
+
+기록한 볼륨 ID가 실제로 삭제됐는지 개별 확인한다(여러 ID를 한 번에 조회하면 하나만 없어도
+전체가 에러이므로 ID별로):
+
+```bash
+for v in <기록한 vol-...>; do
+  aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> --volume-ids "$v" \
+    --query "Volumes[0].State" 2>&1 | grep -q "InvalidVolume.NotFound" \
+    && echo "$v 삭제됨" || echo "$v 잔존 — aws ec2 delete-volume으로 직접 삭제"
+done
+```
+
+**Pod Identity Association / observability Terraform은 건드리지 않는다**: Association 3개
+(loki/mimir/tempo)는 클러스터 destroy(Step 8) 시 AWS가 자동 삭제한다 — 별도 `terraform
+destroy`가 불필요하다. 오히려 observability root는 `data.aws_eks_cluster`가 클러스터 존재를
+전제하므로, 클러스터가 사라지는 teardown 중에 이 root에 terraform을 돌리면 안 된다.
+**버킷·IAM Role은 유지**한다(무료, 다음 provision 시 재사용 — provision 시 observability를
+재apply하면 Association이 새 클러스터로 재생성된다, `/env-provision` Step 3.5).
+
+**S3 데이터 비우기 (선택 — 비용 정책상 권장, 사용자 확인 후)**: LGTM이 S3에 쓴 청크/블록/
+트레이스는 재생성 사이클마다 누적된다. 버킷 자체는 유지하고 데이터만 비운다:
+
+```bash
+for b in <loki/mimir/tempo 버킷명 — {root}/observability/locals.tf의 backends 참조>; do
+  aws s3 rm "s3://$b" --recursive --profile <profile>
+done
+```
+
 **2-5. (선택, 기본 생략) 나머지 전부 (LBC/karpenter 컨트롤러 포함)**
 
 **기본적으로 실행하지 않는다** — Step 2 도입부 참고: 2-2·2-3·2-4로 AWS 리소스 위험은
@@ -690,9 +753,15 @@ aws route53 list-resource-record-sets --hosted-zone-id "$zone_id" --profile terr
 aws elbv2 describe-load-balancers --region ap-northeast-2 --profile <profile>
 aws ec2 describe-nat-gateways --region ap-northeast-2 --profile <profile> \
   --filter "Name=state,Values=available,pending"
+# 고아 EBS 볼륨 확인 — LGTM 등 스테이트풀 워크로드의 PVC가 남긴 available(미연결) 볼륨.
+# 2-4-B에서 정리했어도 최종 안전망으로 재확인한다(EBS CSI가 만든 볼륨은 이 태그를 갖는다).
+aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> \
+  --filters "Name=status,Values=available" "Name=tag-key,Values=kubernetes.io/created-for/pvc/name" \
+  --query "Volumes[].VolumeId" --output text
 ```
 
-두 명령 결과가 모두 비어있으면 완료 메시지를 출력한다:
+세 명령 결과가 모두 비어있으면 완료 메시지를 출력한다 (고아 EBS 볼륨이 있으면
+`aws ec2 delete-volume --volume-id <id>`로 직접 삭제 후 재확인):
 
 ```
 [완료] <환경> 비용 발생 리소스 삭제 완료
