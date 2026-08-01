@@ -191,6 +191,52 @@ done
 > 세션이 있는지"를 판단할 수 있다. 이러면 알림 루프가 refresh token에 손을 대지 않으므로
 > terraform의 자체 갱신과 절대 경쟁하지 않는다.
 
+### 공통 처리: 시간 단축이 최우선 — "컨트롤러가 필요한 것만 선행, 나머지는 클러스터와 함께 버린다"
+
+삭제가 늦어질수록 비용이 계속 나가므로 **벽시계 시간 단축이 이 스킬의 1순위 목표**다.
+아래 원칙으로 판단한다 — 운영 환경의 정석 순서(모든 K8s 오브젝트를 곱게 지우고 클러스터를
+지운다)를 따를 이유가 없다.
+
+**선행 처리해야 하는 것은 딱 두 부류다** — 클러스터 밖 AWS 리소스를 만들어 두고,
+그 컨트롤러가 죽으면 아무도 회수하지 않는 것:
+
+| 대상 | 왜 선행 | 빠른 처리법 |
+|------|---------|-------------|
+| Ingress → ALB, **Service type=LoadBalancer → NLB** | LBC가 죽으면 영구 고아 | 오브젝트 삭제 후 LB 소멸만 확인 |
+| Karpenter NodeClaim → EC2 | Karpenter가 죽으면 영구 고아 | **`aws ec2 terminate-instances`로 직접 종료**(graceful drain 불필요) |
+
+**나머지 K8s 오브젝트는 전부 손대지 않는다.** Application/ApplicationSet/Deployment/
+StatefulSet/namespace는 클러스터를 지우면 etcd와 함께 사라진다 — 지우는 데 드는 시간이
+그대로 낭비다.
+
+**기다리지 않고 병렬로 넘기는 것들**:
+
+- **EBS 볼륨**: PVC를 지우고 CSI가 회수하기를 기다리지 말 것. `kubectl get pv`로 **볼륨 ID만
+  기록**하고 클러스터를 destroy한 뒤 `aws ec2 delete-volume`으로 직접 지운다(클러스터가
+  없어져도 볼륨은 남으므로 안전하며, EKS destroy가 도는 동안 병렬로 처리된다).
+- **Route53 레코드**: ExternalDNS는 `upsert-only`라 어차피 사람이 지운다. 호스트명만 미리
+  기록해두고 **EKS destroy가 도는 동안** 병렬로 삭제한다.
+- **여러 환경**: spoke의 `eks-addons destroy`만 monitoring이 살아있어야 한다(registry-writer
+  Role assume). 그 한 단계만 순서를 지키고 **EKS destroy·NAT 비활성화는 전 환경 동시 실행**한다.
+
+**권장 실행 순서 (`monitoring develop` 동시 요청 기준)**:
+
+1. **[병렬]** spoke: Hub의 `argocd/<spoke-cluster>` **cluster Secret 삭제**(재조정 차단 —
+   아래 Step 2-0) / Hub: `root-app-addons` 삭제
+2. **[병렬]** 전 환경: Ingress·LoadBalancer Service 삭제, Karpenter EC2 직접 terminate,
+   EBS 볼륨 ID·Route53 호스트명 기록
+3. **[병렬]** LB 소멸 확인(보통 1분 내)
+4. spoke `eks-addons destroy` → 완료 후 monitoring `eks-addons destroy`
+   (**이 두 단계만 순서 의존**)
+5. **[병렬]** 전 환경 EKS destroy + NAT 비활성화 + **Route53 레코드 삭제 + EBS 직접 삭제**
+6. 최종 검증(LB·NAT·고아 EBS·EKS·Route53 zone 전체)
+
+> **WHY (2026-07-31 monitoring+develop teardown 실측)**: 직렬 처리로 develop을 완전히 끝낸
+> 뒤 monitoring을 시작해 EKS destroy(각 ~10분)가 겹치지 않았고, spoke Application을 개별
+> 삭제하려다 재생성 루프로 ~10분, LGTM PVC→EBS 회수 대기로 ~2분, NodeClaim graceful drain
+> 대기로 ~1분이 추가로 소요됐다. 위 순서로 바꾸면 EKS destroy 시간 안에 Route53·EBS·검증이
+> 전부 묻힌다.
+
 ### 공통 처리: `terraform apply`/`destroy` 출력을 파이프로 볼 때는 반드시 `pipefail`
 
 이 스킬의 모든 `terraform apply`/`destroy` 명령을 실제로 실행할 때(백그라운드 실행 포함)
@@ -228,10 +274,12 @@ aws eks update-kubeconfig --name <cluster_name> --region ap-northeast-2 --profil
 
 클러스터에 연결되지 않으면(이미 삭제됐거나 최초 생성 전) Step 2~5를 건너뛰고 Step 6으로 이동한다.
 
-### Step 2: ArgoCD Application/ApplicationSet 삭제 — 2-2·2-3·2-4만 필수, 2-5는 생략한다 (2026-07-22 갱신)
+### Step 2: ArgoCD Application/ApplicationSet 삭제 — 2-1-B·2-2·2-3·2-4만 필수, 2-5는 생략한다
+(2026-07-30 갱신 — 2-1-B를 2-2보다 앞으로 재배치)
 
 **AWS 비용/고아 리소스 위험이 있는 항목만 이 클러스터가 살아있는 동안 명시적으로 정리한다
-— Karpenter NodeClaim(EC2 인스턴스, 2-2)과 Ingress/ALB(2-3·2-4) 둘뿐이다.** 나머지
+— LGTM StatefulSet PVC의 EBS 볼륨(monitoring만, 2-1-B), Karpenter NodeClaim(EC2 인스턴스,
+2-2), Ingress/ALB(2-3·2-4) 세 가지다.** 나머지
 Application/ApplicationSet은 순수 K8s 오브젝트라 Step 8(EKS destroy)이 클러스터를
 지우면 etcd와 함께 자동으로 사라진다 — 남겨봐야 손해가 없으므로 2-5(전체 삭제)는
 **기본적으로 실행하지 않는다.** (배경: root-app-addons를 `--all`로 정리하던 옛 절차는
@@ -241,6 +289,33 @@ ApplicationSet 수가 30개 넘게 늘었고, 아래 WHY의 데드락처럼 지�
 위험을 만든다는 게 드러났다 — "다 지운다"의 실익보다 절차 리스크가 커졌다.)
 
 **순서:**
+
+**2-0. spoke(develop/production) 환경이면 Hub의 cluster Secret부터 지운다 — 다른 무엇보다 먼저**
+
+spoke에는 ArgoCD가 없다. Application은 전부 Hub(monitoring)의 ApplicationSet이 `clusters`
+generator로 **그 spoke의 cluster Secret을 보고** 만든다. 따라서 spoke 대상 Application을
+개별로 지우면 **즉시 전부 재생성된다.** 앱 파드까지 되살아나 Karpenter가 노드를 계속 새로
+프로비저닝하므로 NodeClaim drain이 영원히 끝나지 않는다.
+
+```bash
+kubectl --context <monitoring-context> delete secret <spoke-cluster-name> -n argocd
+```
+
+이 Secret이 사라지면 generator가 대상에서 제외해 **addon Application이 자동으로 정리된다.**
+다만 두 가지를 알아둔다:
+
+- `root-app-workload`로 직접 생성된 workload Application(owner 없음)은 자동 삭제되지 않으니
+  수동으로 지운다.
+- Secret이 없으면 ArgoCD가 spoke에 접근할 수 없어 `resources-finalizer`가 안 풀린다 —
+  남은 Application은 `kubectl patch ... -p '{"metadata":{"finalizers":[]}}'`로 정리한다
+  (실제 AWS 리소스는 아래 2-2에서 직접 처리하므로 안전하다).
+
+이 Secret은 monitoring `eks-addons`의 Terraform 소유라 state drift가 생기지만, monitoring도
+곧 destroy되거나 다음 provision에서 재생성되므로 신경 쓰지 않는다.
+
+> **WHY (2026-07-31 develop teardown 실측)**: 이 단계 없이 Application을 개별 삭제했더니
+> 13개가 통째로 재생성됐고, NodeClaim이 drain됐다가 다시 생기는 루프에 빠져 ~10분을
+> 날렸다. cluster Secret 삭제 한 번으로 즉시 해소된다.
 
 **2-1. root-app-addons 먼저 (재동기화 경합 차단)**
 
@@ -252,6 +327,85 @@ kubectl delete applicationset root-app-addons -n argocd --ignore-not-found
 즉시 둘 다 사라졌는지 확인한다(`kubectl get application,applicationset root-app-addons -n argocd`가
 `NotFound`여야 함) — 살아있는 채로 다음 단계로 넘어가면 devops-manifest 디렉터리가
 재동기화되며 2-3에서 지운 걸 되살릴 수 있다.
+
+**2-1-B. LGTM(observability) 워크로드·PVC 정리 → EBS 볼륨 회수 (observability root가 있는
+환경만 — 현재 monitoring, 반드시 2-2보다 먼저 실행)**
+
+**LGTM(Loki/Mimir/Tempo/Grafana)은 monitoring 클러스터에만 구축된다**(monitoring이 관측성
+백엔드 Hub — develop/production에는 observability 루트도 LGTM 워크로드도 없다). 따라서 이
+단계는 monitoring teardown에서만 해당한다.
+
+`{root}/observability`가 존재하는 환경(monitoring)은 LGTM 스택(Loki/Mimir/Tempo/Grafana)이
+StatefulSet PVC로 **EBS 볼륨**을 쓴다(monitoring 최초의 스테이트풀 워크로드). **클러스터를 그냥
+destroy하면 이 EBS 볼륨이 삭제되지 않고 고아로 남아 계속 과금된다** — reclaimPolicy=Delete는
+PVC가 삭제될 때만 트리거되고 클러스터 destroy는 PVC 삭제를 거치지 않기 때문이다. EBS CSI
+컨트롤러가 살아있는 지금(Step 8 이전) 반드시 정리한다.
+
+**[중요] 2-2보다 반드시 먼저 실행한다 — Mimir의 PodDisruptionBudget이 karpenter NodeClaim
+drain을 무기한 막는다 (2026-07-30 monitoring teardown 실제 발생)**: 원래 이 단계는 2-4
+뒤(2-4-B)에 있었는데, 2-2에서 `karpenter-resources`를 지우고 NodeClaim drain을 기다리는
+도중 `mimir-*` PDB들(`ALLOWED DISRUPTIONS: 0`)이 그 노드에 떠있는 `mimir-query-scheduler`
+파드의 축출을 계속 거부해 drain이 4분 넘게 멈췄다. karpenter 로그에는 명확한 에러 없이
+그냥 재시도만 반복된다 — `kubectl get pdb -A`로 `ALLOWED DISRUPTIONS: 0`인 항목이 있는지,
+그 파드가 drain 대상 노드에 있는지 확인하면 원인을 특정할 수 있다. LGTM StatefulSet/
+Deployment를 먼저 지워 이 PDB들의 대상 파드 자체를 없애면 이 문제가 원천적으로 발생하지
+않는다 — 그래서 이 단계를 2-2보다 앞으로 옮겼다.
+
+**[속도] PVC 삭제 → CSI 회수를 기다리지 않아도 된다.** EBS 볼륨은 클러스터가 사라져도 계정에
+그대로 남으므로, **볼륨 ID만 기록해두고 Step 8(EKS destroy)이 도는 동안 `aws ec2
+delete-volume`으로 직접 지우는 편이 훨씬 빠르다**(2026-07-31 실측: PVC 삭제→회수 확인에 ~2분
+소요, 직접 삭제는 EKS destroy 시간에 묻힌다). 아래 PVC 삭제 절차는 "PDB 때문에 파드를 먼저
+없애야 하는" 경우(바로 아래 주의 참조)에만 필요하고, 볼륨 회수 자체가 목적이라면 생략한다.
+
+먼저 EBS 볼륨 ID를 기록한다 — **이 기록은 어느 경로를 택하든 반드시 남긴다**:
+
+```bash
+kubectl get pv -o jsonpath='{range .items[*]}{.spec.csi.volumeHandle}{"\n"}{end}' | grep '^vol-'
+```
+
+이 프로젝트의 ArgoCD 앱은 resources-finalizer가 없어 **앱만 지워도 관리 리소스가 cascade되지
+않는다**(2026-07-30 실측 — 앱 삭제 후에도 StatefulSet/Ingress/PVC가 그대로 Running). 따라서
+재조정만 멈추고 리소스는 직접 삭제한다:
+
+```bash
+# 1) 재조정 중단 (root-app-observability + 관측성 child 앱). grafana Ingress는 2-3의
+#    kubectl get ingress -A 스캔이 이미 잡아 ALB까지 정리됨(별도 처리 불필요) — 단, Route53
+#    레코드 기록은 2-3의 host 필드 확인 로직을 함께 따라야 놓치지 않는다(아래 2-3 참고).
+kubectl delete application root-app-observability grafana loki mimir tempo observability-resources \
+  -n argocd --ignore-not-found --wait=false
+# 2) 워크로드 컨트롤러 삭제 → 파드 종료 → PVC 해제
+kubectl delete statefulset,deployment --all -n monitoring
+for i in $(seq 1 24); do [ "$(kubectl get pods -n monitoring --no-headers 2>/dev/null | wc -l)" -eq 0 ] && break; sleep 5; done
+# 3) PVC 삭제 → EBS CSI(살아있음)가 볼륨 자동 삭제
+kubectl delete pvc --all -n monitoring
+```
+
+기록한 볼륨 ID가 실제로 삭제됐는지 개별 확인한다(여러 ID를 한 번에 조회하면 하나만 없어도
+전체가 에러이므로 ID별로):
+
+```bash
+for v in <기록한 vol-...>; do
+  aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> --volume-ids "$v" \
+    --query "Volumes[0].State" 2>&1 | grep -q "InvalidVolume.NotFound" \
+    && echo "$v 삭제됨" || echo "$v 잔존 — aws ec2 delete-volume으로 직접 삭제"
+done
+```
+
+**Pod Identity Association / observability Terraform은 건드리지 않는다**: Association 3개
+(loki/mimir/tempo)는 클러스터 destroy(Step 8) 시 AWS가 자동 삭제한다 — 별도 `terraform
+destroy`가 불필요하다. 오히려 observability root는 `data.aws_eks_cluster`가 클러스터 존재를
+전제하므로, 클러스터가 사라지는 teardown 중에 이 root에 terraform을 돌리면 안 된다.
+**버킷·IAM Role은 유지**한다(무료, 다음 provision 시 재사용 — provision 시 observability를
+재apply하면 Association이 새 클러스터로 재생성된다, `/env-provision` Step 3.5).
+
+**S3 데이터 비우기 (선택 — 비용 정책상 권장, 사용자 확인 후)**: LGTM이 S3에 쓴 청크/블록/
+트레이스는 재생성 사이클마다 누적된다. 버킷 자체는 유지하고 데이터만 비운다:
+
+```bash
+for b in <loki/mimir/tempo 버킷명 — {root}/observability/locals.tf의 backends 참조>; do
+  aws s3 rm "s3://$b" --recursive --profile <profile>
+done
+```
 
 **2-2. `karpenter-resources` ApplicationSet(들)을 먼저 지운 뒤에만 Application을 지운다**
 
@@ -268,6 +422,23 @@ kubectl get application -n argocd -o name | grep karpenter-resources | \
   xargs -r -n1 kubectl delete -n argocd --ignore-not-found
 ```
 
+**[속도] 실습 환경에서는 graceful drain을 기다릴 이유가 없다.** 목적은 "EC2 인스턴스가
+과금되지 않게 회수"하는 것 하나뿐이고, 워크로드 무중단은 어차피 teardown 대상이라 의미가
+없다. **NodeClaim의 EC2 인스턴스를 직접 종료하고 finalizer를 제거하는 편이 가장 빠르다**:
+
+```bash
+# 인스턴스 ID 일괄 추출 → 한 번에 종료
+IDS=$(kubectl get nodeclaims -o jsonpath='{range .items[*]}{.status.providerID}{"\n"}{end}' \
+  | sed 's#.*/##')
+[ -n "$IDS" ] && aws ec2 terminate-instances --region ap-northeast-2 --profile <profile> --instance-ids $IDS
+# finalizer 제거로 K8s 오브젝트도 즉시 정리(실제 EC2는 위에서 이미 종료됨)
+kubectl get nodeclaims -o name | xargs -r -n1 -I{} kubectl patch {} --type=merge -p '{"metadata":{"finalizers":[]}}'
+```
+
+이러면 아래 polling 자체가 불필요하다. Karpenter 컨트롤러 생존 여부와도 무관해져
+"컨트롤러가 먼저 죽어 finalizer가 안 풀리는" 데드락 위험까지 함께 사라진다.
+
+아래는 정석 경로(컨트롤러에게 drain을 맡기는 방식)로, 위 직접 종료를 쓰지 않을 때만 따른다.
 이 Application들이 관리하는 NodePool/EC2NodeClass는 Karpenter 자신의 finalizer
 (`karpenter.sh/termination`, `karpenter.k8s.aws/termination`)가 걸려있어, 연결된
 NodeClaim(실제 EC2 노드)이 완전히 drain될 때까지 삭제가 안 끝난다 — **이때 karpenter
@@ -317,11 +488,32 @@ kubectl patch application <stuck-app-name> -n argocd --type=merge -p '{"metadata
 
 **2-3. Ingress 삭제 — LBC가 아직 살아있는 상태에서 실행 (Step 3/4 내용이 여기로 통합됨)**
 
-`kubectl get ingress -A -o json`으로 전체 Ingress를 조회한다. 없으면 2-4/2-5를 건너뛰고
-2-6으로 이동한다. 각 Ingress에 대해 **삭제 전에** 아래를 기록한다(삭제 후에는 조회 불가):
+**[중요] Ingress만 훑으면 `Service type=LoadBalancer`가 만든 NLB를 통째로 놓친다.** 반드시
+두 종류를 함께 조회한다 — OTel Gateway처럼 Service로 Internal NLB를 띄우는 컴포넌트가 있다:
+
+```bash
+kubectl get ingress -A -o json
+kubectl get svc -A --field-selector spec.type=LoadBalancer
+```
+
+LoadBalancer Service는 `EXTERNAL-IP`(LB DNS)를 기록한 뒤 그냥 `kubectl delete svc`하면
+LBC가 NLB를 회수한다. Ingress와 동일하게 **LBC가 살아있는 동안** 처리해야 한다.
+
+> **WHY (2026-07-31 실측)**: 이 절차가 Ingress 기준으로만 쓰여 있어 `otel-gateway-nlb`
+> Service가 만든 NLB가 정리 대상에서 빠질 뻔했다. Route53도 같은 사각지대가 있다 —
+> ExternalDNS가 Service에도 레코드를 만들며 TXT 소유자 값이
+> `external-dns/resource=**service**/<ns>/<name>` 형태라 Ingress 목록만 보면 안 잡힌다
+> (`otel-gateway.pyhtest.com` A+TXT+cname-TXT 3개가 이렇게 남아 Step 11에서야 발견됐다).
+
+각 Ingress/LoadBalancer Service에 대해 **삭제 전에** 아래를 기록한다(삭제 후에는 조회 불가):
 - `namespace`, `name`
 - `status.loadBalancer.ingress[0].hostname` (ALB DNS 이름)
 - `metadata.annotations."external-dns.alpha.kubernetes.io/hostname"` (Route53 레코드 이름)
+- **annotation이 비어있으면 `spec.rules[].host`도 확인한다** — ExternalDNS는 이 annotation
+  없이도 Ingress `spec.rules[].host`만으로 레코드를 만들 수 있다(2026-07-30 monitoring
+  teardown 실제 발생: grafana Ingress에 annotation이 없어 Route53 대상에서 빠졌고, Step 11
+  zone 전체 재검증에서야 고아 A+TXT+cname-TXT로 발견됐다). annotation·host 필드 둘 다
+  비어있을 때만 "이 Ingress는 Route53 관리 대상 아님"으로 판단한다.
 
 기록 후 각각 삭제한다:
 
@@ -352,67 +544,6 @@ kubectl patch ingress <name> -n <namespace> --type=merge -p '{"metadata":{"final
 # ALB가 완전히 사라진 뒤(polling)
 aws elbv2 delete-target-group --region ap-northeast-2 --profile <profile> --target-group-arn <tg-arn>
 aws ec2 delete-security-group --region ap-northeast-2 --profile <profile> --group-id <sg-id>
-```
-
-**2-4-B. LGTM(observability) 워크로드·PVC 정리 → EBS 볼륨 회수 (observability root가 있는 환경만 — 현재 monitoring)**
-
-**LGTM(Loki/Mimir/Tempo/Grafana)은 monitoring 클러스터에만 구축된다**(monitoring이 관측성
-백엔드 Hub — develop/production에는 observability 루트도 LGTM 워크로드도 없다). 따라서 이
-단계는 monitoring teardown에서만 해당한다.
-
-`{root}/observability`가 존재하는 환경(monitoring)은 LGTM 스택(Loki/Mimir/Tempo/Grafana)이
-StatefulSet PVC로 **EBS 볼륨**을 쓴다(monitoring 최초의 스테이트풀 워크로드). **클러스터를 그냥
-destroy하면 이 EBS 볼륨이 삭제되지 않고 고아로 남아 계속 과금된다** — reclaimPolicy=Delete는
-PVC가 삭제될 때만 트리거되고 클러스터 destroy는 PVC 삭제를 거치지 않기 때문이다. EBS CSI
-컨트롤러가 살아있는 지금(Step 8 이전) 반드시 정리한다.
-
-먼저 EBS 볼륨 ID를 기록한다(사후 안전망용 — Step 11에서 재확인):
-
-```bash
-kubectl get pv -o jsonpath='{range .items[*]}{.spec.csi.volumeHandle}{"\n"}{end}' | grep '^vol-'
-```
-
-이 프로젝트의 ArgoCD 앱은 resources-finalizer가 없어 **앱만 지워도 관리 리소스가 cascade되지
-않는다**(2026-07-30 실측 — 앱 삭제 후에도 StatefulSet/Ingress/PVC가 그대로 Running). 따라서
-재조정만 멈추고 리소스는 직접 삭제한다:
-
-```bash
-# 1) 재조정 중단 (root-app-observability + 관측성 child 앱). grafana Ingress는 2-3의
-#    kubectl get ingress -A 스캔이 이미 잡아 ALB까지 정리됨(별도 처리 불필요).
-kubectl delete application root-app-observability grafana loki mimir tempo observability-resources \
-  -n argocd --ignore-not-found --wait=false
-# 2) 워크로드 컨트롤러 삭제 → 파드 종료 → PVC 해제
-kubectl delete statefulset,deployment --all -n monitoring
-for i in $(seq 1 24); do [ "$(kubectl get pods -n monitoring --no-headers 2>/dev/null | wc -l)" -eq 0 ] && break; sleep 5; done
-# 3) PVC 삭제 → EBS CSI(살아있음)가 볼륨 자동 삭제
-kubectl delete pvc --all -n monitoring
-```
-
-기록한 볼륨 ID가 실제로 삭제됐는지 개별 확인한다(여러 ID를 한 번에 조회하면 하나만 없어도
-전체가 에러이므로 ID별로):
-
-```bash
-for v in <기록한 vol-...>; do
-  aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> --volume-ids "$v" \
-    --query "Volumes[0].State" 2>&1 | grep -q "InvalidVolume.NotFound" \
-    && echo "$v 삭제됨" || echo "$v 잔존 — aws ec2 delete-volume으로 직접 삭제"
-done
-```
-
-**Pod Identity Association / observability Terraform은 건드리지 않는다**: Association 3개
-(loki/mimir/tempo)는 클러스터 destroy(Step 8) 시 AWS가 자동 삭제한다 — 별도 `terraform
-destroy`가 불필요하다. 오히려 observability root는 `data.aws_eks_cluster`가 클러스터 존재를
-전제하므로, 클러스터가 사라지는 teardown 중에 이 root에 terraform을 돌리면 안 된다.
-**버킷·IAM Role은 유지**한다(무료, 다음 provision 시 재사용 — provision 시 observability를
-재apply하면 Association이 새 클러스터로 재생성된다, `/env-provision` Step 3.5).
-
-**S3 데이터 비우기 (선택 — 비용 정책상 권장, 사용자 확인 후)**: LGTM이 S3에 쓴 청크/블록/
-트레이스는 재생성 사이클마다 누적된다. 버킷 자체는 유지하고 데이터만 비운다:
-
-```bash
-for b in <loki/mimir/tempo 버킷명 — {root}/observability/locals.tf의 backends 참조>; do
-  aws s3 rm "s3://$b" --recursive --profile <profile>
-done
 ```
 
 **2-5. (선택, 기본 생략) 나머지 전부 (LBC/karpenter 컨트롤러 포함)**
@@ -494,6 +625,12 @@ Step 2-3(Ingress 삭제), Step 2-4(ALB 정리 대기) 참고. 이 자리는 번�
 자리표시자다. Step 5로 바로 진행한다.
 
 ### Step 5: Route53 레코드 수동 삭제 — 잔여 리소스 관리 핵심
+
+> **[속도] 이 Step은 Step 8(EKS destroy)과 병렬로 돌린다.** Route53은 클러스터·Terraform과
+> 아무 의존이 없다(ExternalDNS는 이미 없거나 곧 사라지고, `upsert-only`라 어차피 레코드를
+> 건드리지 않는다). Step 2-3에서 호스트명을 기록해뒀다면 **Step 6/8을 백그라운드로 시작한
+> 뒤 그 대기 시간에 이 Step과 EBS 직접 삭제를 처리**한다 — 순차로 하면 그만큼 그대로
+> 늘어난다. 아래 서술 위치는 논리적 순서일 뿐 실행 순서가 아니다.
 
 `modules/eks-addons/1.0.0`의 ExternalDNS helm_release는 `policy`를 오버라이드하지 않아
 차트 기본값(`upsert-only`, 생성·갱신만 하고 삭제는 절대 하지 않음)을 그대로 쓴다.
@@ -754,7 +891,7 @@ aws elbv2 describe-load-balancers --region ap-northeast-2 --profile <profile>
 aws ec2 describe-nat-gateways --region ap-northeast-2 --profile <profile> \
   --filter "Name=state,Values=available,pending"
 # 고아 EBS 볼륨 확인 — LGTM 등 스테이트풀 워크로드의 PVC가 남긴 available(미연결) 볼륨.
-# 2-4-B에서 정리했어도 최종 안전망으로 재확인한다(EBS CSI가 만든 볼륨은 이 태그를 갖는다).
+# 2-1-B에서 정리했어도 최종 안전망으로 재확인한다(EBS CSI가 만든 볼륨은 이 태그를 갖는다).
 aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> \
   --filters "Name=status,Values=available" "Name=tag-key,Values=kubernetes.io/created-for/pvc/name" \
   --query "Volumes[].VolumeId" --output text

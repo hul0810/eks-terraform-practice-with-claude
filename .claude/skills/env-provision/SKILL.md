@@ -61,10 +61,12 @@ allowed-tools:
 > registry payload를 publish하려면(`gitops-bridge-registry.tf`), monitoring의
 > `eks-addons`가 만든 `<monitoring-cluster-name>-gitops-bridge-registry-writer-<이 환경의
 > account_id>` IAM Role을 assume해야 한다. monitoring이 아직 없거나(최초 provision) 최근에
-> teardown된 상태면 이 Role이 없어 publish가 provider 단계에서부터 막힌다. 여러 환경을 한
-> 요청으로 provision하면(예: "monitoring이랑 develop 둘 다 켜줘") **항상 monitoring을 먼저
-> 끝내고 develop/production을 그 다음에 처리한다.** `develop`/`production` 단독 호출이어도
-> Step 3 진입 전 아래로 선행조건을 확인한다:
+> teardown된 상태면 이 Role이 없어 publish가 provider 단계에서부터 막힌다.
+>
+> **이 의존은 `eks-addons` 레이어에만 적용된다** — 여러 환경을 한 요청으로 provision할 때
+> VPC·EKS까지 직렬화하지 말 것. 겹쳐 실행하는 정확한 순서는 위 "시간 단축이 최우선" 절을
+> 따른다(develop EKS는 monitoring **VPC**의 NAT만 필요하므로 monitoring EKS와 동시에 만든다).
+> `develop`/`production` 단독 호출이어도 Step 3 진입 전 아래로 선행조건을 확인한다:
 >
 > ```bash
 > aws iam get-role --profile terraform-monitoring \
@@ -103,6 +105,40 @@ allowed-tools:
 | production | `project/environments/production/ap-northeast-2/shared` |
 
 이후 단계의 `{root}`는 이 값을 가리킨다.
+
+### 공통 처리: 시간 단축이 최우선 — 의존성이 없는 것은 무조건 병렬로 돌린다
+
+이 스킬의 1순위 목표는 **환경이 사용 가능해질 때까지의 벽시계 시간을 줄이는 것**이다.
+아래 의존성 표 밖의 조합은 전부 동시에 실행한다. 각 Step을 순서대로 "완료 후 다음"으로
+직렬 처리하지 말 것 — Step 번호는 의존 관계가 아니라 서술 순서일 뿐이다.
+
+**실제 의존성은 이것뿐이다** (2026-08-01 monitoring+develop 동시 provision에서 실측):
+
+| 작업 | 진짜 선행 조건 | 흔한 오해 |
+|------|---------------|-----------|
+| 각 환경 EKS | 자기 VPC 서브넷(이미 존재) | VPC apply 완료를 기다릴 필요 없음 |
+| **develop/production EKS** | **monitoring VPC의 NAT Gateway** (`data.aws_nat_gateway.monitoring`) | ~~monitoring 전체 완료~~ — monitoring **EKS·addons와 무관** |
+| 각 환경 eks-addons | 자기 EKS 클러스터 | — |
+| **spoke eks-addons** | **monitoring eks-addons `apply` 완료**(registry-writer Role) | ~~monitoring addon sync 완료~~ — sync는 무관 |
+| observability | 자기 EKS 클러스터 | ~~eks-addons 완료~~ — 별도 state라 무관 |
+| Hub 재apply(3-B-1.5) | spoke의 SSM registry publish | — |
+
+**`monitoring develop`처럼 여러 환경을 한 번에 받으면 아래 순서로 겹쳐 실행한다:**
+
+1. monitoring VPC apply 시작 → **완료 대기**(~1.5분, NAT 생성이 짧다)
+2. **monitoring EKS + develop VPC + develop EKS 3개를 동시 시작** — EKS 생성이 ~12분으로
+   가장 길므로 두 클러스터를 겹치는 것이 이 스킬 최대의 단축 포인트다
+3. monitoring EKS 완료 → kubeconfig → **monitoring eks-addons + observability 동시 시작**
+4. monitoring eks-addons **apply가 끝나는 즉시** develop eks-addons 시작
+   (monitoring addon sync를 기다리지 않는다) — 동시에 monitoring addon sync 폴링,
+   cross-account 신뢰 정책 갱신(Step 4)도 이 구간에 함께 처리
+5. develop eks-addons 완료 → Hub 재apply → 전체 sync 확인
+
+> **WHY (2026-08-01 실측)**: 이전에는 "monitoring을 완전히 끝내고 develop"으로 직렬
+> 처리해 develop EKS 생성 ~12분과 monitoring addon sync 대기 ~15분이 통째로 낭비됐다.
+> Step 0의 "monitoring을 먼저 끝내고"라는 문구는 **spoke eks-addons가 Hub의
+> registry-writer Role을 필요로 한다**는 뜻이지, 환경 전체를 직렬화하라는 뜻이 아니다.
+> VPC·EKS 레이어에는 그 의존이 전혀 없다.
 
 ### 공통 처리: `terraform apply`/`destroy` 출력을 파이프로 볼 때는 반드시 `pipefail`
 
@@ -474,7 +510,9 @@ Association 3개**를 만든다. **Pod Identity Association은 EKS 클러스터�
 연결해야 한다 — 빠뜨리면 LGTM 파드가 S3 자격증명을 못 받아 Grafana 등이 기동 실패한다.
 
 이 root의 `data.aws_eks_cluster`가 클러스터 존재를 전제하므로 **반드시 Step 2(클러스터 생성)
-이후**에 실행한다:
+이후**에 실행한다. 다만 **eks-addons와는 별도 state이고 리소스가 겹치지 않으므로 Step 3의
+apply와 동시에 백그라운드로 실행한다**(직렬로 기다리지 말 것 — 이 apply는 ~1분, eks-addons는
+~5분이라 그냥 묻힌다):
 
 ```bash
 cd {root}/observability && terraform apply -auto-approve
@@ -524,7 +562,11 @@ Step 5로 진행.
    addon Application들의 `SYNC STATUS`/`HEALTH STATUS`가 모두 `Synced`/`Healthy`인지 확인한다.
    `OutOfSync`나 `Degraded`가 있으면 `argocd app get <name> --core`로 원인을 확인 후 보고한다
    (3-A 절차만 탄 환경은 이 항목을 건너뛴다 — addon이 전부 Terraform Helm이라 별도 확인 불필요).
-3. `kubectl get ingress -A`로 각 Ingress에 ALB 주소(ADDRESS)가 할당됐는지 확인
+3. `kubectl get ingress -A`로 각 Ingress에 ALB 주소(ADDRESS)가 할당됐는지 확인하고,
+   **`kubectl get svc -A --field-selector spec.type=LoadBalancer`로 NLB도 함께 확인한다**
+   (OTel Gateway처럼 Ingress가 아니라 Service로 LB를 만드는 컴포넌트가 있다 — `EXTERNAL-IP`가
+   `<pending>`에서 안 넘어가면 LBC 로그를 확인한다). teardown에서 이 종류를 놓치면 LB가 고아로
+   남아 계속 과금되므로, provision 단계에서 존재를 파악해두는 것 자체가 안전망이다.
 4. Ingress가 있으면 `external-dns.alpha.kubernetes.io/hostname` 값을 각각 확인하고,
    `{root}/eks-addons/locals.tf`에서 `external_dns_route53_zone_arns`를 Grep해 zone ID를 추출한 뒤:
 
