@@ -209,7 +209,24 @@ module "eks" {
   # node_security_group_enable_recommended_rules가 커버하지 않는 비-TCP 프로토콜
   # (ICMP, UDP 애플리케이션 트래픽 등)을 노드 간에 허용한다.
   # 모듈 소유 SG의 규칙은 외부 리소스 주입 대신 모듈 파라미터로 관리한다.
-  node_security_group_additional_rules = var.node_security_group_additional_rules
+  #
+  # cert-manager webhook(10260)은 이 모듈이 bootstrap 애드온으로 cert-manager를 설치하는
+  # 이상 항상 필요하므로 모듈 기본값으로 보장한다. 업스트림 recommended rules는 이 포트를
+  # 열지 않아, 컨트롤 플레인이 Certificate/Issuer admission을 호출할 때 타임아웃된다
+  # (cert-manager Service 443 → 파드 targetPort 10260). 호출자가 같은 키로 덮어쓸 수 있다.
+  node_security_group_additional_rules = merge(
+    {
+      ingress_cluster_10260_cert_manager_webhook = {
+        description                   = "Cluster API to node cert-manager webhook"
+        protocol                      = "tcp"
+        from_port                     = 10260
+        to_port                       = 10260
+        type                          = "ingress"
+        source_cluster_security_group = true
+      }
+    },
+    var.node_security_group_additional_rules,
+  )
 
   # EC2NodeClass의 securityGroupSelectorTerms[].tags 필터와 이 태그 값이 일치해야
   # Karpenter가 올바른 node SG를 선택한다. 값이 cluster_name과 다르면 SG 0개 탐색으로

@@ -253,9 +253,39 @@ resource "aws_security_group_rule" "node" {
 
 ### node_sg에 추가된 커스텀 규칙 (`node_security_group_additional_rules`)
 
-| 키 | 방향 | 포트 | 목적 |
-|----|------|------|------|
-| `ingress_self_all` | 노드 → 노드 | ALL | ICMP·UDP 등 모듈 기본값(1025-65535/tcp)이 커버하지 못하는 비-TCP 프로토콜 허용 |
+| 키 | 방향 | 포트 | 목적 | 정의 위치 |
+|----|------|------|------|-----------|
+| `ingress_self_all` | 노드 → 노드 | ALL | ICMP·UDP 등 모듈 기본값(1025-65535/tcp)이 커버하지 못하는 비-TCP 프로토콜 허용 | 호출자(root) |
+| `ingress_cluster_10260_cert_manager_webhook` | 컨트롤 플레인 → 노드 | 10260/tcp | cert-manager admission webhook 호출 경로 | **이 모듈 기본값** |
+
+`ingress_cluster_10260_cert_manager_webhook`은 `main.tf`에서 `merge()`로 주입하는 모듈
+기본값이다. cert-manager를 이 모듈이 bootstrap 애드온으로 설치하는 이상 모든 환경에서
+항상 필요하므로 환경별 주입 대상이 아니다. 호출자가 `node_security_group_additional_rules`에
+같은 키를 넣으면 덮어쓴다.
+
+**왜 443이 아니라 10260인가**: cert-manager webhook은 `--secure-port=10260`으로 뜨고
+Service가 `443 → targetPort "https"(=10260)`로 매핑한다. `ValidatingWebhookConfiguration`에는
+`port: 443`이라고 적혀 있지만 **EKS 컨트롤 플레인은 ClusterIP를 라우팅할 수 없다** — AWS
+관리 VPC에서 돌고 고객 VPC에는 크로스 계정 ENI(`RequesterManaged=true`)만 꽂혀 있어 그
+경로에 kube-proxy가 없기 때문이다. 그래서 API 서버는 Service를 Endpoints로 해석해
+`<파드IP>:<targetPort>`로 직접 연결하며, SG 평가 대상도 10260이 된다. 업스트림이 만드는
+규칙 이름들(`Cluster API to node 4443/tcp webhook` 등)이 이미 같은 사실의 증거다 — 443이
+열려 있는데도 컨테이너 포트를 따로 열어둔다.
+
+**왜 업스트림 recommended rules로 커버되지 않는가**: 그 목록은 4443/6443/8443/9443/
+10250/10251로 고정돼 있다. cert-manager는 원래 10250(kubelet 포트)을 쓰다가 10260으로
+독립했는데, 10250은 kubelet용으로 이미 열려 있어 그동안 **우연히** 동작했다. 포트가
+분리되면서 그 우연이 사라졌고 업스트림 목록은 아직 10260을 포함하지 않는다.
+
+**영향 범위**: `cert-manager-webhook`은 `failurePolicy: Fail` + `resources: '*/*'`이다.
+즉 webhook 도달 불가는 특정 addon 하나의 문제가 아니라 **cert-manager API 그룹 리소스를
+아무것도 만들 수 없는 상태**이며, cert-manager에 의존하는 모든 향후 컴포넌트가 동일하게
+막힌다.
+
+> cert-manager를 설치해두기만 하고 `Certificate`/`Issuer`를 한 번도 만들지 않으면 webhook이
+> 호출될 일이 없어 이 규칙의 부재가 드러나지 않는다. LBC와 ESO는 자체 인증서 생성기를 써서
+> cert-manager 경로를 타지 않으므로, OTel Operator처럼 cert-manager로 자기 webhook 인증서를
+> 발급받는 컴포넌트를 추가하는 시점에 처음 문제가 된다.
 
 ### node_sg Karpenter 탐색 태그 (`node_security_group_tags`)
 

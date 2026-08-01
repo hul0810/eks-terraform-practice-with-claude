@@ -60,8 +60,64 @@ kubectl access-matrix for pods --sa <namespace>:<sa-name>   # 특정 리소스�
 
 > ArgoCD `application-controller`처럼 어떤 매니페스트든 sync해야 하는 컨트롤러는
 > 설계상 `ClusterRole`에 `apiGroups:["*"], resources:["*"], verbs:["*"]`를 요구한다
-> (`modules/eks-addons/1.0.0/CLAUDE.md`의 "ArgoCD 설치" 섹션 참조). 위 명령들로
+> (`modules/eks-addons/2.0.0/CLAUDE.md`의 "ArgoCD 설치" 섹션 참조 — ArgoCD는 monitoring
+> Hub에만 있으므로 이 검증도 monitoring 클러스터에서 한다). 위 명령들로
 > 실제로 이렇게 설정돼 있는지 검증할 수 있다.
+
+---
+
+## webhook을 쓰는 오퍼레이터/애드온 도입 시 점검 — 노드 SG 포트 대조
+
+admission webhook을 갖는 컴포넌트(오퍼레이터, 인증서 발급기 등)를 새로 도입할 때는
+**webhook이 실제로 리스닝하는 포트가 노드 SG에 열려 있는지**를 먼저 대조한다.
+
+EKS 컨트롤 플레인은 AWS 관리 VPC에서 돌고 고객 VPC에는 크로스 계정 ENI만 꽂혀 있어
+**ClusterIP를 라우팅하지 못한다**. 그래서 `ValidatingWebhookConfiguration`에 `port: 443`으로
+적혀 있어도 API 서버는 Service를 Endpoints로 해석해 `<파드IP>:<targetPort>`로 직접 연결한다
+— SG 평가 대상은 443이 아니라 **컨테이너 포트**다.
+
+```bash
+# 1) 실제로 필요한 포트 (Endpoints의 <파드IP>:<포트>)
+kubectl get endpoints -n <namespace> <webhook-service>
+
+# 2) 현재 열려 있는 포트
+aws ec2 describe-security-group-rules --profile <profile> \
+  --filters Name=group-id,Values=<node-sg> \
+  --query 'SecurityGroupRules[?IsEgress==`false`].[FromPort,Description]' --output text | sort -n
+```
+
+**1의 포트가 2에 없으면 그게 다음 사고 후보다.** 업스트림
+`node_security_group_enable_recommended_rules`가 열어주는 포트는 4443/6443/8443/9443/
+10250/10251로 고정이라, 그 밖의 포트를 쓰는 컴포넌트는 반드시 직접 추가해야 한다
+(`modules/eks/1.0.0`의 `node_security_group_additional_rules` 참조).
+
+### 증상으로 역추적하기
+
+이 문제는 증상이 원인에서 여러 단계 떨어져 있어 알아보기 어렵다. 아래 체인을 기억해둔다:
+
+| 단계 | 관찰되는 것 |
+|---|---|
+| 1 | 오퍼레이터 파드가 `ContainerCreating`에서 안 넘어감 |
+| 2 | `kubectl describe pod` → `MountVolume.SetUp failed for volume "cert": secret "..." not found` |
+| 3 | 그 Secret은 `Certificate`가 만든다 → `kubectl get certificate -A`가 비어 있음 |
+| 4 | ArgoCD sync 결과 → `Issuer`/`Certificate`만 `SyncFailed`, `failed calling webhook ... context deadline exceeded` |
+| 5 | **실제 원인**: 노드 SG에 해당 webhook 포트 인바운드 없음 |
+
+### 도달성 라이브 테스트
+
+SG 반영 후 아래로 즉시 검증한다 — `--dry-run=server`는 etcd에 저장하지 않고 admission만
+호출하므로 부작용이 없다.
+
+```bash
+kubectl apply --dry-run=server -f - <<'EOF'
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: webhook-reachability-test, namespace: default}
+spec: {selfSigned: {}}
+EOF
+```
+
+`created (server dry run)`이 나오면 도달 성공, 타임아웃이면 SG를 다시 확인한다.
 
 ---
 
