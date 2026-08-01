@@ -165,6 +165,55 @@ set -o pipefail && terraform apply -auto-approve -no-color 2>&1 | tail -60
 > `.output` 파일을 직접 열어 `No valid credential sources found` 에러를 발견했다. 이후
 > 로그인 후 재시도로 정상 생성됨을 확인했다.
 
+### 공통 처리: 실행 로그 위치와 소요 시간 측정
+
+**로그는 저장소 루트의 `temp/log/`에 쓰고, 실행 5회분만 유지한다.** `temp/`는
+`.gitignore`에 등록돼 있어 커밋되지 않는다(`.gitignore:43`). Step 0 진입 직후 아래를
+1회 실행해 이번 실행 전용 디렉토리를 만든다:
+
+```bash
+LOG_ROOT="<저장소 루트>/temp/log"
+RUN_DIR="$LOG_ROOT/provision-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN_DIR"
+# 최신 5개만 남기고 오래된 실행 디렉토리 삭제
+ls -1dt "$LOG_ROOT"/provision-* 2>/dev/null | tail -n +6 | xargs -r -d '\n' rm -rf
+echo "RUN_DIR=$RUN_DIR"
+```
+
+**[주의] `xargs`에 `-d '\n'`이 반드시 있어야 한다.** 이 저장소의 경로에는 공백이 들어있어
+(`바탕 화면`, `개인 프로젝트`, `eks 프로젝트`), 기본 구분자를 쓰면 xargs가 경로 하나를
+여러 조각으로 쪼갠다 — `rm -rf`가 존재하지 않는 조각들을 지우려다 `-f` 때문에 조용히
+성공하고, **로테이션이 아무 일도 하지 않은 채 통과한다**(2026-08-01 실측: 7개 중 0개 삭제).
+
+이후 이 스킬의 모든 `terraform` 출력은 `$RUN_DIR/<단계이름>.log`로 리다이렉트한다
+(예: `> "$RUN_DIR/mon-eks-apply.log" 2>&1`). `RUN_DIR` 값은 세션 중 계속 재사용해야
+하므로 **첫 실행 결과를 기억해두고 이후 명령에 문자열로 직접 넣는다** — Bash 도구는
+호출 간 쉘 변수를 유지하지 않는다.
+
+**소요 시간은 단계별로 측정해 `$RUN_DIR/timing.log`에 누적한다:**
+
+```bash
+s=$(date +%s); <실제 명령>; e=$(date +%s); \
+  printf '%-34s %5ds\n' "<단계이름>" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
+```
+
+**사람 대기 시간(SSO 재로그인, ArgoCD sync 승인 등)은 `[대기]` 접두사로 분리 기록한다** —
+절차 최적화로 줄일 수 없는 시간이라 자동화 구간과 섞이면 어느 단계를 개선해야 하는지
+판단이 흐려진다.
+
+Step 5 완료 메시지에 총 소요 시간과 단계별 내역을 함께 출력한다:
+
+```bash
+cat "$RUN_DIR/timing.log"
+printf '%-34s %5ds\n' "총 소요(자동화 구간 합)" \
+  "$(awk '!/^\[대기\]/{gsub(/s$/,"",$NF); t+=$NF} END{print t+0}' "$RUN_DIR/timing.log")"
+```
+
+> **WHY (2026-08-01)**: 이 스킬은 "시간 단축이 최우선"을 표방하는데, 정작 어느 단계가
+> 얼마를 잡아먹었는지 측정하지 않아 병렬화 효과를 매번 체감으로만 판단했다. 측정값이
+> 남으면 다음 실행에서 개선 효과를 숫자로 검증할 수 있다. teardown 쪽 동일 섹션과
+> 디렉토리 접두사(`provision-`/`teardown-`)만 다르고 규칙은 같다.
+
 ### Step 1: VPC NAT Gateway 활성화 — EKS와 병렬 시작
 
 `{root}/vpc/locals.tf`를 Read하여 `enable_nat_gateway` 현재 값을 확인한다.
@@ -580,10 +629,23 @@ Step 5로 진행.
 
 5. 완료 안내를 출력한다.
 
+**소요 시간 출력**: `$RUN_DIR/timing.log`를 그대로 보여주고 자동화 구간 합계를 덧붙인다
+(공통 처리 "실행 로그 위치와 소요 시간 측정" 참조). `[대기]` 항목은 합계에서 제외하되
+표에는 남겨 "사람이 기다린 시간"과 "절차가 쓴 시간"을 구분해 보여준다.
+
 ```
 [완료] <환경> 리소스 생성 완료
 - VPC NAT Gateway: 활성화
 - EKS 클러스터: <cluster_name>
 - eks-addons: 생성 완료
 - Ingress: <hostname 목록과 상태>
+
+[소요 시간]  (로그: <RUN_DIR>)
+Step 1+2 VPC NAT + EKS (병렬)         845s
+Step 3 eks-addons (mon)               412s
+Step 3 eks-addons (dev)               298s
+Step 3.5 observability                 96s
+[대기] SSO 재로그인                    150s
+──────────────────────────────────────────
+총 소요(자동화 구간 합)               1651s
 ```

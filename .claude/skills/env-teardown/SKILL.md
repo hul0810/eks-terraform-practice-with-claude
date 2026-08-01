@@ -216,8 +216,11 @@ StatefulSet/namespace는 클러스터를 지우면 etcd와 함께 사라진다 �
   없어져도 볼륨은 남으므로 안전하며, EKS destroy가 도는 동안 병렬로 처리된다).
 - **Route53 레코드**: ExternalDNS는 `upsert-only`라 어차피 사람이 지운다. 호스트명만 미리
   기록해두고 **EKS destroy가 도는 동안** 병렬로 삭제한다.
-- **여러 환경**: spoke의 `eks-addons destroy`만 monitoring이 살아있어야 한다(registry-writer
-  Role assume). 그 한 단계만 순서를 지키고 **EKS destroy·NAT 비활성화는 전 환경 동시 실행**한다.
+- **여러 환경**: monitoring이 살아있어야 하는 단계가 **둘** 있다. (1) spoke의
+  `eks-addons destroy`는 monitoring의 registry-writer Role을 assume한다. (2) spoke의
+  `eks destroy`는 monitoring **NAT Gateway**를 data source로 조회한다(Step 8의 순서 제약
+  참조). 따라서 **NAT 비활성화 병렬화는 "환경 내부"까지만** — spoke EKS destroy와 spoke NAT는
+  병렬로 돌리되, **monitoring NAT는 모든 spoke EKS destroy가 끝난 뒤**에 시작한다.
 
 **권장 실행 순서 (`monitoring develop` 동시 요청 기준)**:
 
@@ -227,9 +230,12 @@ StatefulSet/namespace는 클러스터를 지우면 etcd와 함께 사라진다 �
    EBS 볼륨 ID·Route53 호스트명 기록
 3. **[병렬]** LB 소멸 확인(보통 1분 내)
 4. spoke `eks-addons destroy` → 완료 후 monitoring `eks-addons destroy`
-   (**이 두 단계만 순서 의존**)
-5. **[병렬]** 전 환경 EKS destroy + NAT 비활성화 + **Route53 레코드 삭제 + EBS 직접 삭제**
-6. 최종 검증(LB·NAT·고아 EBS·EKS·Route53 zone 전체)
+   (**registry-writer Role 때문에 순서 의존**)
+5. **[병렬]** 전 환경 EKS destroy + **spoke NAT만** 비활성화 + **Route53 레코드 삭제 +
+   EBS 직접 삭제**
+6. spoke EKS destroy 완료 확인 → **그 다음에** monitoring NAT 비활성화
+   (**monitoring NAT는 spoke `eks` root의 data source 대상 — Step 8 순서 제약 참조**)
+7. 최종 검증(LB·NAT·고아 EBS·EKS·Route53 zone 전체) + `$RUN_DIR/timing.log` 출력
 
 > **WHY (2026-07-31 monitoring+develop teardown 실측)**: 직렬 처리로 develop을 완전히 끝낸
 > 뒤 monitoring을 시작해 EKS destroy(각 ~10분)가 겹치지 않았고, spoke Application을 개별
@@ -262,6 +268,62 @@ Gateway 비활성화)처럼 병렬로 실행하는 명령은 특히 취약하다
 > apply도 같은 SSO 만료로 실패해 NAT Gateway가 전혀 생성되지 않았다. 사용자가 직접
 > 지적하고서야 `.output` 파일을 열어 에러를 발견했다. teardown도 Step 8/10을 병렬로 돌리는
 > 동일 구조라 같은 함정이 있어 함께 반영한다.
+
+### 공통 처리: 실행 로그 위치와 소요 시간 측정
+
+**로그는 저장소 루트의 `temp/log/`에 쓰고, 실행 5회분만 유지한다.** `temp/`는
+`.gitignore`에 등록돼 있어 커밋되지 않는다(`.gitignore:43`). Step 0 진입 직후 아래를
+1회 실행해 이번 실행 전용 디렉토리를 만든다:
+
+```bash
+LOG_ROOT="<저장소 루트>/temp/log"
+RUN_DIR="$LOG_ROOT/teardown-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN_DIR"
+# 최신 5개만 남기고 오래된 실행 디렉토리 삭제
+ls -1dt "$LOG_ROOT"/teardown-* 2>/dev/null | tail -n +6 | xargs -r -d '\n' rm -rf
+echo "RUN_DIR=$RUN_DIR"
+```
+
+**[주의] `xargs`에 `-d '\n'`이 반드시 있어야 한다.** 이 저장소의 경로에는 공백이 들어있어
+(`바탕 화면`, `개인 프로젝트`, `eks 프로젝트`), 기본 구분자를 쓰면 xargs가 경로 하나를
+여러 조각으로 쪼갠다 — `rm -rf`가 존재하지 않는 조각들을 지우려다 `-f` 때문에 조용히
+성공하고, **로테이션이 아무 일도 하지 않은 채 통과한다**(2026-08-01 실측: 7개 중 0개 삭제).
+
+이후 이 스킬의 모든 `terraform` 출력은 `$RUN_DIR/<단계이름>.log`로 리다이렉트한다
+(예: `> "$RUN_DIR/dev-eks-destroy.log" 2>&1`). `RUN_DIR` 값은 세션 중 계속 재사용해야
+하므로 **첫 실행 결과를 기억해두고 이후 명령에 문자열로 직접 넣는다** — Bash 도구는
+호출 간 쉘 변수를 유지하지 않는다.
+
+**소요 시간은 단계별로 측정해 `$RUN_DIR/timing.log`에 누적한다.** 각 장기 실행 명령을
+아래 형태로 감싼다:
+
+```bash
+s=$(date +%s); <실제 명령>; e=$(date +%s); \
+  printf '%-34s %5ds\n' "<단계이름>" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
+```
+
+**사람 대기 시간(SSO 재로그인 등)은 반드시 별도 항목으로 분리해 기록한다** — 절차
+최적화로 줄일 수 없는 시간이라 자동화 구간과 섞이면 어느 단계를 개선해야 하는지
+판단이 흐려진다. 접두사 `[대기]`를 붙인다:
+
+```bash
+printf '%-34s %5ds\n' "[대기] SSO 재로그인" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
+```
+
+Step 11 완료 메시지에 총 소요 시간과 단계별 내역을 함께 출력한다:
+
+```bash
+cat "$RUN_DIR/timing.log"
+printf '%-34s %5ds\n' "총 소요(자동화 구간 합)" \
+  "$(awk '!/^\[대기\]/{gsub(/s$/,"",$NF); t+=$NF} END{print t+0}' "$RUN_DIR/timing.log")"
+```
+
+> **WHY (2026-08-01)**: 이 스킬은 "시간 단축이 최우선"을 표방하는데, 정작 어느 단계가
+> 얼마를 잡아먹었는지 측정하지 않아 최적화 판단이 매번 기억과 체감에 의존했다. 측정값이
+> 남으면 다음 실행에서 개선 효과를 숫자로 검증할 수 있다. 저장소 안(`temp/`)에 두되
+> gitignore 대상으로 잡는 이유는, 작업 중 바로 열어볼 수 있는 접근성은 유지하면서 실행
+> 산출물을 형상 관리에서는 배제하기 위해서다. 5회분만 유지하는 것은 직전 실행들과의
+> 비교에는 충분하면서 무한 누적을 막기 위해서다.
 
 ### Step 1: kubectl context 확인
 
@@ -327,6 +389,34 @@ kubectl delete applicationset root-app-addons -n argocd --ignore-not-found
 즉시 둘 다 사라졌는지 확인한다(`kubectl get application,applicationset root-app-addons -n argocd`가
 `NotFound`여야 함) — 살아있는 채로 다음 단계로 넘어가면 devops-manifest 디렉터리가
 재동기화되며 2-3에서 지운 걸 되살릴 수 있다.
+
+**2-1-A. [monitoring 필수] ArgoCD 자체를 정지시킨다 — `root-app-addons` 삭제만으로는 부족하다**
+
+`root-app-addons`는 addon 계열 Application만 관장한다. **`root-app-observability`(grafana/
+loki/mimir/tempo/otel-gateway-resources)와 `root-app-workload`(catalog/gateway/order)는
+독립적으로 계속 selfHeal한다** — 2-3에서 Ingress·LoadBalancer Service를 지워도 몇 초 만에
+되살아나고, 그때마다 **새 DNS 이름의 ALB/NLB가 새로 생성돼** 이미 기록해둔 삭제 대상 목록이
+무효가 된다. 더 나쁜 것은 2-2에서 `karpenter` deployment를 `replicas=0`으로 내려도
+ArgoCD가 그 값을 차트 기본값으로 되돌려 노드 재생성이 계속된다는 점이다.
+
+monitoring이 대상이면 **개별 Application을 쫓아다니지 말고 ArgoCD 컨트롤러 자체를 내린다**
+— 어차피 클러스터를 지울 것이므로 ArgoCD를 살려둘 이유가 없다:
+
+```bash
+kubectl --context <monitoring-context> scale statefulset -n argocd --all --replicas=0
+kubectl --context <monitoring-context> scale deploy -n argocd --all --replicas=0
+```
+
+`application-controller`는 StatefulSet, 나머지(applicationset-controller, repo-server,
+server, redis, notifications, image-updater)는 Deployment라 두 명령이 모두 필요하다.
+이 시점 이후 Application/ApplicationSet 오브젝트는 남아있어도 아무것도 조정하지 않으므로
+개별 삭제가 불필요해진다(Step 8이 클러스터와 함께 지운다).
+
+> **WHY (2026-08-01 monitoring+develop teardown 실측)**: `root-app-addons`만 지우고
+> 진행했더니 grafana ALB와 otel-gateway NLB가 각각 새 DNS로 부활했고(`otelgate-8a819bcb69`
+> → `ab445ca2aa`), karpenter가 3차례에 걸쳐 노드를 재생성해 총 9대를 반복 종료해야 했다.
+> `karpenter` deployment를 `replicas=0`으로 내려도 ArgoCD가 즉시 되돌린 것이 직접 원인이다.
+> ArgoCD 컨트롤러를 내린 직후 재생성이 완전히 멎었다.
 
 **2-1-B. LGTM(observability) 워크로드·PVC 정리 → EBS 볼륨 회수 (observability root가 있는
 환경만 — 현재 monitoring, 반드시 2-2보다 먼저 실행)**
@@ -424,19 +514,46 @@ kubectl get application -n argocd -o name | grep karpenter-resources | \
 
 **[속도] 실습 환경에서는 graceful drain을 기다릴 이유가 없다.** 목적은 "EC2 인스턴스가
 과금되지 않게 회수"하는 것 하나뿐이고, 워크로드 무중단은 어차피 teardown 대상이라 의미가
-없다. **NodeClaim의 EC2 인스턴스를 직접 종료하고 finalizer를 제거하는 편이 가장 빠르다**:
+없다. **다만 순서가 중요하다 — 공급 주체(컨트롤러 → NodePool)를 먼저 끊고, 그 다음에
+NodeClaim과 EC2를 정리한다.** 아래 4단계를 이 순서 그대로 실행한다:
 
 ```bash
-# 인스턴스 ID 일괄 추출 → 한 번에 종료
-IDS=$(kubectl get nodeclaims -o jsonpath='{range .items[*]}{.status.providerID}{"\n"}{end}' \
-  | sed 's#.*/##')
+# 1) 컨트롤러 정지 — 이게 없으면 아래에서 무엇을 지워도 즉시 재생성된다
+#    (monitoring은 2-1-A에서 ArgoCD를 이미 내렸어야 이 scale이 유지된다)
+kubectl scale deploy karpenter -n karpenter --replicas=0
+
+# 2) NodePool 삭제 — 공급 템플릿 자체를 제거
+kubectl delete nodepool --all --ignore-not-found --wait=false
+
+# 3) NodeClaim: finalizer 제거 "후 반드시 delete까지" 한다
+kubectl get nodeclaim -o name | xargs -r -I{} kubectl patch {} --type=merge -p '{"metadata":{"finalizers":[]}}'
+kubectl delete nodeclaim --all --ignore-not-found --wait=false
+
+# 4) 실제 EC2 종료 — 태그로 조회하면 K8s 오브젝트와 어긋난 인스턴스까지 잡힌다
+IDS=$(aws ec2 describe-instances --region ap-northeast-2 --profile <profile> \
+  --filters "Name=instance-state-name,Values=running,pending" "Name=tag-key,Values=karpenter.sh/nodepool" \
+  --query "Reservations[].Instances[].InstanceId" --output text)
 [ -n "$IDS" ] && aws ec2 terminate-instances --region ap-northeast-2 --profile <profile> --instance-ids $IDS
-# finalizer 제거로 K8s 오브젝트도 즉시 정리(실제 EC2는 위에서 이미 종료됨)
-kubectl get nodeclaims -o name | xargs -r -n1 -I{} kubectl patch {} --type=merge -p '{"metadata":{"finalizers":[]}}'
 ```
 
-이러면 아래 polling 자체가 불필요하다. Karpenter 컨트롤러 생존 여부와도 무관해져
-"컨트롤러가 먼저 죽어 finalizer가 안 풀리는" 데드락 위험까지 함께 사라진다.
+**[주의] 3단계에서 `patch`만 하고 `delete`를 빠뜨리면 안 된다.** finalizer 제거는 "삭제를
+막는 잠금을 푸는" 것일 뿐 삭제 요청이 아니다 — NodeClaim 오브젝트가 그대로 남아있는데
+그 EC2만 종료되면, Karpenter는 이를 "노드가 비정상 소멸했다"로 해석해 **대체 노드를
+새로 프로비저닝한다.**
+
+4단계를 `kubectl get nodeclaims`의 `providerID`가 아니라 **AWS 태그 기준으로 조회**하는
+이유도 같다. 재생성이 일어난 뒤에는 K8s 오브젝트 목록과 실제 인스턴스가 어긋나 있어,
+K8s 기준으로 뽑으면 방금 뜬 인스턴스를 놓친다.
+
+이 순서를 지키면 아래 polling 자체가 불필요하다. Karpenter 컨트롤러 생존 여부와도
+무관해져 "컨트롤러가 먼저 죽어 finalizer가 안 풀리는" 데드락 위험까지 함께 사라진다.
+
+> **WHY (2026-08-01 실측)**: `terminate-instances` + `finalizer patch`만 수행하고
+> NodeClaim 삭제와 컨트롤러 정지를 빠뜨렸더니, 양 계정 합쳐 6대가 즉시 재생성됐다.
+> 이후 컨트롤러만 `replicas=0`으로 내렸으나 monitoring에서는 ArgoCD가 되돌려(2-1-A 참조)
+> 다시 3대가 떴다 — 총 3라운드에 걸쳐 9대를 종료했다. 재생성이 도는 동안
+> `null_resource.karpenter_nodeclaims_drainer`(Step 6)가 끝나지 않아 destroy 전체가
+> 대기 상태로 묶인다.
 
 아래는 정석 경로(컨트롤러에게 drain을 맡기는 방식)로, 위 직접 종료를 쓰지 않을 때만 따른다.
 이 Application들이 관리하는 NodePool/EC2NodeClass는 Karpenter 자신의 finalizer
@@ -775,11 +892,37 @@ aws events list-rules --region ap-northeast-2 --profile <profile> --name-prefix 
 cd {root}/eks && terraform destroy -auto-approve
 ```
 
-이 destroy를 시작하는 즉시(완료를 기다리지 않고) **Step 10의 VPC NAT Gateway 비활성화도
-병렬로 시작한다.** eks-addons가 이미 Step 6에서 삭제되어 클러스터 안에 아웃바운드가 필요한
-워크로드가 남아있지 않으므로, EKS 클러스터 destroy 자체(컨트롤 플레인·노드그룹·SG 삭제는
-AWS API 호출이지 고객 VPC 경유 아웃바운드가 아니다)는 NAT Gateway 유무와 무관하게 안전하게
-동시 진행할 수 있다 (2026-07-04 확인 — provision 쪽 Step 1/2 병렬화와 같은 근거).
+이 destroy를 시작하는 즉시(완료를 기다리지 않고) **같은 환경의 Step 10 NAT Gateway
+비활성화는 병렬로 시작한다.** eks-addons가 이미 Step 6에서 삭제되어 클러스터 안에
+아웃바운드가 필요한 워크로드가 남아있지 않으므로, EKS 클러스터 destroy 자체(컨트롤
+플레인·노드그룹·SG 삭제는 AWS API 호출이지 고객 VPC 경유 아웃바운드가 아니다)는 NAT
+Gateway 유무와 무관하게 안전하게 동시 진행할 수 있다 (2026-07-04 확인 — provision 쪽
+Step 1/2 병렬화와 같은 근거).
+
+> **[순서 제약] monitoring의 NAT Gateway는 spoke(develop/production)의 EKS destroy가
+> 전부 끝난 뒤에 지운다 (2026-08-01 실측).** spoke의 `eks` root는 Hub→spoke API 접근용
+> 출발 IP를 얻기 위해 monitoring NAT를 **data source로 조회**한다
+> (`project/environments/*/ap-northeast-2/shared/eks/data.tf`의
+> `data.aws_nat_gateway.monitoring` → `locals.tf`의 `public_access_cidrs`). data source는
+> destroy 시에도 plan 단계에서 평가되므로, monitoring NAT가 먼저 사라지면 spoke의
+> `terraform destroy`가 실행 전에 통째로 실패한다:
+>
+> ```
+> Error: no matching EC2 NAT Gateway found
+>   on data.tf line 36, in data "aws_nat_gateway" "monitoring":
+> ```
+>
+> **따라서 여러 환경을 함께 지울 때 NAT 병렬화 범위는 "환경 내부"로 한정한다** — spoke의
+> EKS destroy와 spoke의 NAT 비활성화는 병렬, monitoring NAT는 모든 spoke EKS destroy가
+> `Destroy complete!`를 찍은 뒤에 시작한다. monitoring EKS destroy 자체는 monitoring NAT와
+> 병렬로 돌려도 무방하다.
+>
+> 이미 monitoring NAT를 먼저 지워 spoke destroy가 막혔다면, NAT를 되살리지 말고 spoke
+> `eks/data.tf`의 해당 data source 블록과 `locals.tf`의 참조를 임시 주석 처리한 뒤
+> (`public_access_cidrs = [var.operator_ip_cidr]`) destroy하고, **완료 후 반드시 원복한다**
+> — destroy에는 이 값이 아무 영향도 주지 않는다. 원복 누락을 막기 위해 편집 전
+> 두 파일을 `$RUN_DIR`에 백업해두고, Step 11에서 `git status`로 두 파일이 목록에 없는지
+> 확인한다.
 
 **`deleting Security Group ...: DependencyViolation: resource ... has a dependent
 object` 에러 시** (VPC CNI가 만든 secondary ENI 잔존 — 2026-07-04 monitoring teardown
@@ -900,6 +1043,14 @@ aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> \
 세 명령 결과가 모두 비어있으면 완료 메시지를 출력한다 (고아 EBS 볼륨이 있으면
 `aws ec2 delete-volume --volume-id <id>`로 직접 삭제 후 재확인):
 
+**임시 편집 원복 확인**: Step 8의 순서 제약 때문에 spoke `eks/data.tf`·`locals.tf`를
+주석 처리했다면, `git status --short`에 두 파일이 나타나지 않는지 확인한다(나타나면
+`$RUN_DIR` 백업본으로 원복). NAT 토글(`vpc/locals.tf`)만 변경 목록에 남아있는 것이 정상이다.
+
+**소요 시간 출력**: `$RUN_DIR/timing.log`를 그대로 보여주고 자동화 구간 합계를 덧붙인다
+(공통 처리 "실행 로그 위치와 소요 시간 측정" 참조). `[대기]` 항목은 합계에서 제외하되
+표에는 남겨 "사람이 기다린 시간"과 "절차가 쓴 시간"을 구분해 보여준다.
+
 ```
 [완료] <환경> 비용 발생 리소스 삭제 완료
 - ArgoCD Application/ApplicationSet: 삭제 완료
@@ -908,6 +1059,15 @@ aws ec2 describe-volumes --region ap-northeast-2 --profile <profile> \
 - kubeconfig: context/cluster/user 정리 완료
 - NAT Gateway: 비활성화
 - VPC/서브넷/파라미터 스토어: 유지 (비용 없음)
+
+[소요 시간]  (로그: <RUN_DIR>)
+Step 2 LB/Karpenter/Route53           492s
+Step 6 eks-addons destroy (dev)       270s
+Step 6 eks-addons destroy (mon)       365s
+Step 8 EKS destroy (병렬)             700s
+[대기] SSO 재로그인                    185s
+──────────────────────────────────────────
+총 소요(자동화 구간 합)               1827s
 
 재개 시 /env-provision <환경> 실행.
 ```
