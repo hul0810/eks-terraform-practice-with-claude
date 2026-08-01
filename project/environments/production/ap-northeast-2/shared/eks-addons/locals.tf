@@ -64,9 +64,8 @@ locals {
     # 시스템 노드 min/desired=1(비용 예외, eks/locals.tf 참조)인 상태에서 HA를 켜면
     # redis-ha quorum이 spot 노드에 분산되어 단일 노드 장애 시 ArgoCD 전체가 다운될 수 있다.
     # 시스템 노드 HA 복원(min/desired=2) 시 true로 함께 전환할 것 (redis-ha + replica=2).
-    argocd_ha_enabled      = false
-    argocd_ingress_enabled = true
-    # monitoring 클러스터가 "argocd.pyhtest.com" Hub를 운영하므로 production은 별도 subdomain 사용
+    argocd_ha_enabled       = false
+    argocd_ingress_enabled  = true
     argocd_ingress_hostname = "argocd-production.pyhtest.com"
     argocd_ingress_alb_name = "eks-practice-argocd-prd-alb"
     # dex 비활성화 상태(기본 admin 계정만 인증)이므로 ALB SG inbound를 작업자 IP로 제한

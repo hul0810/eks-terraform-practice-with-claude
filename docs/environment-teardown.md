@@ -58,11 +58,12 @@ ALLOW_PRODUCTION_TEARDOWN_APPLY=1 terraform apply -auto-approve
 
 `aws-load-balancer-controller`(LBC)는 Kubernetes Ingress 리소스를 보고
 **ALB·Target Group·Listener·Security Group을 AWS API로 직접 생성**한다.
-이 리소스들은 Terraform state에 존재하지 않는다 — Terraform이 관리하는 것은
-Ingress까지이며(`helm_release.argocd`를 통해), ALB 등은 LBC가 비동기로
+이 리소스들은 Terraform state에 존재하지 않는다 — Ingress를 만드는 주체까지가
+관리 경계이고(monitoring의 ArgoCD Ingress는 Terraform의 `helm_release`,
+그 밖의 Ingress는 ArgoCD가 sync하는 매니페스트), ALB 등은 LBC가 비동기로
 만들고 지우는 파생 리소스다.
 
-`terraform destroy`로 eks-addons(LBC, ArgoCD 등 helm_release 포함)와
+`terraform destroy`로 eks-addons(monitoring은 ArgoCD helm_release 포함)와
 eks(클러스터)를 한 번에/연속으로 삭제하면, LBC가 Ingress 삭제를 감지하고
 ALB를 정리(finalizer 처리)할 시간을 갖지 못한 채 자신도 종료되거나
 클러스터 API 서버가 사라질 수 있다. 결과적으로 **ALB·Target Group·
@@ -76,7 +77,7 @@ Security Group이 AWS에 orphan 상태로 남아 비용이 계속 발생**한다
 
 ```bash
 kubectl get ingress -A
-kubectl delete ingress <name> -n <namespace>   # 예: argocd-server -n argocd
+kubectl delete ingress <name> -n <namespace>   # 예(monitoring): argo-cd-argocd-server -n argocd
 ```
 
 ### 2단계: LBC의 ALB 정리 완료 확인
@@ -173,12 +174,12 @@ aws ec2 delete-network-interface --region ap-northeast-2 --profile <profile> \
 
 ## Route53 레코드 잔존 주의
 
-ExternalDNS가 생성한 Route53 A 레코드(예: `argocd-develop.pyhtest.com`)는
+ExternalDNS가 생성한 Route53 A 레코드(예: monitoring의 `argocd.pyhtest.com`)는
 ALB 삭제와 별개로 남는다. ALB가 사라진 뒤에도 레코드가 남으면 존재하지
 않는 ALB를 가리키는 dangling 레코드가 되므로 함께 확인·정리한다.
 
 ```bash
 aws route53 list-resource-record-sets \
-  --hosted-zone-id Z0651638YFNLNW79M27P \
-  --query "ResourceRecordSets[?Name=='argocd-develop.pyhtest.com.']"
+  --hosted-zone-id Z0947901KS8HHREY0RFC --profile terraform-workload \
+  --query "ResourceRecordSets[?Name=='argocd.pyhtest.com.']"
 ```

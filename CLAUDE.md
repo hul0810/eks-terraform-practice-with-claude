@@ -180,10 +180,10 @@
 - **EKS 애드온 전략**: `docs/addon-strategy.md` 참조 (관리형 우선 원칙, 분류표, Pod Identity 패턴)
 - **GitOps 원칙 정책**: `docs/gitops-principles.md` 참조 (OpenGitOps 4원칙, 부트스트랩 예외 판단 기준, 알려진 미충족 갭)
 - **환경 전체 삭제 절차**: `docs/environment-teardown.md` 참조 (LBC ALB orphan 방지 순서, 수동 정리)
-- **K8s 운영 팁**: `docs/k8s-operator-tips.md` 참조 (RBAC 확인 명령어, krew 설치/트러블슈팅 등 누적 기록)
+- **K8s 운영 팁**: `docs/k8s-operator-tips.md` 참조 (RBAC 확인 명령어, webhook 컴포넌트 도입 시 노드 SG 포트 대조, krew 설치/트러블슈팅 등 누적 기록)
 - **Git 저장소**: https://github.com/hul0810/eks-terraform-practice-with-claude
 - **GitOps 매니페스트 저장소**: https://github.com/hul0810/eks-practice-devops-manifest
-  (Phase 5 — ArgoCD가 참조할 EKS 애드온 Helm values/ApplicationSet 매니페스트 관리)
+  (monitoring Hub의 ArgoCD가 참조할 EKS 애드온 Helm values/ApplicationSet 매니페스트 관리)
 - **애플리케이션 저장소**: https://github.com/hul0810/eks-practice-application-with-claude
   (EKS에 배포할 애플리케이션 코드 — Docker 이미지 빌드 대상)
 - **목적**: 실무 기반 EKS + Terraform 인프라 구축 실습 (협업 가능한 구조를 기본값으로)

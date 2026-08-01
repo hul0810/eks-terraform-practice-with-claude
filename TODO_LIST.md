@@ -91,13 +91,8 @@
   - [x] EKS 클러스터 생성 완료
 
 > 아래는 모듈 완성 후 추가로 식별된 항목. `modules/eks/1.0.0`은 dev/prd/monitoring 3개가 공유하므로
-> 모듈 변경 1회 + 3개 환경 `eks/locals.tf` 값 주입으로 반영한다. 순서 의존 있음(1 → 2).
+> 모듈 변경 1회 + 3개 환경 `eks/locals.tf` 값 주입으로 반영한다.
 
-- [ ] **IPv4 Prefix Delegation** — 노드당 max-pods 상향 (t3.medium 17 → 최대 110, 추가 비용 $0)
-  - [ ] `vpc_cni_configuration_values` 변수 신설 → `addons["vpc-cni"]` 배선
-        (기존 `coredns_configuration_values`와 동일 패턴, 값은 환경별 `locals.tf`에서 주입)
-  - [ ] apply 후 `.status.allocatable.pods` 상향 확인 (미반영 시 launch template `--max-pods` 별도 설계)
-  - [ ] 서브넷 IPv4 여유 확인 (노드당 `/28` 프리픽스 예약)
 - [ ] **EKS Node Auto Repair** — `Ready=true`인데 고장난 노드(`IPAMDNotRunning` 등) 감지·교체.
       ASG 헬스체크(EC2 물리 장애)·CA(용량) 어느 쪽으로도 안 덮이는 구간
   - [ ] `eks-node-monitoring-agent` 애드온 + MNG `node_repair_config` **세트로 도입**
@@ -105,7 +100,6 @@
   - [ ] `max_unhealthy_node_threshold_count` 명시 필수
         (기본 브레이크는 "노드 5개 초과 && 20% 초과 unhealthy" 조건이라 1~3대 규모에서 미발동)
   - [ ] production은 HA 복원(`min/desired = 2`)과 세트로 (단일 노드에서는 교체 = 블랙아웃)
-  - [ ] 애드온이 전 노드 DaemonSet 슬롯을 소비하므로 Prefix Delegation 완료 후 착수
 - [ ] 시스템 ASG에 `k8s.io/cluster-autoscaler/node-template/label/role=system` 태그 존재 확인
       (없으면 `nodeAffinity(role=system)` 파드가 Pending이어도 CA가 scale-out 미시도)
 
@@ -298,56 +292,36 @@
 
 ---
 
-## Phase 4. ArgoCD 설치 (dev/prd)
-
-> **목적**: dev/prd 클러스터에 ArgoCD를 설치하고 외부 접근 가능한 상태로 구성한다.
-> Helm 애드온 GitOps 전환(blueprints → ArgoCD 위임)과 Hub-Spoke 중앙 GitOps는 Phase 6(2단계)에서 진행한다.
->
-> **전제**: Phase 2-4 완료 후 진행 (Karpenter 시스템 노드 Ready 상태 기준).
-
-- [x] `modules/eks-addons/main.tf`에 ArgoCD Helm 설치 추가
-  - [x] `enable_argocd = true` (aws-ia/eks-blueprints-addons)
-  - [x] HA 구성 values 설정 (redis-ha, server/repoServer/applicationSet replicas) —
-    `argocd_ha_enabled` 토글 (dev=false, production=true)
-  - [x] `CriticalAddonsOnly` toleration 추가 (시스템 노드에 스케줄, redis-ha는 별도 명시)
-- [x] ArgoCD admin 패스워드 bcrypt 해시 주입 (`argocd_admin_password_bcrypt` — Terraform `bcrypt()` 미사용, apply마다 재시작 방지)
-- [x] ArgoCD Ingress 설정 추가
-  - [x] dev: `argocd-develop.pyhtest.com` (수정 전: `argo-develop.pyhtest.com` → ExternalDNS로 자동 전환)
-  - [x] production: `argocd.pyhtest.com` (ALB + ACM + ExternalDNS 자동 Route53 레코드 생성)
-- [x] dev: argo-cd v9.5.21(app v3.4.3) helm_release status=deployed 확인
-- [ ] ArgoCD UI 접속 확인 (dev: `https://argocd-develop.pyhtest.com` / prd: `https://argocd.pyhtest.com`)
-
----
-
 ## Phase 5. Observability 인프라 구성 (monitoring EKS 클러스터 + OTel Spoke)
 
 > **목표**: Observability 전용 EKS 클러스터(monitoring, 10.12.0.0/16)의 인프라를 구성하고,
-> dev/prd 클러스터에 OTel Spoke Collector를 준비한다.
+> dev/prd 클러스터에 OTel Spoke Collector를 배포해 실제 텔레메트리를 LGTM으로 수집한다.
 >
-> **결정 사항**: LGTM 스택(Mimir·Loki·Tempo·Grafana)과 OTel Operator·Gateway는 **GitOps로 직행**.
-> Phase 5에서는 Terraform으로 클러스터 인프라(VPC·EKS·EKS Addons)만 구성하고,
-> LGTM 배포는 Phase 6(Hub-Spoke ArgoCD) 완료 후 `devops-manifest` 저장소에서 ArgoCD Application으로 관리한다.
+> **결정 사항**: LGTM 스택(Mimir·Loki·Tempo·Grafana)과 OTel Spoke Collector는 **GitOps 관리**.
+> Terraform은 클러스터 인프라(VPC·EKS·EKS Addons IAM)와 LGTM 오브젝트 스토리지(S3·IAM·Pod
+> Identity, `observability` root)까지만 담당하고, K8s 워크로드는 `devops-manifest`의 ArgoCD
+> Application이 배포한다.
 >
-> **아키텍처**: dev/prd OTel DaemonSet(spoke) → monitoring OTel Gateway(hub, GitOps 배포) → LGTM 백엔드
-> **전제**: Phase 2-4 완료. cert-manager Bootstrap 애드온 설치 완료 (OTel Operator 전제 조건).
+> **아키텍처 (2026-07-31 변경)**: dev/prd OTel Collector(spoke) → **LGTM 백엔드 직접 전송**
+> (VPC Peering 경유). 당초 설계에 있던 monitoring OTel Gateway(Internal NLB) 경유 단계는
+> 구성 요소를 줄이기 위해 생략한다.
 >
-> **우선순위 하향 (2026-07-21)**: Phase 6-5(Hub-Spoke ArgoCD 확장 — dev/prd를 spoke로 등록)를
-> 먼저 진행한다. monitoring 쪽 ArgoCD Hub 구축과 devops-manifest 연동이 이미 완료된 상태라,
-> 그 구조를 실제 멀티 클러스터 환경(dev/prd 포함)에서 검증하는 게 더 급하다고 판단했다 —
-> Phase 5의 나머지 항목(5-4/5-5)은 6-5 완료 후로 미룬다.
+> **전제**: Phase 2~3 완료. cert-manager Bootstrap 애드온 설치 완료 (OTel Operator 전제 조건).
+> Phase 6(Hub-Spoke ArgoCD)이 먼저 완료되어야 spoke에 Application을 배포할 수 있다 — 완료됨.
 
-### 5-2. modules/eks-addons/1.0.0 — OTel Spoke Collector 추가 ✅
+### 5-2. OTel Spoke Collector — Terraform 구현(폐기 예정) ✅
 
-- [x] `modules/eks-addons/1.0.0/variables.tf` — `enable_otel_spoke_collector`, `otel_gateway_endpoint`, `otel_spoke_operator_chart_version`
-- [x] `modules/eks-addons/1.0.0/main.tf` — OTel Operator helm_release + DaemonSet(`otel-spoke-node`) + Deployment(`otel-spoke-singleton`) CRD
-  - k8s_cluster receiver는 DaemonSet에서 분리해 Deployment로 관리 (중복 메트릭 방지)
-- [x] `modules/eks-addons/1.0.0/CLAUDE.md` — OTel spoke 섹션 + GitOps 전환 계획 추가
+> GitOps 이관 결정(2026-07-31)으로 아래 Terraform 구현은 사용하지 않는다.
+> 실제 배포는 5-4에서 `devops-manifest`의 ArgoCD Application으로 수행한다.
+
+- [x] `modules/eks-addons/1.0.0` — OTel Operator helm_release + DaemonSet/Deployment 수집기 (DEPRECATED 모듈, 참조 환경 없음)
+- [x] `modules/eks-addons/2.0.0` — 동일 구현 이식 (`enable_otel_spoke_collector`, `otel_gateway_endpoint`, `otel_spoke_operator_chart_version`)
+- [ ] GitOps 배포 검증 완료 후 `modules/eks-addons/2.0.0`의 OTel spoke 변수·리소스 제거
 
 ### 5-3. monitoring/ 환경 구성 (클러스터 인프라만) ✅
 
 > `monitoring/environments/ap-northeast-2/shared/` 디렉토리
-> 모듈 source 경로: `../../../../../modules/{name}/1.0.0` (루트까지 5단계)
-> **LGTM 스택은 이 단계에서 구성하지 않는다 — Phase 6 GitOps에서 배포**
+> **LGTM 스택 자체는 이 단계 범위 밖 — devops-manifest의 ArgoCD가 배포한다(5-4 참조)**
 
 > **참고 (2026-07-17 결정)**: 당초 계획은 공유 서비스(ArgoCD Hub·중앙 Observability 등)를
 > 별도의 Intra 계정에 두는 것이었으나, 계정을 추가로 늘리지 않고 이미 존재하는 `monitoring`
@@ -364,30 +338,38 @@
 - [x] `monitoring/environments/ap-northeast-2/shared/eks/` 구성
   - [x] `cluster_name = "eks-practice-mon"`, `kubernetes_version = "1.34"`, cert-manager Bootstrap 포함
 - [x] `monitoring/environments/ap-northeast-2/shared/eks-addons/` 구성
-  - [x] LBC, ExternalDNS, Karpenter, Metrics Server 활성화 (ArgoCD·OTel spoke 미포함)
+  - [x] LBC, ExternalDNS, Karpenter, Metrics Server, ArgoCD Hub 활성화
+- [x] `monitoring/environments/ap-northeast-2/shared/observability/` 구성 — LGTM 오브젝트
+      스토리지(S3 3종) + 버킷별 IAM Role + EKS Pod Identity Association
+  - [x] Pod Identity Association은 클러스터와 함께 삭제되므로 재provision 시 재apply 필수
 
-### 5-4. VPC Peering(AWS CLI 수동) + dev/prd OTel spoke 활성화
+### 5-4. VPC Peering + LGTM 배포 + dev/prd OTel spoke 배포
 
-> 절차·명령어는 `docs/network-design.md` 참조. VPC peering은 Terraform 코드가
-> 아니라 AWS CLI로 직접 생성하므로 아래 항목은 `.tf` 변경이 아니다.
+> Peering 절차·명령어는 `docs/network-design.md` 참조 (Terraform이 아니라 AWS CLI 수동 생성).
+> LGTM·OTel spoke는 `devops-manifest`의 ArgoCD Application으로 배포한다.
 
-- [x] `project/environments/develop/.../eks-addons/locals.tf` — `enable_otel_spoke_collector=false` 플레이스홀더 (NLB DNS 입력 대기)
-- [x] `project/environments/production/.../eks-addons/locals.tf` — 동일
 - [x] `docs/network-design.md` 절차대로 mon-to-dev, mon-to-prd VPC Peering 생성 + 라우트 추가 (AWS CLI, 2026-07-01)
 - [x] `aws ec2 describe-vpc-peering-connections`로 `active` 상태 확인 → 문서의 "연결 목록" 표에 PCX ID 기록
       (`pcx-07fa1a0e9eb100e47`, `pcx-084a197c6a2532991`)
-- [ ] monitoring eks, eks-addons apply (2단계)
-- [ ] GitOps로 OTel Operator·Gateway·LGTM 배포 (Phase 6 이후)
-- [ ] OTel Gateway NLB 호스트명 확인 후 dev/prd eks-addons `enable_otel_spoke_collector=true` + endpoint 입력 → apply
+- [x] monitoring vpc/eks/eks-addons/observability apply
+- [x] GitOps로 LGTM 배포 (Mimir·Loki·Tempo·Grafana, `argocd/applicationsets/observability/`)
+  - [ ] `mimir-ingester-0` CrashLoopBackOff 해소 (memberlist fast-join 실패 — `joined 0, required 1`)
+  - [ ] `tempo-query-frontend` querier 연결 확인
+- [ ] dev OTel Collector를 devops-manifest에 작성 → spoke ApplicationSet에 등록
+  - [ ] 수집기 구성: DaemonSet(노드/파드 메트릭) + Deployment(`k8s_cluster` receiver, 중복 방지)
+  - [ ] exporter 대상: LGTM 백엔드 직접 전송 (Gateway 미경유)
+- [ ] dev 앱(catalog/gateway/order)의 OTLP export 엔드포인트를 Collector로 지정
+- [ ] dev 검증 완료 후 production에 동일 적용
 
 ### 5-5. 검증
 
-- [ ] `aws eks update-kubeconfig --name eks-practice-mon --region ap-northeast-2`
-- [ ] `kubectl get nodes` — monitoring 클러스터 시스템 노드 확인
-- [ ] `kubectl get pods -A` — LBC·ExternalDNS·Karpenter·Metrics Server 확인
-- [ ] `aws ec2 describe-vpc-peering-connections --filters Name=status-code,Values=active` — Peering 상태 확인
-- [ ] (Phase 6 이후) `kubectl get opentelemetrycollector -A` — spoke 인스턴스 확인
-- [ ] (Phase 6 이후) Grafana UI 접속 (`https://grafana.pyhtest.com`)
+- [x] `kubectl get nodes` — monitoring 클러스터 시스템 노드 확인
+- [x] `kubectl get pods -A` — LBC·ExternalDNS·Karpenter·Metrics Server·ArgoCD 확인
+- [x] `aws ec2 describe-vpc-peering-connections --filters Name=status-code,Values=active` — Peering 상태 확인
+- [ ] `kubectl get opentelemetrycollector -A` — dev spoke 인스턴스 확인
+- [ ] dev 앱 로그에서 OTLP export 오류 소멸 확인
+- [ ] Grafana에서 dev 클러스터 메트릭 조회 (Mimir 데이터소스)
+- [ ] Grafana UI 접속 (`https://grafana.pyhtest.com`)
 
 ---
 
@@ -408,7 +390,7 @@
 
 ### Phase 6. Hub-and-Spoke ArgoCD + GitOps Bridge (중앙 GitOps)
 
-> **목표**: dev/prd 개별 ArgoCD를 걷어내고, monitoring 계정의 기존 ArgoCD를 Hub로 삼아
+> **목표**: ArgoCD를 클러스터마다 두지 않고 monitoring 계정의 ArgoCD 하나를 Hub로 삼아
 > spoke(dev/prd)를 원격 관리하는 Hub-and-Spoke 구조로 전환한다. addon의 Helm 관리 주체를
 > Terraform → ArgoCD로 넘기되, addon이 참조하는 IAM 등 AWS 리소스는 계속 Terraform이 관리한다.
 >
@@ -432,7 +414,7 @@
 > **SPOF 검토**: Hub 장애 시에도 이미 배포된 워크로드는 정상 동작한다(ArgoCD는
 > reconciler이지 데이터 플레인이 아니다) — 관리 평면만 정지, 데이터 평면은 무중단.
 >
-> **전제 조건**: Phase 4(ArgoCD 설치), Phase 5-3(monitoring 클러스터 존재)
+> **전제 조건**: Phase 5-3(monitoring 클러스터 존재)
 
 **6-1. GitOps Bridge 개념 실습 — monitoring 자기 자신 대상 (완료, 2026-07-17)**
 - [x] ArgoCD `cluster` Secret 구조 파악, monitoring이 자기 자신을 가리키는 Secret을 Terraform으로 생성

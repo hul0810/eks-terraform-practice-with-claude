@@ -16,7 +16,7 @@ AWS 공식 문서에 "최소 애드온" 명시 기준은 없다. 아래는 이 �
 | `external-dns` | Helm (blueprints) | Route53 레코드 수동 관리 필요 |
 | `metrics-server` | Helm (blueprints) | `kubectl top` 불가, HPA 동작 안 함 |
 | `karpenter` | Helm (blueprints) | 노드 자동 프로비저닝 없어 Pending Pod 무한 대기 |
-| `argocd` | Helm (blueprints) | GitOps 동기화 불가 (Phase 5 이후 필수) |
+| `argocd` | Helm (gitops-bridge) — **monitoring(Hub) 클러스터에만** | GitOps 동기화 불가. dev/prd는 Hub의 spoke로 등록되어 자체 설치하지 않는다 |
 | `argo-rollouts` | Helm (blueprints) | Canary·Blue-Green 배포 불가, Rollout 리소스 처리 안 됨 |
 | `external-secrets` | Helm (blueprints) | AWS SSM Parameter Store/Secrets Manager 값을 K8s Secret으로 동기화 불가, 시크릿 수동 관리 필요 |
 
@@ -48,7 +48,7 @@ AWS 공식 문서에 "최소 애드온" 명시 기준은 없다. 아래는 이 �
 | ExternalDNS | Helm (Blueprints) | Route53 zone 등 Helm values 커스터마이징 필요 |
 | Metrics Server | Helm (Blueprints) | Helm values 커스터마이징 필요 |
 | Karpenter | Helm (Blueprints) | EKS 관리형 없음, EC2NodeClass·NodePool 등 values 커스터마이징 필수 |
-| ArgoCD | Helm (Blueprints) | GitOps 전환(Phase 5) 시작점. AWS API 미호출로 IAM 불필요 |
+| ArgoCD | Helm (`gitops-bridge-dev/gitops-bridge/helm`) | monitoring(Hub) 전용 — Hub 하나가 dev/prd spoke를 원격 관리하므로 클러스터마다 설치하지 않는다. AWS API 미호출로 IAM 불필요 |
 | Argo Rollouts | Helm (Blueprints) | Canary·Blue-Green 배포 전략 구현. AWS API 미호출로 IAM 불필요 |
 | External Secrets Operator | Helm (Blueprints) | EKS 관리형·커뮤니티 add-on 카탈로그 어디에도 없음, IRSA 자동 처리 필요. Secrets Store CSI Driver + ASCP를 대체 — 아래 "Secrets Store CSI Driver 대신 External Secrets Operator를 쓰는 이유" 참조 |
 

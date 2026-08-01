@@ -133,7 +133,7 @@ argo-rollouts 등)은 이제 이 모듈이 아예 관여하지 않는다:
 
 | 인스턴스 | 벤더 모듈 | `create_kubernetes_resources` | 담는 addon | 존재 이유 |
 |---|---|---|---|---|
-| `gitops_bridge_bootstrap` | `gitops-bridge-dev/gitops-bridge/helm` | 해당 없음(이 벤더는 이 변수 자체가 없음) | ArgoCD 설치 + GitOps Bridge Hub 부트스트랩(cluster Secret) | **부트스트랩 예외** — ArgoCD가 자기 자신을 GitOps로 관리할 수 없으므로 영원히 Terraform이 Helm까지 관리. `var.enable_argocd`가 `create`/`install`을 동시에 게이팅한다. `cluster`/`apps`는 `var.gitops_bridge_hub`(nullable)로 받는다 — null이면 이 클러스터는 spoke로 동작(develop/production이 나중에 이 모듈로 이관되면 이 값을 안 넘기면 된다). 원래 `aws-ia/eks-blueprints-addons`의 별도 인스턴스(`eks_blueprints_addons_argocd`)였으나 그 wrapper가 ArgoCD 자리에서 IRSA 인자를 forward하지 않아 교체했다(`temp/gitops-bridge-terraform-notes.md` 7~11번) |
+| `gitops_bridge_bootstrap` | `gitops-bridge-dev/gitops-bridge/helm` | 해당 없음(이 벤더는 이 변수 자체가 없음) | ArgoCD 설치 + GitOps Bridge Hub 부트스트랩(cluster Secret) | **부트스트랩 예외** — ArgoCD가 자기 자신을 GitOps로 관리할 수 없으므로 영원히 Terraform이 Helm까지 관리. `var.enable_argocd`가 `create`/`install`을 동시에 게이팅한다. `cluster`/`apps`는 `var.gitops_bridge_hub`(nullable)로 받는다 — null이면 이 클러스터는 spoke로 동작한다. 실제로 이 모듈을 쓰는 3개 환경 중 Hub는 monitoring 하나뿐이고, develop/production은 이 값을 넘기지 않아(`enable_argocd = false`) ArgoCD를 자체 설치하지 않는다. 원래 `aws-ia/eks-blueprints-addons`의 별도 인스턴스(`eks_blueprints_addons_argocd`)였으나 그 wrapper가 ArgoCD 자리에서 IRSA 인자를 forward하지 않아 교체했다(`temp/gitops-bridge-terraform-notes.md` 7~11번) |
 | `eks_blueprints_addons_gitops` | `aws-ia/eks-blueprints-addons` | 항상 `false`로 고정(하드코딩 — 변수가 아니라 코드를 고쳐야만 바뀐다) | IAM이 필요한 addon(LBC/ExternalDNS/ExternalSecrets/Karpenter/Cluster Autoscaler) | IAM은 유지하되 Helm release는 절대 만들지 않음 — ArgoCD가 그 자리를 대신함. `false`를 변수가 아니라 하드코딩으로 고정한 건 "ArgoCD가 이미 인수한 addon의 Helm을 실수로 다시 Terraform이 만들지 못하게" 하는 영구적 안전장치를 걸어두기 위해서다 |
 
 IAM이 필요 없는 새 addon(metrics-server, argo-rollouts 등)이 생기면 이 모듈은 아예
@@ -422,12 +422,14 @@ release 자체가 아니라 컨테이너 시작 로그를 확인해야 원인을
 
 ---
 
-## ArgoCD 설치 (Phase 5-1)
+## ArgoCD 설치 (monitoring Hub 전용)
 
-GitOps 전환(Phase 5)의 시작점. 이후 단계(5-2~6-4)를 거치며 다른 addon들은 하나씩 Helm
-관리 주체가 Terraform에서 ArgoCD(devops-manifest)로 넘어갔지만, ArgoCD 자신은 예외다 —
-자기 자신을 GitOps로 관리할 수 없으므로 처음부터 지금까지 계속 Terraform이 Helm까지 관리한다
-(부트스트랩 예외, 위 "GitOps Bridge: 모듈 인스턴스 구성" 절 참조).
+**ArgoCD는 monitoring 클러스터 한 곳에만 설치한다.** dev/prd는 Hub의 spoke로 등록되어
+Hub의 ArgoCD가 원격으로 관리하므로 자체 ArgoCD를 갖지 않는다(`enable_argocd = false`).
+
+다른 addon들은 Helm 관리 주체가 Terraform에서 ArgoCD(devops-manifest)로 넘어갔지만,
+ArgoCD 자신은 예외다 — 자기 자신을 GitOps로 관리할 수 없으므로 계속 Terraform이 Helm까지
+관리한다(부트스트랩 예외, 위 "GitOps Bridge: 모듈 인스턴스 구성" 절 참조).
 
 ### IAM 미생성
 
