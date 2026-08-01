@@ -247,9 +247,30 @@ resource "aws_security_group_rule" "node" {
 
 | SG | 생성 주체 | 부착 대상 | 역할 |
 |----|-----------|-----------|------|
-| `clusterSecurityGroupId` (eks-cluster-sg-*) | EKS 자동 생성 | EKS owned ENI + 노드 EC2 | 노드 ↔ 컨트롤 플레인 기본 통신 채널 (self-reference ALL) |
-| `cluster_sg` (`create_security_group = true`) | 모듈 생성 | EKS owned ENI | 외부 접근 제어 앵커 — Bastion/VPN SG 화이트리스트 추가 시 이 SG에 인바운드 규칙을 붙인다. 현재 규칙 없음 |
-| `node_sg` | 모듈 생성 | 노드 EC2 | 노드 레벨 트래픽 제어 |
+| `clusterSecurityGroupId` (eks-cluster-sg-*) | EKS 자동 생성 | EKS owned ENI **만** | 컨트롤 플레인 ENI의 egress(all → 0.0.0.0/0) 담당. `attach_cluster_primary_security_group` 기본값이 `false`라 노드에는 부착되지 않으므로, 이 SG의 self-reference ALL 규칙은 실제로 매칭되는 트래픽이 없다 |
+| `cluster_sg` (`create_security_group = true`) | 모듈 생성 | EKS owned ENI (additional) | 노드 → API 서버 443 인그레스를 허용하고, 동시에 node_sg 인그레스 규칙들의 `source_cluster_security_group` 앵커가 된다. Bastion/VPN 화이트리스트도 이 SG에 붙인다 |
+| `node_sg` | 모듈 생성 | 노드 EC2 (관리형 노드 그룹·Karpenter 노드 전부) | 노드 레벨 트래픽 제어 |
+
+### 컨트롤 플레인 ↔ 데이터 플레인 경로
+
+방향별로 어느 SG가 관여하는지가 다르다. primary SG가 노드에 붙지 않으므로 **양방향 모두
+`cluster_sg` ↔ `node_sg` 상호 참조로만 성립한다** — primary SG에 규칙을 추가해도 노드에는
+적용되지 않는다.
+
+| 방향 | egress | ingress |
+|---|---|---|
+| API 서버 → 노드 (kubelet 10250, webhook 등) | primary SG의 all (SG는 합집합 평가되므로 `cluster_sg`에 egress 규칙이 없어도 동작) | `node_sg`의 포트별 규칙, source = `cluster_sg` |
+| 노드 → API 서버 | `node_sg`의 all | `cluster_sg`의 443 |
+
+**엔드포인트 모드에 따른 차이**: 이 모듈은 `endpoint_private_access = true`를 고정하므로
+VPC 내부에서 나가는 API 요청은 항상 private endpoint(cross-account ENI)를 거치고, 위
+"노드 → API 서버" 행이 유효하다. `endpoint_private_access = false`로 바꾸면 노드가 NAT
+Gateway를 통해 public endpoint로 붙게 되어 `cluster_sg`의 443 규칙이 무의미해지고 대신
+`endpoint_public_access_cidrs`에 NAT Gateway EIP를 넣어야 노드가 조인한다
+([AWS 문서](https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html) —
+조합별 동작표). 반면 cross-account ENI 자체는 엔드포인트 설정과 무관하게 항상 생성되므로
+**"API 서버 → 노드" 행은 어떤 모드에서도 그대로 필요하다** — 아래 10260 같은 webhook 포트
+문제는 엔드포인트 모드를 바꿔도 해소되지 않는다.
 
 ### node_sg에 추가된 커스텀 규칙 (`node_security_group_additional_rules`)
 

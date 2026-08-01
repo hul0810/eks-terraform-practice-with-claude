@@ -155,8 +155,11 @@ module "eks" {
   # 노드 그룹을 생성하므로, 노드 조인 시점의 CNI 초기화 경쟁 조건이 발생하지 않는다.
   #
   # cluster_primary_security_group_id, vpc_security_group_ids를 별도 지정하지 않는 이유:
-  #   eks_managed_node_groups 스키마에 해당 파라미터가 없다. 모듈이 클러스터 SG(clusterSecurityGroupId)와
-  #   node_sg를 노드 그룹에 자동으로 부착한다 — 외부 서브모듈 호출 시 수동 지정이 필요했던 부분.
+  #   모듈이 node_sg를 노드 그룹 launch template에 자동 부착하므로 vpc_security_group_ids 지정이 불필요하다.
+  #   EKS가 자동 생성하는 primary SG(clusterSecurityGroupId)는 attach_cluster_primary_security_group
+  #   기본값(false)에 따라 노드에 부착되지 않는다 — 컨트롤 플레인↔노드 통신은 전적으로
+  #   cluster_sg ↔ node_sg 상호 참조 규칙으로만 성립하며, primary SG에 규칙을 추가해도 노드에는
+  #   적용되지 않는다.
   eks_managed_node_groups = {
     system = {
       name           = "${var.project}-system-${var.environment}"
