@@ -140,6 +140,56 @@ allowed-tools:
 > registry-writer Role을 필요로 한다**는 뜻이지, 환경 전체를 직렬화하라는 뜻이 아니다.
 > VPC·EKS 레이어에는 그 의존이 전혀 없다.
 
+### 공통 처리: AWS SSO 토큰 만료 감지 및 반복 Slack 알림
+
+이 스킬이 실행하는 어떤 `terraform apply`/`plan` 출력에서든 아래 패턴이 보이면 SSO 세션이
+만료된 것이다:
+
+- `No valid credential sources found`
+- `refresh cached SSO token failed`
+- `InvalidGrantException`
+
+**감지 즉시 아래 백그라운드 루프를 시작한다** — LLM 턴을 소비하지 않는 순수 쉘 루프라
+10초 간격 반복이 부담 없다 (`run_in_background: true`, `timeout: 600000`):
+
+```bash
+PROFILE="<해당 root/서브디렉토리 providers.tf의 profile>"
+ENV_NAME="<환경>"
+WEBHOOK="$SLACK_WEBHOOK_URL"
+CMD_HINT="aws sso login --profile $PROFILE"
+SSO_SESSION=$(awk -v p="[profile $PROFILE]" '$0==p{f=1;next} /^\[/{f=0} f && /sso_session/{print $3}' ~/.aws/config)
+CACHE_FILE="$HOME/.aws/sso/cache/$(printf '%s' "$SSO_SESSION" | sha1sum | cut -d' ' -f1).json"
+i=0
+while true; do
+  EXPIRES_AT=$(jq -r '.expiresAt // empty' "$CACHE_FILE" 2>/dev/null)
+  EXPIRES_EPOCH=$(date -u -d "$EXPIRES_AT" +%s 2>/dev/null)
+  NOW_EPOCH=$(date -u +%s)
+  if [ -n "$EXPIRES_EPOCH" ] && [ "$EXPIRES_EPOCH" -gt "$NOW_EPOCH" ]; then
+    echo "SSO_RESOLVED (반복 ${i}회 후 감지)"; break
+  fi
+  if [ -n "$WEBHOOK" ]; then
+    msg=$(printf '<!channel> ⚠️ SSO_LOGIN_REQUIRED — *[%s] provision 중단*\n실행: `%s`\n대기 중: <현재 막힌 단계>\n반복 %s회' "$ENV_NAME" "$CMD_HINT" "$i")
+    payload=$(jq -nc --arg text "$msg" '{text:$text}')
+    printf '%s' "$payload" | curl -s -X POST -H 'Content-type: application/json' --data-binary @- --max-time 5 "$WEBHOOK" >/dev/null 2>&1
+  fi
+  i=$((i+1)); sleep 10
+done
+```
+
+`SSO_RESOLVED`가 출력되면 실패했던 명령을 그대로 재실행한다. **재로그인 직후 중간에 다른
+`aws` 명령을 끼워넣지 않는다** — SSO OIDC refresh token은 1회용이라 그 호출이 terraform의
+인증 갱신과 경쟁해 다시 실패시킨다(teardown 스킬 동일 섹션의 WHY 참조).
+
+대기 시간은 `[대기] SSO 재로그인` 항목으로 timing.log에 분리 기록하고, 실패한 apply 자체의
+소요는 `[실패]` 접두사로 구분해 정상 실행과 섞이지 않게 한다.
+
+> **WHY (2026-08-03)**: 이 루프는 원래 teardown에만 있었다. 근거를 "provision은 실패해도
+> 리소스가 새로 생기지 않을 뿐이라 급하지 않다"고 적었는데, **비용만 보고 사용자가 대기
+> 상태를 인지하지 못해 낭비되는 시간을 계산에 넣지 않은 판단 오류**였다. 실제로 2026-08-03
+> monitoring provision에서 VPC·EKS apply가 동시에 SSO 만료로 죽었고, 사용자가 지적하기
+> 전까지 아무 알림 없이 멈춰 있었다. 알림이 곧 재개 시점을 결정하므로 두 스킬 모두에
+> 필요하다.
+
 ### 공통 처리: `terraform apply`/`destroy` 출력을 파이프로 볼 때는 반드시 `pipefail`
 
 이 스킬의 모든 `terraform apply`/`destroy` 명령을 실제로 실행할 때(백그라운드 실행 포함)
@@ -197,9 +247,16 @@ s=$(date +%s); <실제 명령>; e=$(date +%s); \
   printf '%-34s %5ds\n' "<단계이름>" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
 ```
 
-**사람 대기 시간(SSO 재로그인, ArgoCD sync 승인 등)은 `[대기]` 접두사로 분리 기록한다** —
-절차 최적화로 줄일 수 없는 시간이라 자동화 구간과 섞이면 어느 단계를 개선해야 하는지
-판단이 흐려진다.
+**접두사 규칙** — 같은 단계가 여러 줄로 남을 때 성격을 구분한다:
+
+| 접두사 | 의미 | 합계 포함 |
+|---|---|---|
+| (없음) | 정상 실행 | 포함 |
+| `[대기]` | 사람 대기(SSO 재로그인 등) — 절차 최적화로 줄일 수 없음 | **제외** |
+| `[실패]` | 실패한 시도(SSO 만료 등)로 버린 시간 | 포함 (실제 소요이므로) |
+
+`[대기]`를 분리하지 않으면 자동화 구간 성능 판단이 흐려지고, `[실패]`를 정상 실행과 같은
+이름으로 남기면 같은 단계가 중복돼 로그를 읽을 수 없다.
 
 Step 5 완료 메시지에 총 소요 시간과 단계별 내역을 함께 출력한다:
 
@@ -426,6 +483,46 @@ plan에 `module.gitops_bridge_spoke["<cluster_name>"].kubernetes_secret_v1.clust
 > 끼워넣었다 — 정식 Step으로 없으면 다음에 이 스킬만 보고 따라가는 세션이 똑같이
 > 빠뜨릴 위험이 있어 절차로 승격한다.
 
+**3-B-1.7. [필수·선제] LBC 파드가 뜨는 즉시 webhook caBundle을 patch한다 — 증상을 기다리지 않는다**
+
+**클러스터를 새로 만든 provision에서는 caBundle 불일치가 사실상 항상 발생한다**(원인은
+아래 3-B-3-2 참조 — 차트에 구운 정적 caBundle vs 파드가 매 기동마다 새로 만드는 인증서).
+그런데 이 문제는 **Ingress가 ALB를 못 받는 형태로만 드러나서**, Step 5 검증까지 가서야
+발견하면 그때까지의 시간이 통째로 낭비된다. 조치 자체는 십수 초로 끝나므로 **증상을
+기다리지 말고 LBC 파드가 Running이 되는 즉시 무조건 patch한다** — 이미 일치하는 경우에도
+같은 값을 덮어쓰는 것뿐이라 부작용이 없다(멱등).
+
+3-B-1의 apply 완료 후, ArgoCD가 LBC를 sync해 파드가 뜨기를 기다렸다가 바로 실행한다:
+
+```bash
+# LBC 파드 Running 대기 (최대 5분)
+for i in $(seq 1 30); do
+  kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller \
+    --no-headers 2>/dev/null | grep -q "Running" && break
+  sleep 10
+done
+
+# 이름 기준으로 webhook 항목 전체 patch (validating 3 + mutating 6 = 9개)
+CA=$(kubectl get secret aws-load-balancer-tls -n kube-system -o jsonpath='{.data.ca\.crt}')
+for kind in validatingwebhookconfiguration mutatingwebhookconfiguration; do
+  count=$(kubectl get "$kind" aws-load-balancer-webhook -o json | jq '.webhooks | length')
+  for idx in $(seq 0 $((count-1))); do
+    kubectl patch "$kind" aws-load-balancer-webhook --type='json' \
+      -p="[{\"op\": \"replace\", \"path\": \"/webhooks/${idx}/clientConfig/caBundle\", \"value\":\"$CA\"}]" >/dev/null
+  done
+done
+```
+
+이 단계를 거쳤다면 3-B-3-2(사후 대응)는 발생하지 않는다. 그럼에도 Ingress가 ALB를 못 받으면
+그건 caBundle이 아니라 다른 원인이므로 3-B-3(webhook 미기동)이나 LBC 로그를 확인한다.
+
+> **WHY (2026-08-03 monitoring provision 실측)**: caBundle 불일치가 그대로 재현됐는데,
+> 절차가 "감지 시 대응"(3-B-3-2)으로만 쓰여 있어 Step 5 검증에서 Ingress에 ADDRESS가
+> 비어있는 걸 보고서야 발견했다 — 그 사이 8분 26초 동안 LBC가 `x509: certificate signed
+> by unknown authority`로 재시도만 반복했다. **정작 patch는 13초 만에 끝났다.** 즉 8분은
+> 순수 발견 지연이고, 선제 patch로 전부 회수된다. fresh provision에서 caBundle이 맞는
+> 경우가 오히려 예외이므로 조건 분기 없이 항상 실행하는 편이 단순하고 빠르다.
+
 **3-B-2. addon 등록 확인 — 완전 자동화, 수동 개입 불필요 (2026-07-22 재확인)**
 
 > 아래는 여러 차례에 걸쳐 갱신되던 절차였는데, 지금은 사람이 할 일이 없는 상태로
@@ -464,14 +561,34 @@ kubectl get application -n argocd -l app.kubernetes.io/component=addon
 있다 — automated `selfHeal`이 재시도하므로 보통 자동으로 해소된다. 몇 분 뒤에도 안 풀리면
 아래 3-B-3 참고.
 
+**[측정] 이 sync 안정화 대기는 반드시 시간을 기록한다.** 폴링으로 흘려보내기 쉬운 구간인데
+실측상 provision 벽시계의 상당 부분을 차지하며, 기록이 없으면 "어디서 시간이 갔는지"가
+설명되지 않는다(2026-08-03 실측: 단계 합 943s vs 벽시계 2453s의 격차 대부분이 이 구간과
+caBundle 발견 지연이었다):
+
+```bash
+s=$(date +%s)
+for i in $(seq 1 40); do
+  out=$(kubectl get application -n argocd --no-headers 2>/dev/null)
+  total=$(echo "$out" | grep -c .); ok=$(echo "$out" | awk '$2=="Synced" && $3=="Healthy"' | grep -c .)
+  [ "$total" -ge <기대 개수> ] && [ "$ok" -eq "$total" ] && { echo "SYNC_DONE: $ok/$total"; break; }
+  sleep 15
+done
+e=$(date +%s); printf '%-34s %5ds\n' "Step 3-B-2 ArgoCD sync 안정화" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
+```
+
 **3-B-3. sync 중 LBC 웹훅 경쟁 감지 시**
 
 - `no endpoints available for service "aws-load-balancer-webhook-service"`
 
 LBC 파드가 `Running`인지 재확인 후 실패한 addon의 sync만 재실행한다(최대 2회).
 
-**3-B-3-2. Ingress/ALB 생성 시 x509 unknown authority 감지 시 (webhook caBundle 불일치 —
-3-B-3과 다른 문제)**
+**3-B-3-2. [백업 경로] Ingress/ALB 생성 시 x509 unknown authority 감지 시 (webhook caBundle
+불일치 — 3-B-3과 다른 문제)**
+
+> **이 절은 3-B-1.7(선제 patch)을 어떤 이유로 건너뛰었거나, patch 이후 새로 만들어진
+> Ingress에서 같은 증상이 재발한 경우에만 쓴다.** 정상 절차에서는 3-B-1.7이 이미
+> 처리하므로 여기까지 오지 않는다 — 아래 내용은 원인 설명과 복구 절차의 상세 근거다.
 
 `kubectl describe ingress`나 LBC 로그에 아래 패턴이 보이면 3-B-3(webhook 아직 미기동)과는
 다른 원인이다 — webhook 서비스 자체는 응답하지만 TLS 인증서 체인이 안 맞는 상태다:
