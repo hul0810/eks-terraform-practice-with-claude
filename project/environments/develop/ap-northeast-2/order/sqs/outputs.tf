@@ -7,3 +7,8 @@ output "queue_arn" {
   description = "order.created 이벤트 큐 ARN — IAM 정책 Resource 지정 시 사용"
   value       = module.sqs.queue_arns[local.queue_name]
 }
+
+output "order_sqs_pod_identity_role_arn" {
+  description = "order Pod에 SQS 발행 권한을 주는 IAM Role ARN. Pod Identity association이 연결하므로 K8s 매니페스트에 주입할 필요는 없다"
+  value       = aws_iam_role.order_sqs_pod_identity.arn
+}

@@ -260,6 +260,28 @@ ARN을 알아야 assume할 수 있다"는 요구사항은 크로스 계정 IAM�
 걸려있으므로(원문: `principal_arn = aws_iam_role.gitops_bridge_spoke.arn`), Hub의 identity
 부여 방식 변경은 spoke 쪽 access entry에 전혀 영향을 주지 않는다.
 
+### 애플리케이션 워크로드 (order 등) — Pod Identity
+
+애드온이 아닌 서비스 Pod에도 위 "기본 원칙"이 그대로 적용된다. IAM 리소스는 그 AWS 리소스를
+소유한 root module이 함께 관리한다 — 예: order 서비스의 SQS 발행 권한은 큐를 만드는
+`project/environments/develop/ap-northeast-2/order/sqs/`가 `iam-pod-identity.tf`로 소유한다.
+큐 ARN이 그 state에 있어 remote_state 왕복이 생기지 않는다.
+
+Role만 만들고 `aws_eks_pod_identity_association`을 빠뜨리면 Pod에 자격증명 env가 아예
+주입되지 않는다. 노드는 IMDS hop limit 1이라 인스턴스 역할 폴백도 없어, SDK가 `NoCredentials`로
+실패한다(2026-08-05 dev 클러스터 실측).
+
+자격증명 env는 admission 시점에 주입되므로 **association을 만든 뒤 대상 Pod을 재생성**해야
+반영된다. association만 만들고 Pod을 그대로 두면 아무 변화가 없다.
+
+기존 워크로드를 IRSA에서 옮겨오는 경우, association 생성만으로 전환이 완결된다. SA에 IRSA
+annotation이 남아 있어도 **EKS Pod Identity webhook이 Pod Identity를 우선**해 IRSA
+env(`AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`)를 주입하지 않는다 — annotation 제거는
+전제 조건이 아니라 사후 정리다. 근거:
+[AWS Containers Blog](https://aws.amazon.com/blogs/containers/amazon-eks-pod-identity-a-new-way-for-applications-on-eks-to-obtain-iam-credentials/)
+— *"The EKS Pod Identity webhook gives preference to EKS Pod Identity over IRSA, when it notices
+roles setup with both trusted entities."* (2026-08-05 dev 클러스터에서 실측 확인)
+
 ---
 
 ## 버전 관리

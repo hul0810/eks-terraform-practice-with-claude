@@ -23,6 +23,22 @@ locals {
   # 단일 소스로 추출한다.
   queue_name = "${local.project}-order-events${local.name_suffix}"
 
+  # ── order Pod → SQS 권한 부여 ────────────────────────────────────────────────
+  # 큐를 소유한 이 root module이 IAM Role도 함께 관리한다. 큐 ARN이 여기 있어
+  # shared/eks-addons로 옮기면 remote_state 왕복이 한 번 더 생긴다.
+
+  cluster_name = data.terraform_remote_state.eks.outputs.cluster_name
+
+  # order Pod이 사용하는 ServiceAccount 좌표. eks-practice-devops-manifest 저장소의
+  # ApplicationSet(argocd/applicationsets/workload/dev/order.yaml)이 결정하는 값이라
+  # Terraform이 조회할 수 없다 — release name "order-dev"가 chart name "order"를 포함해
+  # common.names.fullname이 "order-dev"로 렌더링되고, destination.namespace가 "eks-practice-dev"다.
+  # 저쪽 releaseName/namespace를 바꾸면 이 두 값도 함께 고쳐야 한다.
+  k8s_namespace       = "eks-practice-dev"
+  k8s_service_account = "order-dev"
+
+  pod_identity_role_name = "${local.cluster_name}-order-sqs-pod-id"
+
   queues = {
     (local.queue_name) = {
       # order.created 이벤트는 순서 보장·중복 제거가 필요하지 않으므로 Standard 큐로 충분하다
