@@ -492,36 +492,69 @@ plan에 `module.gitops_bridge_spoke["<cluster_name>"].kubernetes_secret_v1.clust
 기다리지 말고 LBC 파드가 Running이 되는 즉시 무조건 patch한다** — 이미 일치하는 경우에도
 같은 값을 덮어쓰는 것뿐이라 부작용이 없다(멱등).
 
-3-B-1의 apply 완료 후, ArgoCD가 LBC를 sync해 파드가 뜨기를 기다렸다가 바로 실행한다:
+**[중요] 한 번 patch하고 끝내면 안 된다 — 반드시 "patch → 검증 → 불일치면 재patch" 루프로
+돌린다.** 아래 명령은 LBC 기동 대기에 수 분이 걸려 Bash 도구 기본 타임아웃(2분)을 넘기므로
+**반드시 `run_in_background: true`로 실행**한다:
 
 ```bash
-# LBC 파드 Running 대기 (최대 5분)
-for i in $(seq 1 30); do
+# 1) LBC 파드 Running 대기 (최대 10분)
+for i in $(seq 1 60); do
   kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller \
     --no-headers 2>/dev/null | grep -q "Running" && break
   sleep 10
 done
 
-# 이름 기준으로 webhook 항목 전체 patch (validating 3 + mutating 6 = 9개)
-CA=$(kubectl get secret aws-load-balancer-tls -n kube-system -o jsonpath='{.data.ca\.crt}')
-for kind in validatingwebhookconfiguration mutatingwebhookconfiguration; do
-  count=$(kubectl get "$kind" aws-load-balancer-webhook -o json | jq '.webhooks | length')
-  for idx in $(seq 0 $((count-1))); do
-    kubectl patch "$kind" aws-load-balancer-webhook --type='json' \
-      -p="[{\"op\": \"replace\", \"path\": \"/webhooks/${idx}/clientConfig/caBundle\", \"value\":\"$CA\"}]" >/dev/null
+# 2) patch → 검증 → 재시도 (최대 10회)
+for attempt in $(seq 1 10); do
+  CA=$(kubectl get secret aws-load-balancer-tls -n kube-system -o jsonpath='{.data.ca\.crt}')
+  for kind in validatingwebhookconfiguration mutatingwebhookconfiguration; do
+    count=$(kubectl get "$kind" aws-load-balancer-webhook -o json | jq '.webhooks | length')
+    for idx in $(seq 0 $((count-1))); do
+      kubectl patch "$kind" aws-load-balancer-webhook --type='json' \
+        -p="[{\"op\": \"replace\", \"path\": \"/webhooks/${idx}/clientConfig/caBundle\", \"value\":\"$CA\"}]" >/dev/null
+    done
   done
+  # 20초 뒤에도 유지되는지 확인 — sync가 덮으면 여기서 걸린다
+  sleep 20
+  ok=1
+  for kind in validatingwebhookconfiguration mutatingwebhookconfiguration; do
+    uniq=$(kubectl get "$kind" aws-load-balancer-webhook -o json | jq -r '[.webhooks[].clientConfig.caBundle] | unique | length')
+    got=$(kubectl get "$kind" aws-load-balancer-webhook -o jsonpath='{.webhooks[0].clientConfig.caBundle}')
+    [ "$uniq" = "1" ] && [ "$got" = "$CA" ] || ok=0
+  done
+  [ "$ok" = "1" ] && { echo "CABUNDLE_OK (시도 ${attempt}회)"; break; }
 done
 ```
 
-이 단계를 거쳤다면 3-B-3-2(사후 대응)는 발생하지 않는다. 그럼에도 Ingress가 ALB를 못 받으면
-그건 caBundle이 아니라 다른 원인이므로 3-B-3(webhook 미기동)이나 LBC 로그를 확인한다.
+검증 조건 두 가지를 모두 본다 — **모든 webhook 항목의 값이 하나로 통일**(`unique | length == 1`)
+되어 있고, 그 값이 **Secret의 `ca.crt`와 일치**해야 한다. 항목별로 값이 갈려 있으면 일부만
+patch된 상태다.
 
-> **WHY (2026-08-03 monitoring provision 실측)**: caBundle 불일치가 그대로 재현됐는데,
-> 절차가 "감지 시 대응"(3-B-3-2)으로만 쓰여 있어 Step 5 검증에서 Ingress에 ADDRESS가
-> 비어있는 걸 보고서야 발견했다 — 그 사이 8분 26초 동안 LBC가 `x509: certificate signed
-> by unknown authority`로 재시도만 반복했다. **정작 patch는 13초 만에 끝났다.** 즉 8분은
-> 순수 발견 지연이고, 선제 patch로 전부 회수된다. fresh provision에서 caBundle이 맞는
-> 경우가 오히려 예외이므로 조건 분기 없이 항상 실행하는 편이 단순하고 빠르다.
+이 루프를 거쳤다면 3-B-3-2(사후 대응)는 발생하지 않는다. 그럼에도 Ingress가 ALB를 못 받으면
+caBundle이 아니라 다른 원인이므로 3-B-3(webhook 미기동)이나 LBC 로그를 확인한다.
+
+> **WHY — 왜 매번 어긋나는가 (2026-08-03 업스트림 차트 확인)**: `aws/eks-charts`의
+> `_helpers.tpl` → `aws-load-balancer-controller.webhookCerts` 헬퍼는 기존 Secret을
+> `lookup`으로 찾으면 재사용하고, **못 찾으면 `genCA`/`genSignedCert`로 새 인증서를 만든다.**
+> ArgoCD는 `helm template`(클라이언트 렌더링)을 쓰므로 `lookup`이 항상 빈 값을 반환해
+> **sync마다 `genCA` 경로를 타고 새 `caBundle`이 나온다.** devops-manifest도 이 사실을
+> 알고 `ignoreDifferences`(caBundle·Secret `/data`)와 `RespectIgnoreDifferences=true`를
+> 이미 걸어놨지만(`argocd/applicationsets/eks-addons/hub/aws-load-balancer-controller.yaml`),
+> 초기 sync가 수렴하는 동안에는 patch가 덮이는 경우가 실제로 관찰됐다 — 그래서 1회 patch로는
+> 부족하고 검증·재시도가 필요하다.
+>
+> **근본 해결책은 `enableCertManager: true`다**(차트가 `caBundle`을 렌더링하지 않고
+> `cert-manager.io/inject-ca-from` 어노테이션으로 cainjector가 주입 — 렌더링마다 인증서가
+> 바뀌는 구조 자체가 사라진다). 이 프로젝트는 cert-manager를 EKS 관리형 애드온으로 이미
+> 설치하므로 values 한 줄로 전환 가능하나, **LBC에 cert-manager를 붙이는 구성이 일반적이지
+> 않다고 판단해 채택하지 않았다**(2026-08-03 결정). 채택하려면 devops-manifest 변경이므로
+> 요청서를 작성해야 한다.
+>
+> **WHY — 선제 patch 자체의 근거 (2026-08-03 실측)**: 이전엔 "감지 시 대응"(3-B-3-2)으로만
+> 쓰여 있어 Step 5 검증에서 Ingress에 ADDRESS가 비어있는 걸 보고서야 발견했고, 그 사이
+> 8분 26초 동안 LBC가 `x509: certificate signed by unknown authority`로 재시도만 반복했다 —
+> 정작 patch는 13초로 끝났다. 선제 patch 도입 후 같은 손실이 20초(재patch)로 줄었고,
+> 위 검증 루프까지 넣으면 그 재작업도 자동 흡수된다.
 
 **3-B-2. addon 등록 확인 — 완전 자동화, 수동 개입 불필요 (2026-07-22 재확인)**
 
@@ -566,16 +599,39 @@ kubectl get application -n argocd -l app.kubernetes.io/component=addon
 설명되지 않는다(2026-08-03 실측: 단계 합 943s vs 벽시계 2453s의 격차 대부분이 이 구간과
 caBundle 발견 지연이었다):
 
+**[필수] 단순 대기가 아니라 `SyncError`를 감지해 재sync까지 하는 루프여야 한다.** ArgoCD는
+sync가 실패하면 **5회만 재시도하고 포기**한다 — 그 뒤에는 `automated selfHeal`이 걸려 있어도
+스스로 복구하지 않는다. 그냥 기다리기만 하면 폴링 상한을 전부 소진하고 타임아웃된다:
+
 ```bash
 s=$(date +%s)
 for i in $(seq 1 40); do
   out=$(kubectl get application -n argocd --no-headers 2>/dev/null)
   total=$(echo "$out" | grep -c .); ok=$(echo "$out" | awk '$2=="Synced" && $3=="Healthy"' | grep -c .)
   [ "$total" -ge <기대 개수> ] && [ "$ok" -eq "$total" ] && { echo "SYNC_DONE: $ok/$total"; break; }
+  # 포기한 앱(SyncError) 감지 시 즉시 재sync 트리거 — selfHeal은 이걸 복구하지 못한다
+  for app in $(kubectl get application -n argocd --no-headers | awk '$2!="Synced"{print $1}'); do
+    kubectl get application "$app" -n argocd -o json \
+      | jq -e '.status.conditions[]? | select(.type=="SyncError")' >/dev/null 2>&1 && {
+        echo "SyncError 감지 → 재sync: $app"
+        kubectl patch application "$app" -n argocd --type merge \
+          -p '{"operation":{"initiatedBy":{"username":"provision-retry"},"sync":{"revision":"HEAD"}}}' >/dev/null
+      }
+  done
   sleep 15
 done
 e=$(date +%s); printf '%-34s %5ds\n' "Step 3-B-2 ArgoCD sync 안정화" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
 ```
+
+> **WHY (2026-08-03 실측)**: `notifications-resources`가 ESO webhook 기동 전에 sync를 시도해
+> `no endpoints available for service "external-secrets-webhook"`로 실패했고, ArgoCD가
+> `(retried 5 times)` 후 포기해 `OutOfSync/Missing`으로 고착됐다. 그 시점엔 ESO webhook 파드가
+> 이미 `Running`이고 엔드포인트도 정상이었으므로 **재sync 한 번이면 되는 상태였는데**, 루프가
+> 단순 대기만 해서 687초(폴링 상한 40회)를 전부 쓰고 타임아웃됐다 — 수동 재sync 후 복구까지
+> 걸린 시간은 **5초**였다. 즉 손실 전체가 "복구되지 않을 상태를 기다린 시간"이다.
+>
+> ESO webhook 경쟁 자체는 3-A-4·3-B-3과 같은 부류의 알려진 일시적 문제이고, 이 루프가
+> 그 복구까지 흡수하면 별도 대응 단계가 필요 없어진다.
 
 **3-B-3. sync 중 LBC 웹훅 경쟁 감지 시**
 
