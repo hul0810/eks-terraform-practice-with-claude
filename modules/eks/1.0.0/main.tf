@@ -104,6 +104,9 @@ module "eks" {
       addon_version = var.addon_versions.vpc_cni
       # 노드가 조인하기 전 vpc-cni가 ACTIVE 상태여야 CNI 초기화 실패가 발생하지 않는다.
       before_compute = true
+      # Prefix Delegation 등 IP 할당 모드 설정. 노드당 pod 상한을 좌우하므로
+      # 노드 그룹 생성 이전(before_compute = true)에 반영되어야 한다.
+      configuration_values = var.vpc_cni_configuration_values
       pod_identity_association = [{
         role_arn        = aws_iam_role.vpc_cni.arn
         service_account = "aws-node"

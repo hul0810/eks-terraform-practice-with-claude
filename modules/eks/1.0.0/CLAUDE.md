@@ -99,6 +99,83 @@ aws eks describe-addon-versions --kubernetes-version 1.33 --addon-name <name> \
 
 ---
 
+## VPC CNI Prefix Delegation — 노드당 pod 상한
+
+### 채택 배경
+
+노드당 pod 상한은 인스턴스 성능이 아니라 **VPC CNI가 pod 1개당 ENI의 보조 IP 1개를 소모하는 기본 동작**에서 온다.
+
+```
+세컨더리 IP 모드: ENI 개수 × (ENI당 IPv4 주소 개수 − 1) + 2
+Prefix 모드     : ENI 개수 × (ENI당 IPv4 주소 개수 − 1) × 16 + 2
+```
+
+`− 1`은 각 ENI의 primary IP(파드에 배정 불가), `+ 2`는 hostNetwork 파드(`kube-proxy`, `aws-node`) 몫이다.
+t3.medium(ENI 3 × IP 6)은 세컨더리 모드에서 **17**이라, CPU·메모리가 남는데도 `Too many pods`로 스케줄이 막힌다.
+Prefix Delegation은 **추가 비용 없이** 이 상한만 걷어낸다 — 인스턴스 타입·노드 수를 바꾸지 않으므로 비용 정책과 충돌하지 않는다.
+
+### 설정 방법
+
+`vpc_cni_configuration_values`로 전달한다(환경 `eks/locals.tf`).
+
+```hcl
+vpc_cni_configuration_values = jsonencode({
+  env = { ENABLE_PREFIX_DELEGATION = "true" }
+})
+```
+
+**`WARM_PREFIX_TARGET`은 선언하지 않는다.** 애드온 기본값이 이미 AWS 권장값(1)이라, 같은 값을 고정하면 향후 권장값이 바뀌어도 따라가지 못한다.
+`env` 하위 값은 스키마상 전부 문자열이다(`aws eks describe-addon-configuration --addon-name vpc-cni`로 확인).
+
+### maxPods 반영 시점 — 애드온 설정만 바꾸면 소급 적용되지 않는다
+
+**EKS는 노드 그룹을 생성·업데이트하는 시점에 maxPods를 계산해 내부 launch template의 nodeadm `NodeConfig`에 굽는다.**
+
+```yaml
+# EKS가 생성한 내부 LT의 user data
+spec:
+  kubelet:
+    config:
+      maxPods: 17     # ← 노드 그룹 생성 시점에 고정
+```
+
+| 상황 | 결과 |
+|------|------|
+| fresh provision | **자동 반영** — `before_compute = true`가 vpc-cni를 노드 그룹보다 먼저 ACTIVE로 만들어 EKS가 프리픽스 모드 기준으로 계산한다 |
+| 기존 클러스터에 애드온 설정만 변경 | **반영 안 됨** — CNI는 즉시 프리픽스를 할당하지만 kubelet 상한은 옛 값이 남는다 |
+
+`vpc-cni`의 `before_compute = true`는 원래 "노드 조인 전 CNI ACTIVE 보장"이 목적이지만 **maxPods 계산 순서까지 보장하는 두 번째 역할**을 갖는다 — false로 바꾸면 fresh provision에서도 프리픽스 모드가 maxPods에 반영되지 않는다.
+
+### 기존 클러스터에 소급 적용
+
+노드 교체가 필요하다(클러스터·노드 그룹 재생성은 불필요). **트리거는 custom launch template의 버전 변경**이다.
+
+```bash
+# 동일 release version + --force → no-op. LT가 재생성되지 않아 maxPods가 그대로다.
+aws eks update-nodegroup-version --cluster-name <cl> --nodegroup-name <ng> --force
+
+# custom LT 버전을 올린 뒤 지정해야 실제 롤링 교체가 일어난다.
+aws eks update-nodegroup-version --cluster-name <cl> --nodegroup-name <ng> \
+  --launch-template id=<lt-id>,version=<new> --force
+```
+
+관리형 노드 그룹은 default 전략에서 **새 노드를 먼저 띄우고 기존 노드를 나중에 비운다**. 노드 2대 기준 실측으로 신규 노드 Ready까지 약 1분, 구 노드 cordon까지 약 5분, 전체 완료 약 23분이 걸렸고 그 사이 ASG가 최대 8대까지 증설된 뒤 원복됐다.
+
+### 적용 상한과 판단 기준
+
+| 대상 | 값 |
+|------|-----|
+| MNG (EKS 자동 계산) | 30 vCPU 미만 **110**, 이상 **250** — 이론값과 무관하게 이 상한이 적용된다 |
+| Karpenter 노드 | Karpenter가 자체 계산한다. **필요해지면 EC2NodeClass `spec.kubelet.maxPods`에 명시하기로 한다**(Karpenter v1부터 NodePool이 아닌 EC2NodeClass 소관, `karpenter-resources`는 devops-manifest 소관) |
+
+**상향 여부는 실측으로 판단한다** — `Too many pods`로 스케줄이 막힌 시점에 **그 노드의 CPU·메모리가 놀고 있을 때만** 올린다. 자원도 함께 포화 상태라면 상한이 아니라 인스턴스 타입·노드 수 문제다.
+
+### 서브넷 요구사항
+
+`/28` 프리픽스는 **연속된 16개 IP 블록**이어야 하므로 단편화된 서브넷에서는 할당이 실패한다(`InsufficientCidrBlocks`). 이 프로젝트의 프라이빗 서브넷은 `/19`(= `/28` 블록 512개)라 여유가 크지만, 더 작은 CIDR로 신규 환경을 만들 때는 [Subnet CIDR 예약](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-cidr-reservation.html)을 검토한다.
+
+---
+
 ## gp3 기본 StorageClass 옵션
 
 ### 변수: `enable_default_storage_class` (기본값 `false`)

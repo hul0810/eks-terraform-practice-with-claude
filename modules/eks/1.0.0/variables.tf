@@ -152,6 +152,13 @@ variable "addon_versions" {
   })
 }
 
+variable "vpc_cni_configuration_values" {
+  description = "VPC CNI EKS 관리형 애드온 configuration_values JSON 문자열. ENABLE_PREFIX_DELEGATION=true로 ENI 슬롯당 /28 프리픽스(IP 16개)를 할당해 노드당 pod 상한을 높인다. 스키마상 env 하위 값은 전부 문자열이다. null이면 기본값(세컨더리 IP 모드) 사용"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
 variable "coredns_configuration_values" {
   description = "CoreDNS EKS 관리형 애드온 configuration_values JSON 문자열. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
   type        = string

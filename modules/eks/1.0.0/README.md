@@ -61,6 +61,7 @@
 | <a name="input_system_node_max_size"></a> [system\_node\_max\_size](#input\_system\_node\_max\_size) | 시스템 노드 그룹 최대 노드 수 | `number` | `3` | no |
 | <a name="input_system_node_min_size"></a> [system\_node\_min\_size](#input\_system\_node\_min\_size) | 시스템 노드 그룹 최소 노드 수 | `number` | `1` | no |
 | <a name="input_upgrade_policy"></a> [upgrade\_policy](#input\_upgrade\_policy) | 클러스터 지원 정책. EXTENDED = 표준 지원 종료 후 Extended Support 자동 진입($0.60/hr 추가), STANDARD = 표준 지원 종료 후 다음 버전으로 자동 업그레이드. null이면 AWS 기본값(EXTENDED) 사용 | <pre>object({<br/>    support_type = optional(string, "EXTENDED")<br/>  })</pre> | `null` | no |
+| <a name="input_vpc_cni_configuration_values"></a> [vpc\_cni\_configuration\_values](#input\_vpc\_cni\_configuration\_values) | VPC CNI EKS 관리형 애드온 configuration\_values JSON 문자열. ENABLE\_PREFIX\_DELEGATION=true로 ENI 슬롯당 /28 프리픽스(IP 16개)를 할당해 노드당 pod 상한을 높인다. 스키마상 env 하위 값은 전부 문자열이다. null이면 기본값(세컨더리 IP 모드) 사용 | `string` | `null` | no |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | EKS 클러스터 및 노드 Security Group을 생성할 VPC ID | `string` | n/a | yes |
 | <a name="input_zonal_shift_config"></a> [zonal\_shift\_config](#input\_zonal\_shift\_config) | ARC Zonal Shift 활성화 여부. null이면 모듈 기본값(비활성화) 사용. 콘솔에서 값을 변경하면 Terraform 드리프트가 발생하므로 반드시 이 변수로 명시적으로 관리한다. | <pre>object({<br/>    enabled = optional(bool)<br/>  })</pre> | `null` | no |
 
