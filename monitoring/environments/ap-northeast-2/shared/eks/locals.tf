@@ -52,6 +52,16 @@ locals {
       capacity_type = "SPOT"
     }
 
+    # Prefix Delegation: ENI 슬롯 1개당 /28(IP 16개)을 할당해 노드당 pod 상한을 높인다.
+    # t3.medium 기준 17 → 이론값 242(MNG 상한 110). 추가 비용 없음.
+    # WARM_PREFIX_TARGET은 선언하지 않는다 — 애드온 기본값이 이미 AWS 권장값(1)이므로
+    # 같은 값을 고정하면 향후 권장값이 바뀌어도 따라가지 못한다.
+    vpc_cni_configuration_values = jsonencode({
+      env = {
+        ENABLE_PREFIX_DELEGATION = "true"
+      }
+    })
+
     # monitoring: dev와 동일하게 시스템 노드 슬롯 절약
     coredns_configuration_values = jsonencode({ replicaCount = 1 })
     ebs_csi_configuration_values = jsonencode({ controller = { replicaCount = 1 } })

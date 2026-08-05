@@ -47,6 +47,7 @@ module "eks" {
 
   addon_versions = local.eks.addon_versions
 
+  vpc_cni_configuration_values      = local.eks.vpc_cni_configuration_values
   cert_manager_configuration_values = local.eks.cert_manager_configuration_values
 
   enable_default_storage_class = local.eks.enable_default_storage_class

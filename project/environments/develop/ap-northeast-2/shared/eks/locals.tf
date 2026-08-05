@@ -65,8 +65,18 @@ locals {
       capacity_type = "SPOT"
     }
 
-    # dev: t3.medium 시스템 노드 pod 한계(17)에서 시스템 애드온 슬롯을 확보하기 위해
-    # CoreDNS·EBS CSI Controller·cert-manager를 1 replica로 축소한다.
+    # Prefix Delegation: ENI 슬롯 1개당 /28(IP 16개)을 할당해 노드당 pod 상한을 높인다.
+    # t3.medium 기준 17 → 이론값 242(MNG 상한 110). 추가 비용 없음.
+    # WARM_PREFIX_TARGET은 선언하지 않는다 — 애드온 기본값이 이미 AWS 권장값(1)이므로
+    # 같은 값을 고정하면 향후 권장값이 바뀌어도 따라가지 못한다.
+    vpc_cni_configuration_values = jsonencode({
+      env = {
+        ENABLE_PREFIX_DELEGATION = "true"
+      }
+    })
+
+    # dev: t3.medium 시스템 노드의 CPU·메모리(2 vCPU/4 GiB)를 시스템 애드온이 잠식하지
+    # 않도록 CoreDNS·EBS CSI Controller·cert-manager를 1 replica로 축소한다.
     # 재시작 시 수초 단절 허용 — dev 환경 비용 예외 (production은 기본값 2 유지).
     coredns_configuration_values = jsonencode({ replicaCount = 1 })
     ebs_csi_configuration_values = jsonencode({ controller = { replicaCount = 1 } })

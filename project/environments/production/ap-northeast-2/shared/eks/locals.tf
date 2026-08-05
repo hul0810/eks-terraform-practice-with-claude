@@ -34,6 +34,16 @@ locals {
       cert_manager           = "v1.20.2-eksbuild.3"
     }
 
+    # Prefix Delegation: ENI 슬롯 1개당 /28(IP 16개)을 할당해 노드당 pod 상한을 높인다.
+    # 추가 비용 없이 pod 밀도를 확보하므로 production도 동일 적용한다.
+    # WARM_PREFIX_TARGET은 선언하지 않는다 — 애드온 기본값이 이미 AWS 권장값(1)이므로
+    # 같은 값을 고정하면 향후 권장값이 바뀌어도 따라가지 못한다.
+    vpc_cni_configuration_values = jsonencode({
+      env = {
+        ENABLE_PREFIX_DELEGATION = "true"
+      }
+    })
+
     # cert-manager: CriticalAddonsOnly toleration으로 시스템 노드 배치. replica는 기본값(2) 유지
     cert_manager_configuration_values = jsonencode({
       tolerations = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
