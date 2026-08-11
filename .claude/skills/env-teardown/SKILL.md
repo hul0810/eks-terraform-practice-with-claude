@@ -109,14 +109,67 @@ allowed-tools:
 > "production teardown — 보호 원칙과 실습 예외" 참고). 이 마커는 해당 명령 1회에만 적용되며,
 > teardown 목적 외에는 절대 사용하지 않는다.
 
+### 공통 처리: [주의] 이 문서에 `＄0`~`＄9`를 쓰지 않는다 — 슬래시 명령 인자로 치환된다
+
+**이 SKILL.md가 로드될 때 본문의 `＄0`~`＄9`가 슬래시 명령의 위치 인자로 그대로 치환된다.**
+`＄0`은 첫 번째 인자, `＄1`은 두 번째 인자로 바뀌며, 인자 개수만큼만 치환되므로 **인자를
+몇 개 주느냐에 따라 깨지는 위치가 달라진다** — 파일 원문은 멀쩡한데 로드된 내용만 틀리는
+형태라 눈치채기 어렵다. **이 섹션의 예시는 전각 `＄`로 적었다** — 반각으로 적으면 이
+설명문 자체가 치환돼 앞뒤가 같은 줄이 되어버린다:
+
+```bash
+# 파일 원문
+SSO_SESSION=$(awk -v p="[profile $PROFILE]" '＄0==p{f=1;next} ...' ~/.aws/config)
+# /env-teardown develop monitoring 으로 로드했을 때 실제로 보이는 것
+SSO_SESSION=$(awk -v p="[profile $PROFILE]" 'develop==p{f=1;next} ...' ~/.aws/config)
+```
+
+따라서 이 문서의 셸·awk 스니펫에서는 위치 필드 참조를 쓰지 않는다. 대안:
+
+| 하려던 것 | `$N` 대신 |
+|---|---|
+| `kubectl` 출력에서 열 뽑기 | `-o jsonpath`로 필요한 값만 출력하고 `grep`/`cut`으로 처리 |
+| 특정 열 값으로 필터 | 줄 전체 패턴(`grep ' Synced Healthy$'`)으로 매칭 |
+| ini 파일에서 키 값 추출 | `sed -n '/^\[블록\]/,/^\[/p' | sed -n 's/^키[[:space:]]*=[[:space:]]*//p'` |
+
+`$NF`·`${i}`·`$((...))`·`$VAR`는 치환 대상이 아니므로 그대로 써도 된다 — **숫자 하나짜리
+`＄0`~`＄9`만** 문제다(`env-provision` SKILL.md 동일 섹션 참조).
+
+> **WHY (2026-08-10 발견)**: 아래 SSO 알림 루프의 `awk '＄0==p{...}'`가 이 결함을 갖고
+> 있었다. 실행에는 영향이 없었지만(명령은 매번 직접 작성했다) **이 문서만 보고 따라가는
+> 세션은 깨진 awk를 그대로 쓰게 된다.**
+
 ### 공통 처리: AWS SSO 토큰 만료 감지 및 반복 Slack 알림 (Step 1 이후 모든 terraform 명령에 적용)
 
 이 스킬이 실행하는 어떤 `terraform apply`/`destroy`/`plan` 출력에서든 아래 패턴이 보이면
-SSO 세션이 만료된 것이다:
+SSO 세션이 만료됐을 수 있다:
 
-- `No valid credential sources found`
-- `refresh cached SSO token failed`
-- `InvalidGrantException`
+| 패턴 | 판정 |
+|---|---|
+| `refresh cached SSO token failed` | **SSO 만료 확정** — 바로 아래 알림 루프 |
+| `InvalidGrantException` | **SSO 만료 확정** — 바로 아래 알림 루프 |
+| `No valid credential sources found` | **단독으로는 확정 아님** — 아래 확인 후 판단 |
+
+**[필수] `No valid credential sources found`만 있고 위 두 패턴이 없으면, 알림 루프를 띄우기
+전에 로그 원문에서 아래를 먼저 확인한다** — 이 문구는 네트워크 실패에서도 똑같이 나온다:
+
+```bash
+grep -A8 "^Error" "$RUN_DIR/<실패한 단계>.log" | head -30
+```
+
+`wsarecv`, `connection was forcibly closed`, `exceeded maximum number of attempts`,
+`i/o timeout`, `no such host` 중 하나라도 있으면 **네트워크 오류이므로 재로그인이 아니라
+같은 명령을 1회 재시도한다**(`[실패]` 접두사로 timing 기록). teardown은 지연이 곧 과금이라
+불필요한 사람 대기를 넣지 않는 것이 특히 중요하다. 재시도도 같은 이유로 실패하면 그때
+사용자에게 보고한다.
+
+> **WHY (2026-08-09 실측, `/env-provision`에서 발생 후 두 스킬에 동일 반영)**: develop
+> provision의 Hub 재apply가 `No valid credential sources found`로 실패해 SSO 만료로
+> 판단하고 알림 루프를 띄운 뒤 사용자에게 재로그인을 요청했다. 실제 원인은 네트워크였다 —
+> `GetRoleCredentials, exceeded maximum number of attempts, 3 ... wsarecv: An existing
+> connection was forcibly closed by the remote host.` SSO 토큰은 유효했고(알림 루프가
+> 0회차에 즉시 `SSO_RESOLVED`) 재로그인 없이 그대로 재시도해 19초에 성공했다. 세 패턴을
+> 동급으로 나열한 것이 오진의 직접 원인이다.
 
 이 상태로 명령이 실패하면 destroy가 중단된 채 비용 발생 리소스(NAT Gateway, EKS 클러스터 등)가
 그대로 남아 계속 과금된다. 감지 즉시 아래 백그라운드 루프를 시작한다 — LLM 턴을 소비하지 않는
@@ -128,7 +181,8 @@ PROFILE="<해당 root/서브디렉토리 providers.tf의 profile>"
 ENV_NAME="<환경>"
 WEBHOOK="$SLACK_WEBHOOK_URL"
 CMD_HINT="aws sso login --profile $PROFILE"
-SSO_SESSION=$(awk -v p="[profile $PROFILE]" '$0==p{f=1;next} /^\[/{f=0} f && /sso_session/{print $3}' ~/.aws/config)
+SSO_SESSION=$(sed -n "/^\[profile ${PROFILE}\]/,/^\[/p" ~/.aws/config \
+  | sed -n 's/^[[:space:]]*sso_session[[:space:]]*=[[:space:]]*//p' | head -1)
 CACHE_FILE="$HOME/.aws/sso/cache/$(printf '%s' "$SSO_SESSION" | sha1sum | cut -d' ' -f1).json"
 i=0
 while true; do
@@ -780,6 +834,36 @@ Ingress와 일치하는지도 함께 확인하면 다른 Ingress의 레코드를
 (teardown 자체가 이미 Step 0에서 삭제 대상으로 안내·승인된 작업이므로 레코드 단위로
 다시 확인받지 않는다):
 
+**[필수] 삭제 대상 필터는 `index()` 정확 일치로 짠다 — `inside`/`contains`/`test`를 쓰지
+않는다.** 여러 호스트를 한 번에 지울 때 아래 스니펫을 그대로 쓴다(검증됨, 2026-08-09):
+
+```bash
+SCRATCH="<스크래치패드 경로>"   # AWS CLI file://은 한글 경로를 못 읽는다
+HOSTS='["argocd.pyhtest.com.","cname-argocd.pyhtest.com.","grafana.pyhtest.com.","cname-grafana.pyhtest.com."]'
+aws route53 list-resource-record-sets --hosted-zone-id <zone-id> --profile terraform-workload --output json \
+  | jq --argjson t "$HOSTS" '{Changes: [.ResourceRecordSets[]
+      | select(.Name as $n | $t | index($n))
+      | {Action:"DELETE", ResourceRecordSet:.}]}' > "$SCRATCH/r53-del.json"
+
+# 제출 전 반드시 눈으로 확인 — 개수와 목록이 의도와 일치해야 한다
+jq -r '.Changes | length, (.[] | .ResourceRecordSet.Name + " " + .ResourceRecordSet.Type)' "$SCRATCH/r53-del.json"
+
+aws route53 change-resource-record-sets --hosted-zone-id <zone-id> --profile terraform-workload \
+  --change-batch "file://$SCRATCH/r53-del.json" --query "ChangeInfo.Status" --output text
+```
+
+> **WHY (2026-08-09 실측)**: 같은 목적으로 `[.Name] | inside($t)`를 썼다가 배치가 통째로
+> 거부됐다 — `A HostedZone must contain at least one NS record for the zone itself.,
+> A HostedZone must contain exactly one SOA record.` **jq의 `inside`/`contains`는 배열
+> 원소가 문자열이면 부분 문자열 매칭을 한다.** zone apex인 `pyhtest.com.`(NS·SOA)이
+> `api-develop.pyhtest.com.`의 부분 문자열이라 12건 대신 14건이 잡혔다. Route53
+> ChangeBatch는 원자적이라 **부분 삭제 위험은 없었지만** 왕복 2회가 낭비됐다.
+> `test()` 정규식도 백슬래시가 셸·jq를 거치며 깨져 컴파일 에러가 났다(`Invalid escape`) —
+> 정확 일치 `index()`가 이 환경에서 유일하게 한 번에 통과한 방식이다.
+
+호스트가 하나뿐이면 아래처럼 인라인으로 써도 된다(각 레코드 JSON은 위
+`list-resource-record-sets` 결과에서 그대로 사용한다):
+
 ```bash
 aws route53 change-resource-record-sets --hosted-zone-id <zone-id> --profile terraform-workload \
   --change-batch '{
@@ -790,8 +874,6 @@ aws route53 change-resource-record-sets --hosted-zone-id <zone-id> --profile ter
     ]
   }'
 ```
-
-(각 레코드 JSON은 위 `list-resource-record-sets` 결과에서 그대로 사용한다.)
 
 > **WHY (수동 삭제 자체)**: `policy=sync`로 바꾸면 ExternalDNS가 스스로 삭제하게 할 수 있지만,
 > 이는 실습 편의를 위해 운영 안전장치(오작동 시 의도치 않은 레코드 삭제 방지)를 낮추는
@@ -1018,7 +1100,9 @@ aws route53 list-resource-record-sets --hosted-zone-id "$zone_id" --profile terr
    ```
 
 4. 빈 결과(`[]`)면 — ALB는 이미 삭제됐는데 레코드만 남은 고아 상태 — Step 5와 동일한 방식
-   (A + 해당 TXT + `cname-` TXT 3개를 하나의 change-batch로) 삭제한다.
+   (A + 해당 TXT + `cname-` TXT 3개를 하나의 change-batch로) 삭제한다. **삭제 대상 필터도
+   Step 5의 `index()` 정확 일치 스니펫을 그대로 쓴다** — 이 Step은 zone apex(NS·SOA)가
+   포함된 전체 목록을 다루므로 부분 문자열 매칭 시 배치 전체가 거부된다.
 5. ALB가 실제로 존재하면(다른 서비스·환경이 현재 사용 중인 레코드) 삭제하지 않고
    사용자에게만 보고한다.
 

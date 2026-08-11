@@ -106,6 +106,38 @@ allowed-tools:
 
 이후 단계의 `{root}`는 이 값을 가리킨다.
 
+### 공통 처리: [주의] 이 문서에 `＄0`~`＄9`를 쓰지 않는다 — 슬래시 명령 인자로 치환된다
+
+**이 SKILL.md가 로드될 때 본문의 `＄0`~`＄9`가 슬래시 명령의 위치 인자로 그대로 치환된다.**
+`＄0`은 첫 번째 인자, `＄1`은 두 번째 인자로 바뀌며, 인자 개수만큼만 치환되므로 **인자를
+몇 개 주느냐에 따라 깨지는 위치가 달라진다** — 파일 원문은 멀쩡한데 로드된 내용만 틀리는
+형태라 눈치채기 어렵다. **이 섹션의 예시는 전각 `＄`로 적었다** — 반각으로 적으면 이
+설명문 자체가 치환돼 앞뒤가 같은 줄이 되어버린다:
+
+```bash
+# 파일 원문
+out=$(... | awk '{print ＄1, ＄2, ＄3}')
+# /env-provision develop monitoring 으로 로드했을 때 실제로 보이는 것
+out=$(... | awk '{print monitoring, ＄2, ＄3}')
+```
+
+따라서 이 문서의 셸·awk 스니펫에서는 위치 필드 참조를 쓰지 않는다. 대안:
+
+| 하려던 것 | `$N` 대신 |
+|---|---|
+| `kubectl` 출력에서 열 뽑기 | `-o jsonpath`로 필요한 값만 출력하고 `grep`/`cut`으로 처리 |
+| 특정 열 값으로 필터 | `grep ' Synced Healthy$'`처럼 **줄 전체 패턴**으로 매칭 |
+| ini 파일에서 키 값 추출 | `sed -n '/^\[블록\]/,/^\[/p' | sed -n 's/^키[[:space:]]*=[[:space:]]*//p'` |
+
+`$NF`·`${i}`·`$((...))`·`$VAR`는 치환 대상이 아니므로 그대로 써도 된다 — **숫자 하나짜리
+`＄0`~`＄9`만** 문제다.
+
+> **WHY (2026-08-10 발견)**: 원래 SSO 알림 루프의 `awk '＄0==p{...}'`가 이 결함을 갖고
+> 있었는데 로드된 텍스트를 자세히 보지 않아 오래 남아 있었고, 2026-08-09에 sync 안정화
+> 루프를 고치면서 `＄1`을 두 군데 더 추가했다. 실행에는 영향이 없었다(명령은 매번 직접
+> 작성했다) — 다만 **이 문서만 보고 따라가는 세션은 깨진 awk를 그대로 쓰게 된다.**
+> 4곳 전부 위 대안으로 교체했다.
+
 ### 공통 처리: 시간 단축이 최우선 — 의존성이 없는 것은 무조건 병렬로 돌린다
 
 이 스킬의 1순위 목표는 **환경이 사용 가능해질 때까지의 벽시계 시간을 줄이는 것**이다.
@@ -122,6 +154,7 @@ allowed-tools:
 | **spoke eks-addons** | **monitoring eks-addons `apply` 완료**(registry-writer Role) | ~~monitoring addon sync 완료~~ — sync는 무관 |
 | observability | 자기 EKS 클러스터 | ~~eks-addons 완료~~ — 별도 state라 무관 |
 | Hub 재apply(3-B-1.5) | spoke의 SSM registry publish | — |
+| **Step 4 cross-account 신뢰정책** | **자기 환경 eks-addons `apply` 완료** | ~~아무 때나 병렬 가능~~ — 그 root가 이 환경의 eks-addons remote state output(`external_dns_role_arn`)을 읽는다 |
 
 **`monitoring develop`처럼 여러 환경을 한 번에 받으면 아래 순서로 겹쳐 실행한다:**
 
@@ -131,7 +164,8 @@ allowed-tools:
 3. monitoring EKS 완료 → kubeconfig → **monitoring eks-addons + observability 동시 시작**
 4. monitoring eks-addons **apply가 끝나는 즉시** develop eks-addons 시작
    (monitoring addon sync를 기다리지 않는다) — 동시에 monitoring addon sync 폴링,
-   cross-account 신뢰 정책 갱신(Step 4)도 이 구간에 함께 처리
+   monitoring의 cross-account 신뢰 정책 갱신(Step 4)도 이 구간에 함께 처리한다.
+   **단 Step 4는 "그 환경의 eks-addons apply가 끝난 뒤"여야 한다**(위 의존성 표 마지막 행)
 5. develop eks-addons 완료 → Hub 재apply → 전체 sync 확인
 
 > **WHY (2026-08-01 실측)**: 이전에는 "monitoring을 완전히 끝내고 develop"으로 직렬
@@ -143,13 +177,36 @@ allowed-tools:
 ### 공통 처리: AWS SSO 토큰 만료 감지 및 반복 Slack 알림
 
 이 스킬이 실행하는 어떤 `terraform apply`/`plan` 출력에서든 아래 패턴이 보이면 SSO 세션이
-만료된 것이다:
+만료됐을 수 있다:
 
-- `No valid credential sources found`
-- `refresh cached SSO token failed`
-- `InvalidGrantException`
+| 패턴 | 판정 |
+|---|---|
+| `refresh cached SSO token failed` | **SSO 만료 확정** — 바로 아래 알림 루프 |
+| `InvalidGrantException` | **SSO 만료 확정** — 바로 아래 알림 루프 |
+| `No valid credential sources found` | **단독으로는 확정 아님** — 아래 확인 후 판단 |
 
-**감지 즉시 아래 백그라운드 루프를 시작한다** — LLM 턴을 소비하지 않는 순수 쉘 루프라
+**[필수] `No valid credential sources found`만 있고 위 두 패턴이 없으면, 알림 루프를 띄우기
+전에 로그 원문에서 아래를 먼저 확인한다** — 이 문구는 네트워크 실패에서도 똑같이 나온다:
+
+```bash
+grep -A8 "^Error" "$RUN_DIR/<실패한 단계>.log" | head -30
+```
+
+`wsarecv`, `connection was forcibly closed`, `exceeded maximum number of attempts`,
+`i/o timeout`, `no such host` 중 하나라도 있으면 **네트워크 오류이므로 재로그인이 아니라
+같은 명령을 1회 재시도한다**(`[실패]` 접두사로 timing 기록). 재시도도 같은 이유로 실패하면
+그때 사용자에게 보고한다.
+
+> **WHY (2026-08-09 실측)**: develop provision의 Hub 재apply가
+> `No valid credential sources found`로 실패해 SSO 만료로 판단하고 알림 루프를 띄운 뒤
+> 사용자에게 재로그인을 요청했다. 실제 원인은 네트워크였다 —
+> `GetRoleCredentials, exceeded maximum number of attempts, 3 ... wsarecv: An existing
+> connection was forcibly closed by the remote host.` SSO 토큰은 유효했고(알림 루프가
+> 0회차에 즉시 `SSO_RESOLVED`) 재로그인 없이 그대로 재시도해 19초에 성공했다. 세 패턴을
+> 동급으로 나열한 것이 오진의 직접 원인이다. 같은 세션에서 `kubectl get nodes`도 한 번
+> `wsarecv`로 끊겼다 — 이 환경에서 순간 단절은 드물지 않다.
+
+**SSO 만료로 확정되면 아래 백그라운드 루프를 시작한다** — LLM 턴을 소비하지 않는 순수 쉘 루프라
 10초 간격 반복이 부담 없다 (`run_in_background: true`, `timeout: 600000`):
 
 ```bash
@@ -157,7 +214,8 @@ PROFILE="<해당 root/서브디렉토리 providers.tf의 profile>"
 ENV_NAME="<환경>"
 WEBHOOK="$SLACK_WEBHOOK_URL"
 CMD_HINT="aws sso login --profile $PROFILE"
-SSO_SESSION=$(awk -v p="[profile $PROFILE]" '$0==p{f=1;next} /^\[/{f=0} f && /sso_session/{print $3}' ~/.aws/config)
+SSO_SESSION=$(sed -n "/^\[profile ${PROFILE}\]/,/^\[/p" ~/.aws/config \
+  | sed -n 's/^[[:space:]]*sso_session[[:space:]]*=[[:space:]]*//p' | head -1)
 CACHE_FILE="$HOME/.aws/sso/cache/$(printf '%s' "$SSO_SESSION" | sha1sum | cut -d' ' -f1).json"
 i=0
 while true; do
@@ -599,29 +657,54 @@ kubectl get application -n argocd -l app.kubernetes.io/component=addon
 설명되지 않는다(2026-08-03 실측: 단계 합 943s vs 벽시계 2453s의 격차 대부분이 이 구간과
 caBundle 발견 지연이었다):
 
-**[필수] 단순 대기가 아니라 `SyncError`를 감지해 재sync까지 하는 루프여야 한다.** ArgoCD는
-sync가 실패하면 **5회만 재시도하고 포기**한다 — 그 뒤에는 `automated selfHeal`이 걸려 있어도
-스스로 복구하지 않는다. 그냥 기다리기만 하면 폴링 상한을 전부 소진하고 타임아웃된다:
+**[필수] 단순 대기가 아니라 자가복구가 안 되는 두 상태를 각각 다르게 처리하는 루프여야 한다.**
+
+| 고착 상태 | 증상 | 조치 |
+|---|---|---|
+| **sync 실패 포기** | `status.conditions`에 `SyncError`. ArgoCD는 **5회만 재시도하고 포기**하며 그 뒤에는 `automated selfHeal`이 걸려 있어도 복구하지 않는다 | 재sync 트리거 |
+| **stale health** | `Synced/Degraded` 또는 `OutOfSync/Healthy`인데 파드는 Running, 하위 리소스도 정상. `SyncError`가 **붙지 않는다** | `refresh=hard` 어노테이션 |
+
+두 번째가 중요하다 — **`SyncError` 조건만 보는 루프는 stale health를 영원히 못 푼다.**
 
 ```bash
 s=$(date +%s)
+CTX=<대상 클러스터 context>
 for i in $(seq 1 40); do
-  out=$(kubectl get application -n argocd --no-headers 2>/dev/null)
-  total=$(echo "$out" | grep -c .); ok=$(echo "$out" | awk '$2=="Synced" && $3=="Healthy"' | grep -c .)
-  [ "$total" -ge <기대 개수> ] && [ "$ok" -eq "$total" ] && { echo "SYNC_DONE: $ok/$total"; break; }
-  # 포기한 앱(SyncError) 감지 시 즉시 재sync 트리거 — selfHeal은 이걸 복구하지 못한다
-  for app in $(kubectl get application -n argocd --no-headers | awk '$2!="Synced"{print $1}'); do
-    kubectl get application "$app" -n argocd -o json \
-      | jq -e '.status.conditions[]? | select(.type=="SyncError")' >/dev/null 2>&1 && {
-        echo "SyncError 감지 → 재sync: $app"
-        kubectl patch application "$app" -n argocd --type merge \
-          -p '{"operation":{"initiatedBy":{"username":"provision-retry"},"sync":{"revision":"HEAD"}}}' >/dev/null
-      }
+  # jsonpath로 "이름 SYNC HEALTH" 한 줄씩 뽑는다. 컬럼 파싱(awk)을 쓰지 않는 이유는
+  # 아래 "[주의] 이 문서에 ＄0~＄9를 쓰지 않는다" 참조.
+  out=$(kubectl get application -n argocd --context "$CTX" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.sync.status}{" "}{.status.health.status}{"\n"}{end}' 2>/dev/null)
+  total=$(printf '%s\n' "$out" | grep -c .)
+  ok=$(printf '%s\n' "$out" | grep -c ' Synced Healthy$')
+  echo "[$i] $ok/$total Synced+Healthy"
+  if [ "$total" -ge <기대 개수> ] && [ "$ok" -eq "$total" ]; then echo "SYNC_DONE: $ok/$total"; break; fi
+  # [주의] 대상 선정은 SYNC/HEALTH 두 값을 함께 본다 — sync 상태만 보면
+  #        Synced/Degraded(= stale health의 대표 형태)가 통째로 누락된다.
+  for app in $(printf '%s\n' "$out" | grep -v ' Synced Healthy$' | cut -d' ' -f1); do
+    if kubectl get application "$app" -n argocd --context "$CTX" -o json 2>/dev/null \
+      | jq -e '.status.conditions[]? | select(.type=="SyncError")' >/dev/null 2>&1; then
+      # (1) 포기한 앱 — 재sync 트리거. selfHeal은 이걸 복구하지 못한다
+      kubectl patch application "$app" -n argocd --context "$CTX" --type merge \
+        -p '{"operation":{"initiatedBy":{"username":"provision-retry"},"sync":{"revision":"HEAD"}}}' >/dev/null 2>&1
+    elif [ "$i" -ge 6 ]; then
+      # (2) SyncError가 없는데도 6회(약 2분) 이상 안 풀림 → stale health로 보고 하드 리프레시
+      kubectl annotate application "$app" -n argocd --context "$CTX" \
+        argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1
+    fi
   done
-  sleep 15
+  sleep 20
 done
 e=$(date +%s); printf '%-34s %5ds\n' "Step 3-B-2 ArgoCD sync 안정화" "$((e-s))" | tee -a "$RUN_DIR/timing.log"
 ```
+
+> **WHY — stale health 분기 (2026-08-07~08-09 실측, 4회 재현)**: `argo-rollouts`,
+> `aws-load-balancer-controller`가 `Synced/Degraded`로, `notifications-resources`가
+> `OutOfSync/Healthy`로 고착됐다. 매번 파드는 `1/1 Running`, Deployment는 `Available`,
+> 하위 리소스 중 unhealthy로 보고된 것이 하나도 없었고 `.status.sync.status`를 직접
+> 조회하면 이미 `Synced`였다 — **ArgoCD 목록 뷰의 판정만 낡은 상태**였다.
+> `SyncError` 조건이 안 붙으므로 재sync 분기가 전혀 발동하지 않아 루프가 대기만 했다.
+> `refresh=hard` 한 번이면 다음 폴링에서 해소된다. 6회부터 거는 이유는 초기 기동 중
+> 정상적으로 `Progressing`인 앱까지 매 회차 하드 리프레시로 때리지 않기 위해서다
+> (실제로 `argo-rollouts`가 5회차까지 진짜 rollout 진행 중이었다가 자연 해소된 사례가 있다).
 
 > **WHY (2026-08-03 실측)**: `notifications-resources`가 ESO webhook 기동 전에 sync를 시도해
 > `no endpoints available for service "external-secrets-webhook"`로 실패했고, ArgoCD가
@@ -750,6 +833,22 @@ cd {root}/observability && terraform apply -auto-approve
   `external_secrets_ssm_parameter_arns`)에 이미 포함되어 있어야 한다.
 
 ### Step 4: cross-account ExternalDNS 신뢰 정책 갱신 (조건부)
+
+> **[선행 조건] 이 환경의 eks-addons apply가 `Apply complete!`를 찍은 뒤에 실행한다.**
+> `project/global/ap-northeast-2/external-dns-cross-account-role` root는
+> `data.terraform_remote_state.monitoring_eks_addons.outputs.external_dns_role_arn`을
+> 참조하므로, eks-addons가 아직 적용되지 않았으면 그 state에 output이 하나도 없어
+> `plan` 단계에서 통째로 실패한다:
+>
+> ```
+> Error: Unsupported attribute
+>   data.terraform_remote_state.monitoring_eks_addons.outputs is object with no attributes
+> ```
+>
+> **WHY (2026-08-07 실측)**: 이 스킬의 "의존성이 없는 것은 무조건 병렬로 돌린다" 원칙과
+> 의존성 표만 보고 eks-addons apply와 Step 4를 동시에 시작했다가 위 에러로 실패했다 —
+> 표에 이 행이 없어서 "병렬 가능"으로 읽힌 것이 원인이다. eks-addons 완료 후 재실행하면
+> 15초에 끝난다. 표에도 같은 행을 추가해 두 곳이 어긋나지 않게 했다.
 
 `{root}/eks-addons/*.tf`에서 `external_dns_cross_account_role_arn` 문자열을 Grep한다.
 
