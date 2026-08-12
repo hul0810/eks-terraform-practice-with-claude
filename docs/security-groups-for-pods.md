@@ -23,6 +23,16 @@ Pod가 `Insufficient vpc.amazonaws.com/pod-eni`로 Pending에 걸리는 것은 I
 
 > Deployment에 SGP를 가리키는 필드는 없다. `SecurityGroupPolicy`가 `podSelector`로 Pod를
 > 고르는 셀렉터 방식이라, **워크로드 매니페스트는 손대지 않아도 된다.** 대신 라벨이 조인 키다.
+> `SecurityGroupPolicy`는 네임스페이스 리소스이므로 대상 Pod와 같은 네임스페이스에 있어야 한다.
+
+> **주입은 admission 시점에만 일어난다 — ArgoCD가 SGP와 Pod를 같은 sync에서 배포하면 경쟁한다.**
+> 2026-08-12 실측에서 Pod가 SGP CR보다 **1초 먼저** 생성돼 webhook이 매칭할 정책이 없었고,
+> `resources.limits`에 `vpc.amazonaws.com/pod-eni`가 주입되지 않아 브랜치 ENI가 붙지 않았다.
+> Pod는 정상 Running이고 라벨도 붙어 있어 겉보기로는 멀쩡하다 — SG만 적용되지 않은 상태다.
+>
+> 판별: `kubectl get pod <name> -o jsonpath='{.spec.containers[0].resources.limits}'`에
+> `vpc.amazonaws.com/pod-eni`가 없으면 이 경우다. **Pod를 재생성하면 해소된다.**
+> 기존 워크로드에 SGP를 나중에 적용할 때도 같은 이유로 재생성이 필요하다.
 
 ---
 
@@ -356,6 +366,67 @@ kubectl get node <karpenter-node> -o jsonpath='{.status.allocatable.pods}'
 네 번째로, **stale SG ID**는 이 에러가 아니라 VPC Resource Controller 이벤트로만 나타난다.
 Pod SG ID는 재provision마다 바뀌는데 Hub 재apply를 빠뜨리면 `SecurityGroupPolicy`가 존재하지
 않는 SG를 들고 있게 된다.
+
+### 실측 결과 (2026-08-12 develop)
+
+**본래 목적 — 같은 노드에서 라벨만으로 갈린다**
+
+| Pod | 라벨 | 브랜치 ENI | RDS 접속 | 인터넷 |
+|---|---|---|---|---|
+| `sgp-allowed` | 있음 | `eni-0f4fb926e84031766` (vlanId 1) | **성공** | **차단** |
+| `sgp-denied` | 없음 | 없음 (노드 ENI 사용) | **timeout** | 성공 |
+
+두 Pod는 **같은 노드**에 있었다. 차단이 인증 실패가 아니라 timeout인 것이 중요하다 — 패킷이
+RDS에 도달조차 못 했다는 뜻이고, RDS SG inbound에 Pod SG만 등록한 설계가 실제로 작동한다는
+증거다. 인터넷 쪽 결과는 `standard` 모드로는 만들 수 없는 차이다(노드 IP로 SNAT되어 둘 다
+노드 SG가 적용된다).
+
+ENI에 붙는 SG도 확인했다 — 트렁크는 노드 SG, 브랜치는 Pod SG를 단다. 이것이 RDS가 출발지를
+다르게 인식하는 메커니즘이다.
+
+**`Insufficient vpc.amazonaws.com/pod-eni`의 두 원인이 실제로 구분된다**
+
+| 상황 | 관측 |
+|---|---|
+| 브랜치 ENI 한도 소진 (c5.large에 SGP Pod 13개 요구) | 9개까지 배치 후 Pending → **Karpenter가 신규 노드 생성** → 전부 Running |
+| t 계열 노드에 강제 배치 (`nodeSelector: role=system`) | Pending 유지. scheduler·Karpenter·CA 셋 다 거부 |
+
+t 계열 케이스의 이벤트는 세 컴포넌트가 각각 다른 이유를 댄다:
+
+```
+scheduler          : Insufficient vpc.amazonaws.com/pod-eni
+karpenter          : label "role" does not have known values
+cluster-autoscaler : NotTriggerScaleUp — Insufficient vpc.amazonaws.com/pod-eni
+```
+
+**노드 SG로 조용히 폴백하지 않고 Pending에 머문다**(fail-closed). 보안이 약해지는 대신 명시적으로
+실패한다.
+
+**`RESERVED_ENIS=1`은 신규 노드에만 반영된다**
+
+| 노드 | 생성 시점 | `maxPods` |
+|---|---|---|
+| `c5.large` #1 | `reservedENIs` 적용 전 | **29** |
+| `c5.large` #2 | 적용 후 | **20** |
+
+`maxPods`는 노드 생성 시점에 고정되므로 기존 노드는 옛 값을 유지한다. 설정이 먹었는지 보려면
+**신규 노드**를 봐야 한다.
+
+**Pod 시작 지연 — SGP가 약 3.5배 느리다**
+
+| | 5개 동시 생성 → 전부 Running |
+|---|---|
+| 일반 Pod | **2초** |
+| SGP Pod | **7초** |
+
+브랜치 ENI 부착 오버헤드다. 절대값은 +5초지만 배수가 크므로, KEDA처럼 스케일 아웃이 잦은
+워크로드에 SGP를 걸면 반응 속도에 그대로 나타난다. 단 이 측정은 **기존 노드에 브랜치 ENI 여유가
+있는 경우**다 — 신규 노드가 필요하면 노드 프로비저닝 시간(수 분)이 더해진다.
+
+**브랜치 ENI 회수는 정상 동작한다**
+
+Pod 18개 삭제 후 ENI 개수가 `18 → 10 → 1`로 줄었다(약 1분). 남은 1개는 존속 중인 Pod의 것으로
+정확히 일치했다. `terminationGracePeriodSeconds` 기본값(30)이면 누수가 없다.
 
 ### 검증 계획의 한계 (알려진 갭)
 
