@@ -18,23 +18,6 @@ resource "terraform_data" "validate_tags" {
 }
 
 ################################################################################
-# 서브넷 그룹
-#
-# VPC 모듈이 만든 데이터베이스 전용 서브넷(라우팅 테이블에 NAT/IGW 경로 없음)에 배치한다.
-# RDS는 서로 다른 AZ의 서브넷을 최소 2개 요구하며, Single-AZ 구성이어도 이 제약은 동일하다.
-################################################################################
-
-resource "aws_db_subnet_group" "this" {
-  name        = local.rds.identifier
-  description = "Database subnets for ${local.rds.identifier}"
-  subnet_ids  = local.database_subnet_ids
-
-  tags = {
-    Name = local.rds.identifier
-  }
-}
-
-################################################################################
 # 보안 그룹 — 이 프로젝트에서 SGP가 실제로 통제하는 지점
 #
 # inbound에 노드 SG가 아니라 Pod SG만 등록하는 것이 핵심이다. 노드 SG를 등록하면 그 노드의
@@ -98,7 +81,9 @@ resource "aws_db_instance" "this" {
   password = data.aws_ssm_parameter.master_password.value
   port     = local.rds.port
 
-  db_subnet_group_name   = aws_db_subnet_group.this.name
+  # 서브넷 그룹은 VPC 모듈이 database_subnets를 선언하는 순간 함께 만든다(공식 모듈 기본 동작).
+  # 여기서 새로 만들면 같은 이름으로 DBSubnetGroupAlreadyExists가 나므로 그 값을 참조만 한다.
+  db_subnet_group_name   = local.database_subnet_group_name
   vpc_security_group_ids = [aws_security_group.rds.id]
   publicly_accessible    = local.rds.publicly_accessible
   multi_az               = local.rds.multi_az

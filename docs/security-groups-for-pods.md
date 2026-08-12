@@ -179,9 +179,31 @@ SGP Pod:                                    9
 실제 총 수용:                              29
 ```
 
-실제 수용량이 SGP Pod 개수에 따라 달라지는데 `maxPods`는 고정값 하나다. Prefix Delegation을
-쓰는 이 프로젝트는 일반 Pod 용량이 290에 달해 실무 상한(110)에 한참 못 미치므로 당장 병목이
-아니다. SGP Pod를 노드당 다수 띄우게 되면 `EC2NodeClass`의 `spec.kubelet.maxPods` 명시를 검토한다.
+실제 수용량이 SGP Pod 개수에 따라 달라지는데 `maxPods`는 고정값 하나다.
+
+### 실측 — Prefix Delegation은 Karpenter 노드에 전달되지 않는다
+
+2026-08-12 develop provision에서 측정한 값이다.
+
+| 노드 | 인스턴스 | `vpc.amazonaws.com/pod-eni` | `maxPods` |
+|---|---|---|---|
+| 시스템 MNG | `t3.medium` | **없음** (t 계열 미지원) | **110** |
+| Karpenter | `c5.large` | **9** | **29** |
+
+MNG의 110은 EKS가 노드 그룹 생성 시점에 CNI 설정(프리픽스 모드)을 반영해 계산한 값이다.
+반면 **Karpenter는 CNI DaemonSet 설정을 읽지 않고 인스턴스 타입의 ENI/IP 한도만으로
+secondary IP 모드 기준 계산을 한다** — `3 × (10−1) + 2 = 29`가 그대로 나온다.
+
+즉 **Prefix Delegation의 pod 밀도 이득이 Karpenter 노드에는 적용되지 않는다.** 이 노드의 실제
+IP 용량은 프리픽스 덕에 290에 달하지만 kubelet 상한이 29에서 걸린다.
+
+이 사실은 `RESERVED_ENIS`의 의미도 바꾼다. Karpenter 문서의 전제는 "Karpenter의 계산식과
+CNI의 실제 모드가 일치한다"인데 이 구성에서는 어긋나 있다 — `reservedENIs=1`을 적용하면
+29 → 20으로 **더 조여진다**. 실제 IP는 남아도는데 상한만 낮추는 셈이다.
+
+그럼에도 설정을 유지하는 이유는 Prefix Delegation을 끄거나 더 작은 인스턴스를 쓰게 되면
+트렁크 ENI 손실이 즉시 병목이 되기 때문이다. Karpenter 노드에 pod를 빽빽하게 채워야 하는
+상황이 오면 `EC2NodeClass`의 `spec.kubelet.maxPods`를 명시해 두 계산을 일치시킨다.
 
 ---
 
@@ -210,6 +232,12 @@ Pod SG를 달고 온 트래픽이 매칭되지 않는다.
 |---|---|---|
 | RDS | RDS SG inbound 5432 ← Pod SG | `shared/rds/main.tf` |
 | CoreDNS | **노드 SG inbound 53(tcp/udp) ← Pod SG** | `shared/eks-addons/pod-security-groups.tf` |
+
+> **DB 서브넷 그룹은 rds root가 만들지 않는다.** VPC 모듈이 `database_subnets`를 선언하는
+> 순간 같은 이름의 서브넷 그룹까지 함께 만들기 때문에, rds root에서 새로 만들면
+> `DBSubnetGroupAlreadyExists`로 apply가 실패한다. VPC root의
+> `database_subnet_group_name` output을 참조한다 — 이름을 재구성하면 두 root가 각자
+> 네이밍 규칙을 알게 되어 한쪽만 바뀌었을 때 조용히 어긋난다.
 
 > SGP를 쓰지 않는 Pod는 노드 ENI로 나가 self 규칙에 걸리므로 이 문제가 드러나지 않는다.
 > 그래서 SGP 도입 시점에 처음 터지고, 증상(이름 해석 실패)만 보면 Pod SG egress 쪽을

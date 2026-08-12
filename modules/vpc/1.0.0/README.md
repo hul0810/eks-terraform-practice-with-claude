@@ -48,6 +48,7 @@ No requirements.
 | Name | Description |
 |------|-------------|
 | <a name="output_database_route_table_ids"></a> [database\_route\_table\_ids](#output\_database\_route\_table\_ids) | 데이터베이스 서브넷 라우팅 테이블 ID 목록 |
+| <a name="output_database_subnet_group_name"></a> [database\_subnet\_group\_name](#output\_database\_subnet\_group\_name) | 데이터베이스 전용 서브넷 그룹 이름. 이 모듈이 database\_subnets를 선언하면 공식 모듈이 서브넷 그룹까지 함께 만들므로, RDS를 쓰는 root는 자기 것을 새로 만들지 말고 이 값을 참조한다 |
 | <a name="output_database_subnet_ids"></a> [database\_subnet\_ids](#output\_database\_subnet\_ids) | 데이터베이스 서브넷 ID 목록 |
 | <a name="output_nat_public_ips"></a> [nat\_public\_ips](#output\_nat\_public\_ips) | NAT Gateway 퍼블릭 IP 목록 |
 | <a name="output_private_route_table_ids"></a> [private\_route\_table\_ids](#output\_private\_route\_table\_ids) | 프라이빗 서브넷 라우팅 테이블 ID 목록 |

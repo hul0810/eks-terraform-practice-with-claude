@@ -14,8 +14,10 @@ locals {
     project     = local.project
   }
 
-  vpc_id              = data.terraform_remote_state.vpc.outputs.vpc_id
-  database_subnet_ids = data.terraform_remote_state.vpc.outputs.database_subnet_ids
+  vpc_id = data.terraform_remote_state.vpc.outputs.vpc_id
+  # 서브넷 그룹은 VPC 모듈 소유다. 이름을 여기서 재구성하지 않고 그대로 받아 쓴다 —
+  # 네이밍 규칙을 두 root가 각자 알고 있으면 한쪽만 바뀌었을 때 조용히 어긋난다.
+  database_subnet_group_name = data.terraform_remote_state.vpc.outputs.database_subnet_group_name
 
   # eks-addons/가 소유하는 Pod 전용 SG. 이 SG를 단 Pod만 아래 RDS에 접근할 수 있다
   # (eks-addons/pod-security-groups.tf 참조).

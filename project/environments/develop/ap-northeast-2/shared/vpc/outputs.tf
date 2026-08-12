@@ -23,6 +23,11 @@ output "database_subnet_ids" {
   value       = module.vpc.database_subnet_ids
 }
 
+output "database_subnet_group_name" {
+  description = "데이터베이스 서브넷 그룹 이름. rds root가 참조한다 — 이 그룹은 VPC 모듈이 소유하므로 RDS 쪽에서 새로 만들지 않는다"
+  value       = module.vpc.database_subnet_group_name
+}
+
 output "tgw_subnet_ids" {
   description = "Transit Gateway 서브넷 ID 목록"
   value       = module.vpc.tgw_subnet_ids

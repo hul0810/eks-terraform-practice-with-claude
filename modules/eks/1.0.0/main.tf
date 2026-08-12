@@ -26,7 +26,10 @@ locals {
   # jsondecode를 try 밖에 두는 이유: try로 감싸면 JSON 문법 오류나 ENABLE_POD_ENl(소문자 L) 같은
   # 오타까지 "false"로 흡수해, 이 local이 막으려던 "CNI는 켰다고 생각했는데 IAM은 안 붙은" 상태를
   # 그대로 만든다. 잘못된 JSON은 즉시 실패시키고, try는 "키가 없는 정상 상태"(SGP 미사용 환경)만 흡수한다.
-  vpc_cni_config                   = var.vpc_cni_configuration_values == null ? {} : jsondecode(var.vpc_cni_configuration_values)
+  # null 처리를 삼항 연산자로 하면 두 분기의 타입이 달라 plan이 실패한다("The true and false
+  # result expressions must have consistent types") — 빈 객체와 env/init을 가진 객체는 통일되지
+  # 않는다. coalesce로 문자열 단계에서 기본값을 주면 분기가 하나뿐이라 그 문제가 없다.
+  vpc_cni_config                   = jsondecode(coalesce(var.vpc_cni_configuration_values, "{}"))
   security_groups_for_pods_enabled = try(local.vpc_cni_config.env.ENABLE_POD_ENI, "false") == "true"
 }
 
