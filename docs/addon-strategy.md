@@ -19,8 +19,15 @@ AWS 공식 문서에 "최소 애드온" 명시 기준은 없다. 아래는 이 �
 | `argocd` | Helm (gitops-bridge) — **monitoring(Hub) 클러스터에만** | GitOps 동기화 불가. dev/prd는 Hub의 spoke로 등록되어 자체 설치하지 않는다 |
 | `argo-rollouts` | Helm (blueprints) | Canary·Blue-Green 배포 불가, Rollout 리소스 처리 안 됨 |
 | `external-secrets` | Helm (blueprints) | AWS SSM Parameter Store/Secrets Manager 값을 K8s Secret으로 동기화 불가, 시크릿 수동 관리 필요 |
+| `cluster-autoscaler` | Helm (blueprints) | 시스템 MNG(정적 노드 그룹)가 pod 슬롯 부족으로 포화돼도 확장되지 않음 |
+| `keda` | Helm (GitOps) | 큐 깊이·외부 메트릭 기반 스케일 불가 (HPA는 CPU/메모리 등 리소스 메트릭만) |
+| `kube-state-metrics` | Helm (GitOps) | K8s 오브젝트 상태 메트릭 부재 — Metrics Server(리소스 메트릭)와 대상이 다름 |
+| `opentelemetry-operator` | Helm (GitOps) | 텔레메트리 수집 파이프라인(OTel Collector CR) 배포 불가 |
 
-> **주의**: Karpenter와 Cluster Autoscaler(CA)는 상호 배타적. 동시 운영 시 충돌 — CA 사용 금지.
+> **Karpenter와 Cluster Autoscaler를 함께 쓴다.** 두 오토스케일러는 관리 대상 노드 집합이
+> 다르며(CA=시스템 MNG의 ASG, Karpenter=NodeClaim), 겹치면 같은 Pending Pod에 둘 다 반응해
+> 노드가 중복 프로비저닝된다. 그래서 **taint/toleration + nodeAffinity로 대상을 명시적으로
+> 분리하는 것을 전제 조건으로 도입한다** — 아래 "오토스케일러 이원화와 노드 배치 규칙" 참조.
 
 ---
 
@@ -148,6 +155,113 @@ ApplicationSet 정의·selector·폴더 구조(`hub/`, `spoke/`)의 최종 소�
 > 만든다** — ExternalSecret/ClusterSecretStore는 ESO가 설치하는 CRD라, ESO 자신도 GitOps로
 > 이관되면 "ArgoCD 부트스트랩 → ESO 필요 → ESO도 ArgoCD가 sync해야 함 → 다시 ArgoCD 부트스트랩
 > 필요"라는 순환이 생기기 때문이다(아래 표의 두 번째 행 참조).
+
+---
+
+## 오토스케일러 이원화와 노드 배치 규칙
+
+### 결정: Karpenter와 Cluster Autoscaler를 함께 쓴다
+
+일반적으로 두 오토스케일러는 동시 운영을 권하지 않지만, 이 프로젝트는 **시스템 Managed Node
+Group(MNG)도 확장 가능한 구조로 만들기 위해 CA를 도입한다.**
+
+시스템 MNG는 Terraform이 `min/max/desired_size`를 고정값으로 관리하는 정적 그룹이고,
+Karpenter는 ASG를 전혀 사용하지 않으므로 이 노드 그룹을 확장 대상으로 보지 않는다. 애드온이
+늘어 pod 슬롯이 부족해져도 스스로 늘어날 수단이 없다는 뜻이다. CA를 이 노드 그룹에만 스코프해
+그 구멍을 메운다.
+
+### 충돌 메커니즘 — 무엇이 겹치면 깨지는가
+
+두 오토스케일러 모두 **Pending Pod**를 트리거로 동작한다. 하나의 Pod가 양쪽 모두의 스케일업
+후보가 되면 CA는 MNG의 ASG를, Karpenter는 NodeClaim을 각각 늘려 **노드가 이중으로 뜬다.**
+그 뒤 한쪽이 비면 축소 판단이 따로 돌아 노드가 붙었다 떨어졌다 하는 상태가 된다.
+
+경계를 가르는 것은 오토스케일러 설정이 아니라 **Pod 쪽 스케줄 제약**이다. 그리고 여기서
+taint/toleration만으로는 부족하다:
+
+> **toleration은 허가지 강제가 아니다.** `CriticalAddonsOnly` toleration을 가진 시스템 애드온
+> Pod는 "시스템 노드에도 뜰 수 있다"는 뜻일 뿐이며, taint가 없는 Karpenter general NodePool에도
+> 그대로 스케줄된다. 실제로 ArgoCD 파드가 시스템 노드 포화 시점에 Karpenter 노드로 새어나갔다가
+> 그 노드가 Underutilized로 disrupt되며 재배치된 사례가 있다.
+
+### 분리 규칙 — 3계층을 모두 갖춘다
+
+| 계층 | 수단 | 정의 위치 | 이 계층이 막는 것 |
+|------|------|-----------|------------------|
+| 1. 시스템 노드 진입 차단 | `CriticalAddonsOnly=true:NoSchedule` taint + `role=system` 레이블 | `modules/eks/1.0.0/main.tf` (시스템 MNG) | 일반 워크로드가 시스템 노드에 들어오는 것 → CA가 일반 워크로드 Pending에 반응하지 않는다 |
+| 2. 시스템 애드온 고정 | `tolerations: CriticalAddonsOnly` **+** `nodeAffinity: role In [system]` (required) | devops-manifest 각 차트 `values-override.yaml` / ArgoCD 자신은 `modules/eks-addons/2.0.0/locals.tf` | 시스템 애드온이 Karpenter 노드로 새는 것 → Karpenter가 시스템 애드온 Pending에 반응하지 않는다 |
+| 3. Karpenter 자기 배치 | `nodeAffinity: karpenter.sh/nodepool DoesNotExist` + `CriticalAddonsOnly` toleration | Karpenter 차트 upstream 기본값 | Karpenter 컨트롤러가 자기가 만든 노드 위에 뜨는 것 |
+
+**규칙: 시스템 노드에서 돌아야 하는 컴포넌트를 추가할 때 toleration만 넣지 않는다.
+`role=system` nodeAffinity(required)를 반드시 함께 넣는다.** 둘 중 하나만 있으면 2계층이
+성립하지 않아 그 컴포넌트가 곧바로 충돌 지점이 된다.
+
+Karpenter 컨트롤러는 3계층으로 `role=system`을 명시하지 않지만, Karpenter 노드를 배제하고 나면
+남는 노드가 시스템 MNG뿐이라 결과적으로 동일한 배치가 된다.
+
+### 현재 적용 현황
+
+`role=system` nodeAffinity(required) + `CriticalAddonsOnly` toleration이 모두 걸려 있는 대상:
+LBC, ExternalDNS, Cluster Autoscaler, External Secrets, KEDA, kube-state-metrics,
+Metrics Server, OpenTelemetry Operator, Argo Rollouts, ArgoCD Image Updater, ArgoCD(+redis-ha).
+
+Bootstrap 애드온 3종(`coredns` / `aws-ebs-csi-driver` / `cert-manager`)도 각 환경
+`eks/locals.tf`의 `*_configuration_values`로 동일한 강제를 받는다. 이 3종은 `aws_eks_addon`으로
+설치되어 devops-manifest(ArgoCD)의 관리 범위 밖이라, values-override가 아니라 Terraform에서
+주입해야 한다. 주입 경로는 애드온마다 다르다:
+
+| 애드온 | 경로 | 기본값 병합 |
+|--------|------|------------|
+| `coredns` | 최상위 `affinity` | 필요 — 기본값에 os/arch required nodeAffinity + replica 분산 podAntiAffinity가 있다 |
+| `aws-ebs-csi-driver` | `controller.affinity` | 필요 — 기본값에 compute-type preferred nodeAffinity + podAntiAffinity가 있다 |
+| `cert-manager` | 최상위 + `webhook.affinity` + `cainjector.affinity` | 필요 — 3곳 모두 기본값에 os/arch required nodeAffinity + `compute-type NotIn hybrid`가 있다 |
+
+**`affinity`는 통째로 교체되는 필드다.** `role=system`만 넣으면 위 기본값이 사라진다 — CoreDNS는
+replica 분산이 깨져 2개가 같은 노드에 몰릴 수 있다. 기본값을 그대로 옮겨 적은 뒤 `role=system`을
+더한다. 이때 **같은 `nodeSelectorTerm`의 `matchExpressions`에 넣어야 한다** — term끼리는 OR로
+평가되므로 별도 term으로 두면 제약이 오히려 느슨해진다.
+
+기본값은 `aws eks describe-addon-configuration --addon-name <name> --addon-version <ver>`의
+`configurationSchema`에서 각 필드의 `default`로 확인한다. 애드온 버전을 올릴 때 기본값이 바뀌면
+여기 옮겨 적은 값도 함께 갱신해야 한다 — 스키마상 `affinity`는 자유 형식 객체(`type: ["object","null"]`)라
+구조를 검증해주지 않는다.
+
+### 이 강제가 만드는 운영상 결과 3가지
+
+배치를 시스템 노드로 고정하면 아래가 따라온다. 셋 다 설계 의도의 부산물이라 알고 있어야 한다.
+
+**1. CA의 스케일업 트리거는 Pending Pod뿐이고, 그 신호를 못 보는 구간이 있다.**
+CA는 `requests`를 기준으로 판단한다. 그런데 `role=system`으로 고정된 애드온 중 requests가 설정된
+것은 일부(metrics-server, KEDA, otel-operator 등)뿐이고 LBC·ExternalDNS·ESO·Karpenter·CA 자신·
+kube-state-metrics·argo-rollouts 등 다수가 requests 미설정(BestEffort)이다. 이들의 실사용량은
+스케줄러도 CA도 보지 못한다. 따라서 **"노드가 꽉 차서 신규 Pod가 Pending"이면 CA가 확장하지만,
+"기존 Pod가 메모리 압박으로 evict/OOM"이면 requests 기준으로는 여전히 자리가 남아 보여 CA가
+아무것도 하지 않는다.** 시스템 노드에 애드온을 추가할 때는 requests를 명시하는 편이 CA가 볼 수
+있는 신호를 남긴다.
+
+**2. Prefix Delegation이 allocatable 메모리를 깎는다.**
+kubelet은 `11Mi × max_pods`를 예약한다. Prefix Delegation으로 `max_pods`가 17 → 110이 되면
+t3.medium(4GiB) 기준 예약이 187Mi → 1210Mi로 늘어 **allocatable이 약 1GiB 줄어든다.**
+pod 밀도 상한을 걷어낸 대가로 노드당 가용 메모리가 줄어든 것이라, 시스템 노드에 무엇을 더 얹을지
+판단할 때 이 감소분을 반영해야 한다.
+
+**3. CA 확장은 사실상 단방향이 된다.**
+CA의 `--skip-nodes-with-system-pods` 기본값이 `true`라, kube-system 네임스페이스의 Deployment
+Pod가 있는 노드는 축소 대상에서 제외된다. coredns·ebs-csi-controller·cert-manager가 전부
+kube-system이므로, CA가 시스템 MNG를 2~3대로 늘린 뒤에는 **되돌아오지 않는다.** 축소가 필요하면
+CA `extraArgs`를 조정해야 한다.
+
+---
+
+> **스키마를 읽을 때 `$ref`를 반드시 따라가야 한다.** 애드온마다 `default`를 놓는 위치가 다르다.
+> coredns/ebs-csi는 속성에 `default`가 직접 붙어 있지만, cert-manager는 속성이
+> `{"$ref": "#/definitions/helm-values.affinity"}`뿐이고 실제 `default`는 그 정의 안에 있다.
+> `properties.affinity.default`만 읽으면 `null`로 보여 "기본값이 없다"고 오판하게 된다.
+>
+> 표기 방식도 애드온마다 제각각이다 — coredns/ebs-csi의 `default`는 `{"affinity": {...}}`처럼
+> 필드명이 한 번 더 감싸여 나오고, cert-manager는 `nodeAffinity` 래퍼가 빠진 채
+> `{"requiredDuringScheduling...": {...}}`로 나온다. 실제로 전달할 값은 어느 쪽이든 Kubernetes
+> PodSpec의 `affinity` 스키마(`{nodeAffinity: {...}}`)를 따른다.
 
 ---
 

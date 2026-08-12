@@ -450,13 +450,26 @@ Karpenter는 Pod이므로 이 노드가 Spot 중단되면 클러스터 자가 �
 시스템 노드는 사양이 작으므로(t3.medium) 일반 워크로드와 리소스를 공유하면 시스템 컴포넌트가 OOM으로 종료될 위험이 있다.
 시스템 애드온은 `tolerations: [{key: "CriticalAddonsOnly", value: "true", effect: "NoSchedule"}]`을 명시하여 허용한다.
 
+**toleration만으로는 배치가 확정되지 않는다.** toleration은 "이 노드에 뜰 수 있다"는 허가이지
+"이 노드에만 떠야 한다"는 강제가 아니라, taint가 없는 Karpenter NodePool에도 그대로 스케줄된다.
+시스템 노드에서 돌아야 하는 컴포넌트는 이 taint에 대한 toleration과 함께 이 노드 그룹의
+`role=system` 레이블을 겨냥한 `nodeAffinity`(required)를 반드시 같이 지정한다 — Karpenter와
+Cluster Autoscaler가 같은 Pending Pod에 동시에 반응하는 것을 막는 전제 조건이다.
+상세: `docs/addon-strategy.md` → "오토스케일러 이원화와 노드 배치 규칙".
+
 ### Cluster Autoscaler 자동탐색 — 별도 설정 불필요 (실측 확인)
 
 이 시스템 노드 그룹은 Terraform이 `min/max/desired_size`를 고정값으로 관리하는 정적
 그룹이라, 애드온이 늘어나 pod 슬롯이 부족해져도 자동으로 확장되지 않는다. Karpenter는
 이 노드 그룹을 전혀 관리하지 않으므로(자기 NodePool 대상만 관리) 대신 Cluster Autoscaler로
-이 노드 그룹만 별도 스코프해 동적 확장을 붙인다 — Karpenter는 ASG를 쓰지 않아 두
-오토스케일러가 노드 집합을 두고 충돌할 여지가 구조적으로 없다.
+이 노드 그룹만 별도 스코프해 동적 확장을 붙인다.
+
+**노드 집합이 안 겹친다고 해서 자동으로 안전한 것은 아니다.** Karpenter가 ASG를 쓰지 않아
+"어떤 노드를 소유하는가"는 갈리지만, 두 오토스케일러의 트리거는 똑같이 Pending Pod다 —
+하나의 Pod가 양쪽 모두의 스케일업 후보가 되면 CA는 ASG를, Karpenter는 NodeClaim을 각각 늘려
+노드가 이중으로 뜬다. 이 이원화가 성립하려면 Pod 쪽 스케줄 제약(위 CriticalAddonsOnly taint +
+`role=system` nodeAffinity)으로 대상 Pod 집합을 명시적으로 분리해야 한다.
+상세: `docs/addon-strategy.md` → "오토스케일러 이원화와 노드 배치 규칙".
 
 CA의 `--node-group-auto-discovery`가 찾는 태그(`k8s.io/cluster-autoscaler/enabled`,
 `k8s.io/cluster-autoscaler/{cluster_name}=owned`)와 확장/축소 쓰기 권한 조건에 쓰이는

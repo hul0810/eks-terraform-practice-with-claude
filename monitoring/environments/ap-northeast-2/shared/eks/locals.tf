@@ -14,6 +14,29 @@ locals {
   vpc_id             = data.terraform_remote_state.vpc.outputs.vpc_id
   private_subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnet_ids
 
+  # cert-manager의 controller·webhook·cainjector 3개 컴포넌트가 공유하는 배치 규칙.
+  # 시스템 노드 그룹(modules/eks)의 role=system 레이블을 겨냥한다 — CriticalAddonsOnly
+  # toleration은 "이 노드에 떠도 된다"는 허가일 뿐이라 taint가 없는 Karpenter NodePool로 새는 것을
+  # 막지 못한다. 배치를 확정하려면 이 강제가 함께 있어야 Karpenter와 Cluster Autoscaler가 같은
+  # Pending Pod에 동시에 반응하지 않는다. 상세: docs/addon-strategy.md → 오토스케일러 이원화와 노드 배치 규칙
+  #
+  # affinity는 통째로 교체되는 필드라 애드온 기본값(os/arch/compute-type 제약)을 그대로 옮겨 적은 뒤
+  # role=system만 더한다 — 같은 matchExpressions 안에 넣어야 AND로 평가된다(별도 nodeSelectorTerm은 OR).
+  cert_manager_affinity = {
+    nodeAffinity = {
+      requiredDuringSchedulingIgnoredDuringExecution = {
+        nodeSelectorTerms = [{
+          matchExpressions = [
+            { key = "kubernetes.io/os", operator = "In", values = ["linux"] },
+            { key = "kubernetes.io/arch", operator = "In", values = ["amd64", "arm64"] },
+            { key = "eks.amazonaws.com/compute-type", operator = "NotIn", values = ["hybrid"] },
+            { key = "role", operator = "In", values = ["system"] },
+          ]
+        }]
+      }
+    }
+  }
+
   eks = {
     cluster_name       = "${local.project}${local.name_suffix}"
     kubernetes_version = "1.34"
@@ -63,18 +86,88 @@ locals {
     })
 
     # monitoring: dev와 동일하게 시스템 노드 슬롯 절약
-    coredns_configuration_values = jsonencode({ replicaCount = 1 })
-    ebs_csi_configuration_values = jsonencode({ controller = { replicaCount = 1 } })
+    #
+    # affinity는 통째로 교체되는 필드다. 애드온 기본값(os/arch 제약, replica 분산 podAntiAffinity)을
+    # 그대로 옮겨 적은 뒤 role=system만 더한다 — role을 별도 nodeSelectorTerm으로 두면 term끼리
+    # OR로 평가되어 제약이 오히려 느슨해지므로 같은 matchExpressions 안에 넣는다.
+    coredns_configuration_values = jsonencode({
+      replicaCount = 1
+      affinity = {
+        nodeAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = {
+            nodeSelectorTerms = [{
+              matchExpressions = [
+                { key = "kubernetes.io/os", operator = "In", values = ["linux"] },
+                { key = "kubernetes.io/arch", operator = "In", values = ["amd64", "arm64"] },
+                { key = "role", operator = "In", values = ["system"] },
+              ]
+            }]
+          }
+        }
+        podAntiAffinity = {
+          preferredDuringSchedulingIgnoredDuringExecution = [{
+            weight = 100
+            podAffinityTerm = {
+              labelSelector = {
+                matchExpressions = [{ key = "k8s-app", operator = "In", values = ["kube-dns"] }]
+              }
+              topologyKey = "kubernetes.io/hostname"
+            }
+          }]
+        }
+      }
+    })
+    # 기본값에는 required nodeAffinity가 없다 — preferred 규칙과 podAntiAffinity를 그대로 옮기고
+    # role=system required를 새로 더한다.
+    ebs_csi_configuration_values = jsonencode({
+      controller = {
+        replicaCount = 1
+        affinity = {
+          nodeAffinity = {
+            requiredDuringSchedulingIgnoredDuringExecution = {
+              nodeSelectorTerms = [{
+                matchExpressions = [{ key = "role", operator = "In", values = ["system"] }]
+              }]
+            }
+            preferredDuringSchedulingIgnoredDuringExecution = [{
+              weight = 1
+              preference = {
+                matchExpressions = [{
+                  key      = "eks.amazonaws.com/compute-type"
+                  operator = "NotIn"
+                  values   = ["fargate", "auto", "hybrid"]
+                }]
+              }
+            }]
+          }
+          podAntiAffinity = {
+            preferredDuringSchedulingIgnoredDuringExecution = [{
+              weight = 100
+              podAffinityTerm = {
+                labelSelector = {
+                  matchExpressions = [{ key = "app", operator = "In", values = ["ebs-csi-controller"] }]
+                }
+                topologyKey = "kubernetes.io/hostname"
+              }
+            }]
+          }
+        }
+      }
+    })
+    # cert-manager: 3개 컴포넌트(controller·webhook·cainjector)가 동일한 배치 규칙을 쓴다.
     cert_manager_configuration_values = jsonencode({
       replicaCount = 1
       tolerations  = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
+      affinity     = local.cert_manager_affinity
       webhook = {
         replicaCount = 1
         tolerations  = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
+        affinity     = local.cert_manager_affinity
       }
       cainjector = {
         replicaCount = 1
         tolerations  = [{ key = "CriticalAddonsOnly", operator = "Exists", effect = "NoSchedule" }]
+        affinity     = local.cert_manager_affinity
       }
     })
 

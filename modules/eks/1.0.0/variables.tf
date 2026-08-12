@@ -160,21 +160,21 @@ variable "vpc_cni_configuration_values" {
 }
 
 variable "coredns_configuration_values" {
-  description = "CoreDNS EKS 관리형 애드온 configuration_values JSON 문자열. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
+  description = "CoreDNS EKS 관리형 애드온 configuration_values JSON 문자열. 호출자는 role=system nodeAffinity를 포함해 시스템 노드 그룹 배치를 강제해야 한다(오토스케일러 이원화 전제, docs/addon-strategy.md 참조). dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2, 배치 강제 없음) 사용"
   type        = string
   nullable    = true
   default     = null
 }
 
 variable "ebs_csi_configuration_values" {
-  description = "EBS CSI Driver EKS 관리형 애드온 configuration_values JSON 문자열. dev에서 controller.replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
+  description = "EBS CSI Driver EKS 관리형 애드온 configuration_values JSON 문자열. 호출자는 controller.affinity에 role=system nodeAffinity를 포함해 시스템 노드 그룹 배치를 강제해야 한다(오토스케일러 이원화 전제, docs/addon-strategy.md 참조). dev에서 controller.replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2, 배치 강제 없음) 사용"
   type        = string
   nullable    = true
   default     = null
 }
 
 variable "cert_manager_configuration_values" {
-  description = "cert-manager EKS 커뮤니티 애드온 configuration_values JSON 문자열. toleration·replicaCount를 포함한다. EKS 관리형 애드온은 CRD를 자체 처리하므로 installCRDs 불필요. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2) 사용"
+  description = "cert-manager EKS 커뮤니티 애드온 configuration_values JSON 문자열. toleration·replicaCount와 함께, 호출자는 controller·webhook·cainjector 3곳 각각에 role=system nodeAffinity를 포함해 시스템 노드 그룹 배치를 강제해야 한다(오토스케일러 이원화 전제, docs/addon-strategy.md 참조). EKS 관리형 애드온은 CRD를 자체 처리하므로 installCRDs 불필요. dev에서 replicaCount=1로 설정하여 시스템 노드 pod 슬롯을 절약한다. null이면 기본값(replicaCount=2, 배치 강제 없음) 사용"
   type        = string
   nullable    = true
   default     = null
