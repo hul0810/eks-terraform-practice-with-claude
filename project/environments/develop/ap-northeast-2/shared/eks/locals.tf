@@ -92,9 +92,31 @@ locals {
     # t3.medium 기준 17 → 이론값 242(MNG 상한 110). 추가 비용 없음.
     # WARM_PREFIX_TARGET은 선언하지 않는다 — 애드온 기본값이 이미 AWS 권장값(1)이므로
     # 같은 값을 고정하면 향후 권장값이 바뀌어도 따라가지 못한다.
+    # Security Groups for Pods(SGP): Pod마다 브랜치 ENI를 붙여 Pod 단위 SG를 적용한다.
+    # ENABLE_POD_ENI를 켜면 modules/eks가 클러스터 IAM Role에 AmazonEKSVPCResourceController를
+    # 자동으로 붙인다(그 값 하나에서 파생 — modules/eks/1.0.0/main.tf 상단 local 참조).
+    #
+    # strict 모드를 쓰는 이유: Pod SG가 ingress·egress를 온전히 통제하는 것이 SGP의 본래 취지이고,
+    # standard는 VPC 밖으로 나가는 트래픽이 노드 IP로 SNAT되어 Pod 단위 egress 통제가 불가능하다.
+    # 대신 strict는 DISABLE_TCP_EARLY_DEMUX를 반드시 동반한다 — 없으면 kubelet이 브랜치 ENI 위의
+    # Pod에 TCP로 붙지 못해 probe가 전부 실패하고, 그 증상이 런타임에서만 드러난다.
+    #
+    # AWS_VPC_K8S_CNI_EXTERNALSNAT은 켜지 않는다. Best Practices가 이 설정을 요구하는 전제는
+    # "인터넷 접근이 필요한 SGP Pod"인데, 이 프로젝트의 Pod SG는 0.0.0.0/0 egress를 두지 않아
+    # 그 전제에 해당하지 않는다. 반면 이 설정은 SGP Pod뿐 아니라 클러스터 전체 Pod의 egress
+    # 경로를 바꾸므로(피어링 건너편에 노드 IP 대신 Pod IP가 노출되는 등) 얻는 것 없이 영향
+    # 범위만 넓어진다. SGP Pod에 인터넷 egress를 열어야 할 때 함께 검토한다.
+    # 상세: docs/security-groups-for-pods.md
     vpc_cni_configuration_values = jsonencode({
       env = {
-        ENABLE_PREFIX_DELEGATION = "true"
+        ENABLE_PREFIX_DELEGATION          = "true"
+        ENABLE_POD_ENI                    = "true"
+        POD_SECURITY_GROUP_ENFORCING_MODE = "strict"
+      }
+      init = {
+        env = {
+          DISABLE_TCP_EARLY_DEMUX = "true"
+        }
       }
     })
 

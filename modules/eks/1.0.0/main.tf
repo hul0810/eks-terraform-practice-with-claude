@@ -16,6 +16,20 @@
 #     - cert-manager: Deployment — 노드 없이는 ACTIVE 불가. coredns와 동일 패턴. AWS API 미호출로 IAM 불필요.
 ################################################################################
 
+locals {
+  # Security Groups for Pods(SGP) 활성화 여부를 vpc-cni 설정에서 직접 읽는다.
+  # 별도 토글 변수를 두면 "ENABLE_POD_ENI는 켰는데 IAM 정책은 안 붙은" 상태가 만들어질 수 있다 —
+  # 트렁크 ENI 생성이 조용히 실패하고 SGP Pod가 Insufficient vpc.amazonaws.com/pod-eni로만
+  # Pending에 걸려 원인 추적이 어렵다. 두 값의 단일 출처를 vpc_cni_configuration_values로 고정한다.
+  # 애드온 스키마상 env 하위는 전부 문자열이라 "true" 문자열과 비교한다.
+  #
+  # jsondecode를 try 밖에 두는 이유: try로 감싸면 JSON 문법 오류나 ENABLE_POD_ENl(소문자 L) 같은
+  # 오타까지 "false"로 흡수해, 이 local이 막으려던 "CNI는 켰다고 생각했는데 IAM은 안 붙은" 상태를
+  # 그대로 만든다. 잘못된 JSON은 즉시 실패시키고, try는 "키가 없는 정상 상태"(SGP 미사용 환경)만 흡수한다.
+  vpc_cni_config                   = var.vpc_cni_configuration_values == null ? {} : jsondecode(var.vpc_cni_configuration_values)
+  security_groups_for_pods_enabled = try(local.vpc_cni_config.env.ENABLE_POD_ENI, "false") == "true"
+}
+
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.22.0"
@@ -74,6 +88,14 @@ module "eks" {
   # 이 프로젝트의 기본 IAM 전략은 Pod Identity이지만, 서드파티 도구나 특정 상황에서
   # IRSA가 필요할 수 있으므로 OIDC Provider는 활성화 상태로 유지한다.
   enable_irsa = true
+
+  # ── 클러스터 IAM Role 추가 정책 ──────────────────────────────────────────────
+  # SGP를 켜면 트렁크/브랜치 ENI를 실제로 만드는 주체는 EKS 컨트롤 플레인에서 도는
+  # VPC Resource Controller다. 노드 Role이 아니라 클러스터 Role에 이 정책이 있어야 한다.
+  # 업스트림 모듈은 표준 클러스터에 AmazonEKSClusterPolicy만 붙이므로 여기서 보충한다.
+  iam_role_additional_policies = local.security_groups_for_pods_enabled ? {
+    AmazonEKSVPCResourceController = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
+  } : {}
 
   # ── 인증 모드 ────────────────────────────────────────────────────────────────
   # API_AND_CONFIG_MAP: 기존 aws-auth ConfigMap과 새로운 EKS Access Entry API를 동시에 지원.

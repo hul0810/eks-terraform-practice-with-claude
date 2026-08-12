@@ -1,8 +1,9 @@
 ---
 name: env-provision
 description: >
-  develop/monitoring/production 실습 환경의 비용 발생 리소스(VPC NAT Gateway, EKS 클러스터, eks-addons)를
-  올바른 순서로 생성한다. 모든 환경이 GitOps Bridge(modules/eks-addons/2.0.0)를 쓰는 지금은
+  develop/monitoring/production 실습 환경의 비용 발생 리소스(VPC NAT Gateway, EKS 클러스터, eks-addons, RDS)를
+  올바른 순서로 생성한다. RDS는 {root}/rds가 있는 환경(현재 develop)만 대상이며, RDS SG가
+  eks-addons의 Pod SG를 참조하므로 eks-addons apply 완료 후에 실행한다(observability와 달리 병렬 불가). 모든 환경이 GitOps Bridge(modules/eks-addons/2.0.0)를 쓰는 지금은
   Karpenter/ESO의 kubernetes_manifest가 ArgoCD 소관이라 CRD 순환 의존 자체가 없고, monitoring의
   count 에러 원인도 코드 수정으로 해소되어 eks-addons는 단일 apply로 ArgoCD 부트스트랩부터 addon
   IAM까지 한 번에 끝난다 — addon 17개 등록·sync는 전부 자동화돼 있어(devops-manifest의
@@ -831,6 +832,30 @@ cd {root}/observability && terraform apply -auto-approve
   스킬의 Terraform 범위 밖이다. Grafana admin 자격증명은 SSM→ESO 경로이며, 그 SSM 경로
   (`/eks-practice/monitoring/grafana/*`)는 ESO IRSA 정책(eks-addons/locals.tf의
   `external_secrets_ssm_parameter_arns`)에 이미 포함되어 있어야 한다.
+
+### Step 3.7: rds 루트 apply — SGP 검증 대상 RDS (rds root가 있는 환경만 — 현재 develop)
+
+`{root}/rds`가 존재하는 환경(develop)만 실행한다. 없으면 건너뛴다.
+
+이 root는 Security Groups for Pods 검증 대상인 RDS(`eks-practice-dev`)와 그 SG를 만든다.
+RDS SG의 inbound가 **eks-addons가 만드는 Pod SG를 참조**하므로 **반드시 Step 3(eks-addons)
+완료 후**에 실행한다 — Step 3.5(observability)처럼 병렬로 돌리면 안 된다.
+
+```bash
+cd {root}/rds && terraform apply -auto-approve
+```
+
+**사전 조건**: 마스터 패스워드가 SSM에 있어야 한다. 없으면 apply가 즉시 실패한다.
+
+```bash
+aws ssm get-parameter --name /eks-practice/develop/rds/master-password \
+  --profile terraform-workload --region ap-northeast-2 >/dev/null 2>&1 \
+  || echo "SSM 파라미터 없음 — 사용자에게 등록 요청 필요"
+```
+
+- RDS 생성은 약 5~10분 걸린다. Step 4 이후 작업과 겹치므로 백그라운드로 두고 진행해도 된다.
+- teardown에서 RDS는 삭제되지만 SSM 파라미터는 남으므로, 재provision 시 재등록이 필요 없다.
+- 상세 설계: `docs/security-groups-for-pods.md`
 
 ### Step 4: cross-account ExternalDNS 신뢰 정책 갱신 (조건부)
 

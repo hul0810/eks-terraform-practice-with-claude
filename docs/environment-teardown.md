@@ -89,10 +89,13 @@ aws elbv2 describe-load-balancers --region ap-northeast-2 \
 
 빈 결과(`[]`)가 나올 때까지 대기한다 (보통 1~2분 내 완료).
 
-### 3단계: 나머지 리소스 destroy (eks-addons → eks 순)
+### 3단계: 나머지 리소스 destroy (rds → eks-addons → eks 순)
 
 ```bash
-cd project/environments/develop/ap-northeast-2/shared/eks-addons && terraform destroy
+# develop 한정: RDS는 시간당 과금되므로 반드시 함께 destroy한다
+cd project/environments/develop/ap-northeast-2/shared/rds && terraform destroy
+
+cd ../eks-addons && terraform destroy
 cd ../eks && terraform destroy
 ```
 
@@ -101,6 +104,26 @@ cd ../eks && terraform destroy
 >
 > VPC는 destroy하지 않는다 (자체 비용 없음). NAT Gateway를 활성화한 적이
 > 있다면 비용 발생을 막기 위해 별도로 확인·정리한다.
+
+**rds가 eks-addons보다 먼저인 이유**: RDS SG의 inbound가 eks-addons 소유의 Pod SG를
+참조한다. 순서를 바꾸면 Pod SG 삭제가 의존성으로 막힌다.
+
+`deletion_protection = false` / `skip_final_snapshot = true`로 설정되어 있어 destroy가
+사람 손을 타지 않는다 (`shared/rds/locals.tf` 참조 — 실습 환경 한정 예외).
+
+### 3.5단계: 브랜치 ENI 잔존 확인 (SGP 사용 환경)
+
+Security Groups for Pods를 켠 환경은 Pod마다 브랜치 ENI가 생긴다. Pod의
+`terminationGracePeriodSeconds`가 0이면 CNI가 네트워크를 정리하지 못해 ENI가 남고,
+잔존 ENI는 SG·서브넷 삭제를 막는다.
+
+```bash
+aws ec2 describe-network-interfaces --region ap-northeast-2 \
+  --filters "Name=description,Values=aws-k8s-branch-eni" \
+  --query 'NetworkInterfaces[].{ID:NetworkInterfaceId,Status:Status}'
+```
+
+트렁크 ENI(`aws-k8s-trunk-eni`)는 노드와 함께 사라진다. 상세: `docs/security-groups-for-pods.md`
 
 ---
 

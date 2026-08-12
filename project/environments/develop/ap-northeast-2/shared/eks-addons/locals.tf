@@ -22,6 +22,10 @@ locals {
   cluster_name      = data.terraform_remote_state.eks.outputs.cluster_name
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
+  # SGP Pod가 시스템 노드의 CoreDNS에 도달하려면 노드 SG에 규칙을 추가해야 한다
+  # (pod-security-groups.tf 참조). 노드 SG는 eks root 소유이지만 Pod SG는 이 root 소유라,
+  # 두 SG를 참조하는 규칙은 Pod SG를 아는 이쪽에 둔다 — 반대로 두면 eks가 이 root에 역의존한다.
+  node_security_group_id = data.terraform_remote_state.eks.outputs.node_security_group_id
   # aws_eks_cluster data source로 VPC ID 조회 — remote_state에 vpc_id output이 없어 data source 활용
   vpc_id = data.aws_eks_cluster.this.vpc_config[0].vpc_id
 
@@ -146,6 +150,20 @@ locals {
     # 두는 대신 이 payload에 함께 실어 보낸다. 값 자체는 기존에 monitoring의
     # gitops-bridge-spokes.tf(구 local.gitops_bridge_spokes)에 하드코딩돼 있던 것과 동일하다
     # — 소유권만 dev 자신으로 옮겼다.
+    # [벤더 output에 없는 project 고유 필드 — SGP]
+    # SecurityGroupPolicy CR(devops-manifest)의 spec.securityGroups.groupIds에 들어갈 값이다.
+    # SG ID는 apply 시점에 정해지고 teardown/재provision마다 바뀌므로 매니페스트에 하드코딩할 수
+    # 없다 — karpenter_node_iam_role_name과 동일하게 이 payload로 실어 보낸다.
+    pod_security_group_metadata = {
+      pod_rds_access_security_group_id = aws_security_group.pod_rds_access.id
+
+      # SGP를 켜면 트렁크 ENI가 인스턴스 ENI 슬롯 하나를 영구 점유하는데, maxPods 계산식은
+      # 이를 모르고 실제보다 크게 잡는다. Karpenter가 그만큼 빼고 계산하도록 알린다
+      # (Karpenter 차트의 settings.reservedENIs → 컨트롤러의 RESERVED_ENIS 환경변수).
+      # SGP를 안 쓰는 spoke는 이 값을 보내지 않아 차트 기본값 "0"이 유지된다.
+      karpenter_reserved_enis = "1"
+    }
+
     karpenter_nodepool_metadata = {
       # eks/locals.tf의 node_security_group_tags["karpenter.sh/discovery"]와 동일한 값 —
       # 그 local도 "${project}${name_suffix}"로 local.cluster_name과 같은 값을 만든다.

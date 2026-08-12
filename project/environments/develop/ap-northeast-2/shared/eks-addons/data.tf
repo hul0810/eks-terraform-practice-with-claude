@@ -20,6 +20,12 @@ data "aws_eks_cluster" "this" {
   name = local.cluster_name
 }
 
+# Pod 전용 SG(pod-security-groups.tf)의 egress 대상 CIDR. strict 모드에서 Pod의 아웃바운드는
+# 그 SG가 온전히 결정하므로 VPC 내부 목적지를 CIDR로 명시해야 한다.
+data "aws_vpc" "this" {
+  id = local.vpc_id
+}
+
 # SSM SecureString 파라미터 기본 암호화 키. External Secrets Operator가 SecureString 파라미터를
 # 복호화할 때 이 키에 대한 kms:Decrypt 권한만 허용한다 (계정 내 모든 KMS 키 와일드카드 대신 최소 권한).
 data "aws_kms_alias" "ssm_default" {

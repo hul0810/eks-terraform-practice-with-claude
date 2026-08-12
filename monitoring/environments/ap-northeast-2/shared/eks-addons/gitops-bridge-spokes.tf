@@ -85,7 +85,13 @@ module "gitops_bridge_spoke" {
       # devops-manifest의 karpenter-resources-spoke가 이 값들을 required로 요구하므로
       # (charts/eks-addons/karpenter-resources/templates/ec2nodeclass.yaml) 빠지면 dev의
       # NodePool 배포 자체가 깨진다 — spoke가 이미 알고 있는 값이라 레지스트리에 함께 싣는다.
-      try(each.value.karpenter_nodepool_metadata, {})
+      try(each.value.karpenter_nodepool_metadata, {}),
+      # [벤더 output에 없는 project 고유 필드 — SGP]
+      # Security Groups for Pods의 Pod 전용 SG ID. SecurityGroupPolicy CR의
+      # spec.securityGroups.groupIds에 들어갈 값인데, SG ID는 apply 시점에 정해지고
+      # teardown/재provision마다 바뀌어 매니페스트에 하드코딩할 수 없다.
+      # SGP를 쓰지 않는 spoke는 이 필드를 안 보내고, try()가 빈 map으로 흡수한다.
+      try(each.value.pod_security_group_metadata, {})
     )
   }
 

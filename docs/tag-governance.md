@@ -127,11 +127,28 @@ resource "terraform_data" "validate_tags" {
 
 ## 현재 적용 현황
 
-| Root Module | tag_policy_compliance | validate_tags | remote state |
-|-------------|----------------------|---------------|--------------|
-| `global/tag-policy` | ✅ | — (정책 자신) | — |
-| `develop/vpc` | ✅ | ✅ | ✅ |
-| `develop/eks` | ✅ | ✅ | ✅ |
+`tag_policy_compliance`(providers.tf)는 **모든 root가 적용**하고 있다. 아래는 나머지 2계층
+(`validate_tags` precondition + tag-policy remote state) 기준이다.
+
+| Root Module | validate_tags + remote state |
+|-------------|------------------------------|
+| `global/tag-policy` | — (허용값을 정의하는 주체) |
+| `monitoring/shared/{vpc,eks,eks-addons,observability}` | ✅ |
+| `project/{develop,production}/shared/{vpc,eks}` | ✅ |
+| `project/develop/shared/rds` | ✅ |
+| `project/{develop,production}/{catalog,order,api-gateway}/ecr` | ✅ |
+| `project/{develop,production}/order/sqs` | ✅ |
+| `project/common/github-workflow-oidc` | ✅ |
+| **`project/{develop,production}/shared/eks-addons`** | **❌ 미적용** |
+| `*/global/tfstate-backend`, `project/global/external-dns-cross-account-role` | ❌ 미적용 |
+
+> **`eks-addons` 2개 root의 미적용은 알려진 갭이다.** 같은 계층의 다른 root(`vpc`/`eks`)는 전부
+> 갖추고 있어 의도적 이탈로 보기 어렵다. 태그 키 부재는 `tag_policy_compliance`가 막지만,
+> **값 위반(예: `environment = "staging"`)은 걸러지지 않는다.**
+>
+> `tfstate-backend` 계열과 `external-dns-cross-account-role`이 미적용인 이유는 **확인하지
+> 않았다** — 백엔드 자체를 만드는 부트스트랩 성격상 tag-policy state를 읽을 수 없는 순서 문제일
+> 가능성이 있으나 근거를 확인하지 못했다.
 
 ---
 

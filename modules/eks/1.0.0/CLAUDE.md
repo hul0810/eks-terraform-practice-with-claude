@@ -41,6 +41,29 @@ coredns는 Kubernetes Deployment이므로 실행 노드가 없으면 Pod가 스�
 
 OIDC Provider(`oidc_provider_arn` output)는 modules/eks-addons의 blueprints가 사용한다.
 
+### 클러스터 IAM Role 추가 정책 — SGP에서 파생
+
+업스트림 모듈은 표준 클러스터의 IAM Role에 `AmazonEKSClusterPolicy` 하나만 붙인다. Security
+Groups for Pods를 쓰면 트렁크/브랜치 ENI를 실제로 만드는 주체가 **컨트롤 플레인의 VPC Resource
+Controller**이므로, 노드 Role이 아니라 **클러스터 Role**에 `AmazonEKSVPCResourceController`가
+추가로 필요하다. 이 모듈이 `iam_role_additional_policies`로 보충한다.
+
+**별도 토글 변수를 두지 않는다.** 부착 여부는 `var.vpc_cni_configuration_values`의
+`env.ENABLE_POD_ENI` 값에서 파생된다(`main.tf` 상단 `local.security_groups_for_pods_enabled`):
+
+```hcl
+try(jsondecode(var.vpc_cni_configuration_values).env.ENABLE_POD_ENI, "false") == "true"
+```
+
+토글을 따로 두면 "CNI는 켰는데 IAM은 안 붙은" 상태가 만들어질 수 있고, 그 증상이
+`Insufficient vpc.amazonaws.com/pod-eni` 하나로만 나타나 원인 추적이 어렵다. 두 값의 단일 출처를
+`vpc_cni_configuration_values`로 고정한다.
+
+`try()`의 폴백은 항상 "SGP 비활성화" 방향이다 — 변수가 `null`이거나 해당 키가 없는 환경
+(production/monitoring)에서는 정책이 붙지 않는다.
+
+상세: `docs/security-groups-for-pods.md`
+
 ### Pod Identity IAM Role 네이밍 규칙
 
 **네이밍 패턴**: `{cluster_name}-{addon}-pod-id`
