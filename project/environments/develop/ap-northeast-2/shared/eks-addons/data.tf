@@ -20,10 +20,17 @@ data "aws_eks_cluster" "this" {
   name = local.cluster_name
 }
 
-# Pod 전용 SG(pod-security-groups.tf)의 egress 대상 CIDR. strict 모드에서 Pod의 아웃바운드는
-# 그 SG가 온전히 결정하므로 VPC 내부 목적지를 CIDR로 명시해야 한다.
-data "aws_vpc" "this" {
-  id = local.vpc_id
+# SGP Pod SG. 이 root가 아니라 pods-sg가 소유한다 — teardown 대상이 아니어서 ID가 고정되고,
+# devops-manifest의 SecurityGroupPolicy가 그 값을 안정적으로 참조할 수 있다.
+# 여기서는 노드 SG가 얽히는 규칙(DNS·probe)을 만들기 위해 ID와 probe 포트만 읽는다.
+data "terraform_remote_state" "pods_sg" {
+  backend = "s3"
+  config = {
+    bucket  = "eks-practice-tfstate-workload"
+    key     = "project/develop/ap-northeast-2/shared/pods-sg/terraform.tfstate"
+    region  = "ap-northeast-2"
+    profile = "terraform-workload"
+  }
 }
 
 # SSM SecureString 파라미터 기본 암호화 키. External Secrets Operator가 SecureString 파라미터를

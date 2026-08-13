@@ -20,14 +20,13 @@ data "terraform_remote_state" "vpc" {
   }
 }
 
-# SGP Pod 전용 SG ID 참조. 이 root가 eks-addons를 읽는 정방향 의존이다 —
-# 반대로 eks-addons가 이 root를 읽게 하면 플랫폼 애드온이 워크로드 root에 역의존하게 된다
-# (eks-addons/pod-security-groups.tf 상단 주석 참조).
-data "terraform_remote_state" "eks_addons" {
+# SGP Pod 전용 SG ID 참조. pods-sg는 클러스터 lifecycle과 분리된 영속 root라(teardown 대상 아님)
+# 이 root가 언제 apply되든 SG가 이미 존재한다 — eks-addons를 거치지 않는다.
+data "terraform_remote_state" "pods_sg" {
   backend = "s3"
   config = {
     bucket  = "eks-practice-tfstate-workload"
-    key     = "project/develop/ap-northeast-2/shared/eks-addons/terraform.tfstate"
+    key     = "project/develop/ap-northeast-2/shared/pods-sg/terraform.tfstate"
     region  = "ap-northeast-2"
     profile = "terraform-workload"
   }

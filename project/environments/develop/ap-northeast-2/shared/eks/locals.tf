@@ -107,16 +107,20 @@ locals {
     # 경로를 바꾸므로(피어링 건너편에 노드 IP 대신 Pod IP가 노출되는 등) 얻는 것 없이 영향
     # 범위만 넓어진다. SGP Pod에 인터넷 egress를 열어야 할 때 함께 검토한다.
     # 상세: docs/security-groups-for-pods.md
+    # enforcing mode는 standard를 쓴다. EKS Pod Identity가 링크로컬 주소로 자격증명을 제공하는데
+    # strict는 모든 아웃바운드를 브랜치 ENI로 몰아 VPC로 내보내므로 그 주소에 도달할 수 없고,
+    # SG 규칙으로도 열 수 없다(경로 자체가 없다). order가 SQS 발행에 Pod Identity를 쓰므로
+    # strict를 유지하면 SGP를 그 워크로드로 확장하는 순간 자격증명이 끊긴다.
+    # standard에서도 브랜치 ENI와 Pod 단위 접근 통제는 그대로다 —
+    # 포기하는 것은 "VPC 밖 egress를 Pod 단위로 막는 것"뿐이다.
+    # DISABLE_TCP_EARLY_DEMUX는 strict 전용 요구사항이라 두지 않는다(standard는 노드 SG가
+    # 함께 적용되어 kubelet probe가 정상 동작한다).
+    # 상세: docs/security-groups-for-pods.md
     vpc_cni_configuration_values = jsonencode({
       env = {
         ENABLE_PREFIX_DELEGATION          = "true"
         ENABLE_POD_ENI                    = "true"
-        POD_SECURITY_GROUP_ENFORCING_MODE = "strict"
-      }
-      init = {
-        env = {
-          DISABLE_TCP_EARLY_DEMUX = "true"
-        }
+        POD_SECURITY_GROUP_ENFORCING_MODE = "standard"
       }
     })
 

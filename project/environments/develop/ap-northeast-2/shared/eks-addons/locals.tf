@@ -23,9 +23,14 @@ locals {
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.oidc_provider_arn
   # SGP Pod가 시스템 노드의 CoreDNS에 도달하려면 노드 SG에 규칙을 추가해야 한다
-  # (pod-security-groups.tf 참조). 노드 SG는 eks root 소유이지만 Pod SG는 이 root 소유라,
-  # 두 SG를 참조하는 규칙은 Pod SG를 아는 이쪽에 둔다 — 반대로 두면 eks가 이 root에 역의존한다.
+  # (pod-security-groups.tf 참조). 노드 SG는 eks root 소유, Pod SG는 pods-sg 소유라
+  # 두 SG를 참조하는 규칙은 양쪽을 다 아는 이쪽에 둔다.
   node_security_group_id = data.terraform_remote_state.eks.outputs.node_security_group_id
+
+  # pods-sg가 소유하는 SGP Pod SG. 이 root는 노드 SG가 얽히는 규칙만 만든다.
+  # probe 포트는 standard 모드에서 규칙이 불필요해 읽지 않는다(pods-sg는 계속 노출한다 —
+  # strict로 올릴 때 다시 필요하다).
+  pod_security_group_ids = data.terraform_remote_state.pods_sg.outputs.pod_security_group_ids
   # aws_eks_cluster data source로 VPC ID 조회 — remote_state에 vpc_id output이 없어 data source 활용
   vpc_id = data.aws_eks_cluster.this.vpc_config[0].vpc_id
 
@@ -155,7 +160,7 @@ locals {
     # SG ID는 apply 시점에 정해지고 teardown/재provision마다 바뀌므로 매니페스트에 하드코딩할 수
     # 없다 — karpenter_node_iam_role_name과 동일하게 이 payload로 실어 보낸다.
     pod_security_group_metadata = {
-      pod_rds_access_security_group_id = aws_security_group.pod_rds_access.id
+      pod_rds_access_security_group_id = local.pod_security_group_ids["rds_access"]
 
       # SGP를 켜면 트렁크 ENI가 인스턴스 ENI 슬롯 하나를 영구 점유하는데, maxPods 계산식은
       # 이를 모르고 실제보다 크게 잡는다. Karpenter가 그만큼 빼고 계산하도록 알린다

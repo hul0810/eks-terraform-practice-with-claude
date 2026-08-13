@@ -1,9 +1,10 @@
 ---
 name: env-teardown
 description: >
-  develop/monitoring/production 실습 환경의 비용 발생 리소스(RDS, eks-addons, EKS 클러스터, VPC NAT Gateway)를
-  역순으로 삭제한다. RDS는 {root}/rds가 있는 환경(현재 develop)만 대상이며 eks-addons보다 먼저
-  destroy해야 한다 — RDS SG가 eks-addons 소유의 Pod SG를 참조해 순서를 바꾸면 DependencyViolation이 난다. terraform destroy만으로는 정리되지 않는 잔여 리소스
+  develop/monitoring/production 실습 환경의 비용 발생 리소스(eks-addons, EKS 클러스터, VPC NAT Gateway)를
+  역순으로 삭제한다.
+  {root}/pods-sg는 삭제하지 않는다 — SGP Pod SG의 ID를 teardown 사이클 너머로 고정하기 위해
+  일부러 클러스터 lifecycle과 분리한 root이며, SG 자체는 과금되지 않는다. terraform destroy만으로는 정리되지 않는 잔여 리소스
   (ArgoCD Application/ApplicationSet가 재조정 중인 Ingress·ALB, workload 계정 Route53에
   ExternalDNS가 만든 레코드, VPC CNI secondary ENI 잔존, 삭제된 클러스터를 가리키는
   ~/.kube/config 잔여 context/cluster/user 항목, Terraform state가 영향을 받는 addon
@@ -52,11 +53,19 @@ allowed-tools:
 
 ```
 [삭제 대상] <환경>
-- RDS 인스턴스 (develop 한정, {root}/rds 가 있을 때만)
 - eks-addons (helm release 전체, ArgoCD/Karpenter/LBC/ExternalDNS/external-secrets 등)
 - EKS 클러스터 (<cluster_name>)
 - VPC NAT Gateway (VPC 자체는 유지)
+
+[유지] VPC/서브넷, pods-sg(SGP Pod SG), SSM 파라미터
 ```
+
+> **`{root}/pods-sg`는 destroy하지 않는다.** SGP Pod SG의 ID를 teardown 사이클 너머로 고정하려고
+> 일부러 클러스터 lifecycle과 분리한 root다(`pods-sg/main.tf` 상단 참조). devops-manifest의
+> SecurityGroupPolicy가 이 ID를 참조하므로, 삭제하면 재provision마다 값이 바뀌어 매니페스트가
+> 그것을 따라가야 한다. SG는 그 자체로 과금되지 않으므로 유지해도 비용이 늘지 않는다.
+>
+> 이 root는 VPC만 참조하고 클러스터를 참조하지 않아, 클러스터가 사라져도 state가 깨지지 않는다.
 
 `monitoring` / `develop`는 확인 없이 바로 Step 1로 진행한다 — 3개 환경 모두 실습용이고
 비용 발생 리소스만 대상이므로 매번 y/N을 묻지 않는다.
@@ -891,19 +900,6 @@ aws route53 change-resource-record-sets --hosted-zone-id <zone-id> --profile ter
 > 이유로 **배치 전체가 실패**했다 (Route53 ChangeBatch는 원자적이라 하나만 걸려도 A 레코드
 > 생성까지 함께 막힌다). Ingress 하나에 A 1개 + TXT 2개가 세트로 생긴다는 점을 항상 함께
 > 고려해야 한다.
-
-### Step 5.9: rds destroy (`{root}/rds`가 있는 환경만 — 현재 develop)
-
-```bash
-[ -d {root}/rds ] && cd {root}/rds && terraform destroy -auto-approve
-```
-
-**반드시 Step 6보다 먼저 실행한다.** rds root의 `aws_vpc_security_group_ingress_rule.from_pod_sg`가
-eks-addons 소유의 Pod SG를 `referenced_security_group_id`로 참조하므로, 순서를 바꾸면 Step 6의
-`DeleteSecurityGroup`이 `DependencyViolation`으로 실패하고 그 지점에서 절차가 멈춘다.
-
-**RDS는 시간당 과금된다.** 이 단계를 건너뛰면 teardown의 목적 자체가 달성되지 않는다.
-`deletion_protection = false` / `skip_final_snapshot = true`로 설정되어 있어 추가 확인 없이 삭제된다.
 
 ### Step 6: eks-addons destroy
 

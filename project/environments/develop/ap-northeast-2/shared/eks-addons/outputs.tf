@@ -13,7 +13,5 @@ output "karpenter_node_iam_role_name" {
   value       = module.eks_addons.karpenter_node_iam_role_name
 }
 
-output "pod_rds_access_security_group_id" {
-  description = "SGP(Security Groups for Pods)로 Pod에 부착하는 RDS 접근용 SG ID. rds root가 RDS SG의 inbound source로 참조하고, SecurityGroupPolicy CR에는 GitOps Bridge payload를 통해 전달된다"
-  value       = aws_security_group.pod_rds_access.id
-}
+# Pod SG ID는 이 root가 아니라 pods-sg가 소유하므로 여기서 output하지 않는다.
+# rds root는 pods-sg를 직접 참조한다.

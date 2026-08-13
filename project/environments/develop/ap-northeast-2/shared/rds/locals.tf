@@ -21,7 +21,7 @@ locals {
 
   # eks-addons/가 소유하는 Pod 전용 SG. 이 SG를 단 Pod만 아래 RDS에 접근할 수 있다
   # (eks-addons/pod-security-groups.tf 참조).
-  pod_rds_access_security_group_id = data.terraform_remote_state.eks_addons.outputs.pod_rds_access_security_group_id
+  pod_rds_access_security_group_id = data.terraform_remote_state.pods_sg.outputs.pod_rds_access_security_group_id
 
   rds = {
     # EKS 클러스터와 동일한 이름 규칙을 쓴다 — 이 RDS는 그 클러스터 워크로드 전용이라
