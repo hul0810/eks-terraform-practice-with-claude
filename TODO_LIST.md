@@ -15,7 +15,7 @@
 | 태그 | 달성 단계 | 설명 |
 |------|----------|------|
 | `foundation/single-account-eks` | 1단계(Phase 1~5) 완료 시 | 단일 계정, dev/prd 2클러스터, GitOps·Observability 포함 기초 구성 |
-| `enterprise/hub-spoke-eks` | 2단계(Phase 6~9) 완료 시 | 2계정(monitoring/workload), VPC Peering(수동 관리), Hub-Spoke ArgoCD·Observability, 보안 거버넌스 |
+| `enterprise/hub-spoke-eks` | 2단계(Phase 6~9) 완료 시 | 2계정(monitoring/workload), VPC Peering(수동 관리), Hub-Spoke ArgoCD·Observability, 인증·시크릿 관리 |
 
 ---
 
@@ -93,15 +93,16 @@
 > 아래는 모듈 완성 후 추가로 식별된 항목. `modules/eks/1.0.0`은 dev/prd/monitoring 3개가 공유하므로
 > 모듈 변경 1회 + 3개 환경 `eks/locals.tf` 값 주입으로 반영한다.
 
-- [ ] **EKS Node Auto Repair** — `Ready=true`인데 고장난 노드(`IPAMDNotRunning` 등) 감지·교체.
+- [ ] **(보류) EKS Node Auto Repair** — `Ready=true`인데 고장난 노드(`IPAMDNotRunning` 등) 감지·교체.
       ASG 헬스체크(EC2 물리 장애)·CA(용량) 어느 쪽으로도 안 덮이는 구간
-  - [ ] `eks-node-monitoring-agent` 애드온 + MNG `node_repair_config` **세트로 도입**
-        (repair 단독은 `Ready` 조건만 잡고, 그건 5분 축출 후 좀비 노드 정리에 그침)
-  - [ ] `max_unhealthy_node_threshold_count` 명시 필수
-        (기본 브레이크는 "노드 5개 초과 && 20% 초과 unhealthy" 조건이라 1~3대 규모에서 미발동)
-  - [ ] production은 HA 복원(`min/desired = 2`)과 세트로 (단일 노드에서는 교체 = 블랙아웃)
+  - `eks-node-monitoring-agent` 애드온 + MNG `node_repair_config` **세트로 도입**
+    (repair 단독은 `Ready` 조건만 잡고, 그건 5분 축출 후 좀비 노드 정리에 그침)
+  - `max_unhealthy_node_threshold_count` 명시 필수
+    (기본 브레이크는 "노드 5개 초과 && 20% 초과 unhealthy" 조건이라 1~3대 규모에서 미발동)
+  - production은 HA 복원(`min/desired = 2`)과 세트로 (단일 노드에서는 교체 = 블랙아웃)
 - [ ] 시스템 ASG에 `k8s.io/cluster-autoscaler/node-template/label/role=system` 태그 존재 확인
-      (없으면 `nodeAffinity(role=system)` 파드가 Pending이어도 CA가 scale-out 미시도)
+      — 클러스터 기동 중에 `aws autoscaling describe-tags`로 확인한다. scale-from-zero에서만
+      필요한 태그이고 시스템 노드 그룹은 `min >= 1`이라 현재 구성에서는 영향이 없을 가능성이 높다
 
 ### 2-3. modules/eks-addons + environments/dev eks-addons 추가
 
@@ -302,9 +303,8 @@
 > Identity, `observability` root)까지만 담당하고, K8s 워크로드는 `devops-manifest`의 ArgoCD
 > Application이 배포한다.
 >
-> **아키텍처 (2026-07-31 변경)**: dev/prd OTel Collector(spoke) → **LGTM 백엔드 직접 전송**
-> (VPC Peering 경유). 당초 설계에 있던 monitoring OTel Gateway(Internal NLB) 경유 단계는
-> 구성 요소를 줄이기 위해 생략한다.
+> **아키텍처**: dev/prd OTel Agent(DaemonSet) → VPC Peering → monitoring OTel
+> Gateway(Internal NLB) → LGTM 백엔드.
 >
 > **전제**: Phase 2~3 완료. cert-manager Bootstrap 애드온 설치 완료 (OTel Operator 전제 조건).
 > Phase 6(Hub-Spoke ArgoCD)이 먼저 완료되어야 spoke에 Application을 배포할 수 있다 — 완료됨.
@@ -353,34 +353,33 @@
       (`pcx-07fa1a0e9eb100e47`, `pcx-084a197c6a2532991`)
 - [x] monitoring vpc/eks/eks-addons/observability apply
 - [x] GitOps로 LGTM 배포 (Mimir·Loki·Tempo·Grafana, `argocd/applicationsets/observability/`)
-  - [ ] `mimir-ingester-0` CrashLoopBackOff 해소 (memberlist fast-join 실패 — `joined 0, required 1`)
-  - [ ] `tempo-query-frontend` querier 연결 확인
-- [ ] dev OTel Collector를 devops-manifest에 작성 → spoke ApplicationSet에 등록
-  - [ ] 수집기 구성: DaemonSet(노드/파드 메트릭) + Deployment(`k8s_cluster` receiver, 중복 방지)
-  - [ ] exporter 대상: LGTM 백엔드 직접 전송 (Gateway 미경유)
-- [ ] dev 앱(catalog/gateway/order)의 OTLP export 엔드포인트를 Collector로 지정
-- [ ] dev 검증 완료 후 production에 동일 적용
+  - [x] `mimir-ingester-0` CrashLoopBackOff 해소
+  - [x] `tempo-query-frontend` querier 연결 확인
+- [x] dev OTel Collector를 devops-manifest에 작성 → spoke ApplicationSet에 등록
+  - [~] 수집기 구성 — DaemonSet(`otel-agent-resources`) 완료, `k8s_cluster` receiver용 singleton Deployment 미착수
+  - [x] exporter 대상: monitoring OTel Gateway(Internal NLB) 경유 → LGTM 백엔드
+- [x] dev 앱(catalog/gateway/order)의 OTLP export 엔드포인트를 Collector로 지정 (`OTLP_ENDPOINT = http://$(HOST_IP):4317`)
+- [~] dev 검증 완료 후 production에 동일 적용 — OTel Operator만 완료, Agent 미적용
 
 ### 5-5. 검증
 
 - [x] `kubectl get nodes` — monitoring 클러스터 시스템 노드 확인
 - [x] `kubectl get pods -A` — LBC·ExternalDNS·Karpenter·Metrics Server·ArgoCD 확인
 - [x] `aws ec2 describe-vpc-peering-connections --filters Name=status-code,Values=active` — Peering 상태 확인
-- [ ] `kubectl get opentelemetrycollector -A` — dev spoke 인스턴스 확인
-- [ ] dev 앱 로그에서 OTLP export 오류 소멸 확인
-- [ ] Grafana에서 dev 클러스터 메트릭 조회 (Mimir 데이터소스)
-- [ ] Grafana UI 접속 (`https://grafana.pyhtest.com`)
+- [x] `kubectl get opentelemetrycollector -A` — dev spoke 인스턴스 확인
+- [x] dev 앱 로그에서 OTLP export 오류 소멸 확인
+- [x] Grafana에서 dev 클러스터 메트릭 조회 (Mimir 데이터소스)
+- [x] Grafana UI 접속 (`https://grafana.pyhtest.com`)
 
 ---
 
 ## 2단계: 엔터프라이즈 전환 (멀티 계정, 중앙 집중, 고가용성)
 
-> **목표**: 2계정(monitoring/workload) 분리 구조 위에 Hub-Spoke GitOps, Organizations
-> 거버넌스, 중앙 Observability, 보안 정책을 적용해 1단계를 실무 엔터프라이즈 수준으로
-> 끌어올린다.
+> **목표**: 2계정(monitoring/workload) 분리 구조 위에 Hub-Spoke GitOps, 중앙 Observability,
+> 인증·시크릿 관리를 적용한다.
 >
-> **진행 순서**: Phase 6(ArgoCD Hub GitOps) → Phase 7(Organizations 거버넌스) →
-> Phase 8(중앙 Observability) / Phase 9(보안 거버넌스, Phase 7 이후 병렬 가능)
+> **진행 순서**: Phase 6(ArgoCD Hub GitOps) → Phase 7(계정 분리, 완료) →
+> Phase 8(중앙 Observability) / Phase 9(인증·시크릿, 병렬 가능)
 >
 > **네트워크**: 계정 간 연결은 Transit Gateway 대신 VPC Peering(AWS CLI 수동 관리,
 > `docs/network-design.md`)을 쓴다 — 연결 수가 2개뿐이라 TGW 어태치먼트 비용을 들일
@@ -618,114 +617,66 @@
 - [x] `eks-practice-devops-manifest` repo에 ApplicationSet 작성(catalog/gateway/order, dev+prd 각각 독립 ApplicationSet)
 - [x] `root-app-workload` Hub(monitoring) 부트스트랩 — `clusters` generator가 dev/prd를 자동 감지해 Application 6개 생성 확인
 - [x] MSA 애플리케이션(catalog/gateway/order) dev+prd 배포 확인 — Ingress→ALB(LBC)→Route53(ExternalDNS)까지 end-to-end 실접속 검증(dev: `api-develop.pyhtest.com`, prd: `api.pyhtest.com`)
-- [ ] Hub 장애 시 spoke 워크로드 정상 동작 검증(SPOF 아님 확인)
-- [ ] GitHub Actions CI/CD: 이미지 빌드 → ECR push → ArgoCD Image Updater/Argo Rollouts 배포 루프
-  - [ ] OIDC 기반 ECR 접근(IAM User 장기 키 제거)
+- [ ] (선택) Hub 장애 시 spoke 워크로드 정상 동작 검증 — ArgoCD가 죽어도 데이터 플레인은
+      무관하므로 결론이 뒤집힐 여지가 거의 없다. 필요해지면 Hub ArgoCD replica 0 후 spoke 앱 접속 확인
+- [x] GitHub Actions CI/CD: 이미지 빌드 → ECR push → ArgoCD Image Updater/Argo Rollouts 배포 루프
+  - [x] OIDC 기반 ECR 접근(IAM User 장기 키 제거) — `project/environments/common/ap-northeast-2/github-workflow-oidc`
 
 ---
 
-### Phase 7. AWS Organizations 거버넌스 (monitoring / workload 기존 2계정 대상)
+### Phase 7. 계정 목적별 분리 (달성 완료)
 
-> **목표**: 이미 물리적으로 분리되어 있는 monitoring(공유 서비스) / workload(dev/prd) 2계정을
-> AWS Organizations 아래로 묶고, SCP 기본 가드레일·IAM Identity Center(SSO)·중앙 로깅의
-> 토대를 마련한다. **신규 계정을 만드는 단계가 아니다** — 당초 계획했던 별도 Intra 계정 신설은
-> 취소됐고(위 "참고" 박스 참조), monitoring 계정이 그 역할을 이미 수행 중이므로 이 Phase는
-> "이미 있는 2계정에 거버넌스 계층을 얹는" 작업으로 범위가 좁아졌다.
+> **취지**: 공유 서비스와 워크로드를 계정 단위로 갈라 권한·비용 경계를 만든다.
 >
-> **계정 구조 (이미 완성됨)**:
-> - **monitoring 계정** (기존): ArgoCD Hub, LGTM 스택 등 공유 서비스 전담.
-> - **workload 계정** (기존): dev + prd EKS 클러스터. 애플리케이션 워크로드 전담.
+> | 계정 | 역할 |
+> |------|------|
+> | monitoring | ArgoCD Hub, LGTM 스택 등 공유 서비스 |
+> | workload | dev + prd EKS 클러스터, 애플리케이션 워크로드 |
 >
-> *(실무 표준은 dev/prd를 별도 계정으로 추가 분리하지만, 비용·복잡도 절감을 위해 2계정으로 단순화)*
+> *(실무 표준은 dev/prd를 별도 계정으로 더 분리하지만, 비용·복잡도 절감을 위해 2계정으로 단순화)*
 >
-> **왜 거버넌스가 필요한가** (계정 분리는 이미 됐으니 아래는 그 위에 얹는 이유):
-> - **권한 경계 명확화**: cross-account assume을 명시적으로 허용한 주체만 각 계정에 접근 가능하도록 SCP로 강제.
-> - **비용 가시성**: 공유 서비스 비용 vs 워크로드 비용을 계정별로 이미 구분 가능(청구서 분리) — Organizations는 여기에 예산 집계·이상 감지를 더한다.
-> - **중앙 인증**: 계정별 IAM User 난립 대신 IAM Identity Center(SSO) 단일 로그인.
->
-> **전제 조건**: Phase 6 완료 권장 (Hub-Spoke 패턴 검증 후 거버넌스 적용).
-> `TerraformExecutionRole`의 trust principal(`account:root`) 재설계 필요 — security-engineer 사전 검토 권장.
+> **Organizations OU·SCP·Org Trail·`TerraformExecutionRole` 재설계는 채택하지 않는다** —
+> 원래 취지인 계정 분리는 이미 달성됐고, 그 위에 얹는 거버넌스 계층은 실습 범위를 벗어난다.
 
-- [ ] **거버넌스 전략 설계** (`docs/multi-account-strategy.md` 신규 작성)
-  - [ ] OU 구조: `Infrastructure`(monitoring), `Workloads`(dev/prd 공용) 2 OU
-  - [ ] State backend 전략: 현재 workload 계정 S3 버킷 유지 + monitoring 계정은 동일 버킷에 cross-account 접근
-  - [ ] `TerraformExecutionRole` 재설계: monitoring/workload 계정 각각에 배포 + trust를 실행 주체로 한정 (`account:root` trust 제거)
-- [ ] `global/organizations/` 신규 root module 생성 — workload 계정에서 실행
-  - [ ] 기존 monitoring/workload 2개 계정을 `aws_organizations_account` 리소스로 **import**(신규 발급 아님 — 이미 존재하는 계정을 Organizations 관리 범위로 편입)
-  - [ ] OU 구조 코드화
-- [ ] IAM Identity Center(SSO) 활성화 — 계정별 IAM User 난립 대신 중앙 인증 전환
-- [ ] SCP 기본 가드레일: 루트 리전 강제(`ap-northeast-2` 외 차단), 루트 사용자 사용 차단, CloudTrail 비활성화 차단
-- [ ] Org Trail(중앙 CloudTrail) → workload 계정 또는 별도 S3 집계
-- [ ] `TerraformExecutionRole` monitoring 계정에 맞게 재배포(신뢰 정책 재설계 반영, bootstrap 절차 문서화)
-- [ ] GitHub Actions OIDC → cross-account assume 체인 구성 (IAM User 장기 키 제거)
-- [ ] FinOps 자동화: 계정별 AWS Budget + Cost Anomaly Detection 코드화
+- [x] monitoring / workload 계정 분리
+- [x] IAM Identity Center(SSO) 기반 인증 (`terraform` 프로파일)
 
 ---
 
-### Phase 8. 중앙 Observability (Prometheus 원격 쓰기 + 중앙 Grafana)
+### Phase 8. 중앙 Observability 수집 확인
 
-> **목표**: 각 클러스터의 메트릭·로그를 monitoring 계정의 중앙 백엔드로 집계하고,
-> 단일 Grafana에서 전 환경을 관측한다.
+> **범위**: 스택 구성은 LGTM + OTel로 확정됐다. 이 Phase는 메트릭·로그·트레이스 3종이
+> 각 환경에서 중앙 백엔드까지 정상 유입되는지 확인하는 것까지만 한다.
 >
-> **왜 중앙화인가**:
-> - **단일 관측 창**: dev/prd를 한 Grafana에서 환경 라벨로 필터링. 장애 시 Grafana를 오가지 않는다.
-> - **장기 보존 분리**: 클러스터 노드의 Prometheus는 단기 버퍼(2~6h)만, 장기는 중앙 S3 기반에 보존.
->   클러스터가 종료되어도 메트릭이 남아 사후 분석 가능.
-> - **비용 효율**: 환경마다 풀 Grafana + 장기 스토리지 대신 중앙 1세트.
+> | 계층 | 구성 | 위치 |
+> |------|------|------|
+> | 수집 | OTel Agent(DaemonSet) → VPC Peering → OTel Gateway(Internal NLB) | devops-manifest |
+> | 메트릭 | Mimir + S3 | monitoring |
+> | 로그 | Loki + S3 | monitoring |
+> | 트레이스 | Tempo + S3 | monitoring |
+> | 조회 | Grafana (`grafana.pyhtest.com`), DataSource 3종 | monitoring |
 >
-> **중앙 백엔드 선택 (Thanos vs VictoriaMetrics)**:
-> - **VictoriaMetrics 권장** (개인 실습 + 비용 최우선): 단일 바이너리, 메모리/CPU 훨씬 적게 사용, 운영 단순.
-> - Thanos: CNCF 표준, 면접 단골이나 컴포넌트 多·무거움. "CNCF 표준 학습" 목표면 선택 가능.
-> - 절충안: Phase 9a VictoriaMetrics 먼저 → 여유 시 Phase 9b Thanos 비교 실습.
->
-> **전제 조건**: Phase 7 완료 권장(거버넌스 정착 후 진행). monitoring 계정/클러스터 자체는
-> 이미 Phase 5에서 구축 완료 — 별도 이전 작업 불필요.
-> spoke→hub remote_write 경로는 Phase 5에서 구축한 VPC Peering(수동 관리,
-> `docs/network-design.md`)을 그대로 사용한다 — 별도 네트워크 구축 불필요.
-> Phase 5의 kube-prometheus-stack을 **로컬 수집기 역할로 재배치** (중앙 전송으로 변경).
+> **채택하지 않는 것**: kube-prometheus-stack `remoteWrite`, VictoriaMetrics,
+> Alloy/Promtail, Thanos, 데이터소스 멀티테넌시, 대시보드 코드화, Alertmanager 중앙화.
 
-- [ ] 각 spoke의 kube-prometheus-stack `remoteWrite` 설정 → monitoring 중앙 백엔드 전송 (로컬 장기 보존 비활성)
-- [ ] monitoring 클러스터에 VictoriaMetrics 배포 (ArgoCD Hub로 배포)
-  - [ ] S3 백엔드 설정 (장기 메트릭 보존)
-  - [ ] remote_write 인증·암호화: VPC Peering 사설 경로 + TLS
-- [ ] monitoring 클러스터에 중앙 Grafana 배포
-  - [ ] 데이터소스 멀티테넌시: 환경 라벨(`cluster=dev/prd`)로 구분
-  - [ ] 핵심 대시보드: 클러스터 오버뷰, Karpenter 노드 현황, 서비스별 SLI
-- [ ] Loki 중앙 배포 + 각 클러스터 Alloy(또는 Promtail) → 중앙 Loki
-  - [ ] S3 백엔드 설정
-- [ ] Alertmanager 중앙화 — 환경별 라우팅 규칙 정의
-- [ ] (Phase 9b, 선택) Thanos 비교 실습
+- [x] dev — 메트릭(Mimir)·로그(Loki)·트레이스(Tempo) 3종 유입 확인
+- [ ] production — OTel Agent 적용 후 3종 유입 확인 (Phase 5-4 잔여 항목과 동일)
 - [ ] Git 태그: `enterprise/central-observability`
 
 ---
 
-### Phase 9. 보안·정책 거버넌스 (Phase 7 직후 병렬 진행 가능)
+### Phase 9. 인증·시크릿 관리 (Phase 8과 병렬 진행 가능)
 
-> **목표**: 시크릿 외부화, 정책 강제(Policy-as-Code), 런타임·이미지 보안을 전 클러스터에 일관 적용한다.
+> **범위**: 워크로드 인증은 **IRSA / EKS Pod Identity** 두 방식, 시크릿 외부화는
+> **External Secrets Operator + SSM Parameter Store**로 확정한다.
 >
-> **왜 필요한가**:
-> 멀티 계정·멀티 클러스터 환경에서는 "사람이 일일이 검토"가 불가능하다.
-> **정책을 코드로 강제(admission control)** 하지 않으면 환경 간 보안 표준이 드리프트한다.
->
-> **가장 시급한 단일 항목**: External Secrets — 현재 ArgoCD admin password 등 시크릿이 state/코드에 노출될 위험.
-> security-engineer에게 현재 시크릿 관리 방식 점검 위임 권장.
->
-> **전제 조건**: Phase 7 (Secrets Manager 계정 경계 확립). Phase 8과 병렬 진행 가능.
+> **채택하지 않는 것**: Kyverno admission policy, Org SCP/Tag Policy 확장,
+> ECR Enhanced Scanning(Inspector), EKS Audit Log, Falco.
 
-- [ ] **External Secrets Operator** 배포 (ArgoCD Hub로 전 클러스터 배포)
-  - [ ] AWS Secrets Manager/SSM Parameter Store → K8s Secret 동기화
-  - [ ] Pod Identity로 인증 (현재 Pod Identity 전략과 일관, IRSA 불필요)
-  - [ ] ArgoCD admin password, Helm values 내 시크릿을 Secrets Manager로 이전
-- [ ] **Kyverno** admission policy 배포 (YAML 정책, Rego 학습 곡선 없음)
-  - [ ] 리소스 limit 필수 강제
-  - [ ] `latest` 이미지 태그 금지
-  - [ ] ECR(특정 레지스트리)만 허용
-  - [ ] `hostPath` 마운트 금지
-  - [ ] Pod Security Standards(`restricted`) 네임스페이스 적용
-- [ ] Org SCP/Tag Policy로 태그 거버넌스를 계정 레벨까지 확장
-  - 현재 `docs/tag-governance.md`의 Terraform 태그 강제를 AWS 정책으로 보완
-- [ ] ECR Enhanced Scanning (Amazon Inspector) 활성화 — CVE 자동 스캔 (기존 basic scan 업그레이드)
-- [ ] EKS Audit Log 활성화 (prd만) → CloudWatch 집계
-- [ ] (선택) Falco 런타임 위협 탐지 배포
+- [x] **IRSA / EKS Pod Identity** — addon·워크로드 인증에 두 방식 병행 적용
+- [x] **External Secrets Operator** 배포 (ArgoCD Hub로 전 클러스터 배포)
+  - [x] SSM Parameter Store → K8s Secret 동기화
+  - [x] ArgoCD admin password·Grafana admin 자격증명을 SSM SecureString으로 이전
+  - [ ] 앱 시크릿 이관 — devops-manifest `_externalsecret.tpl` 신설 (devops-manifest 소관)
 - [ ] Git 태그: `enterprise/hub-spoke-eks` (2단계 완료)
 
