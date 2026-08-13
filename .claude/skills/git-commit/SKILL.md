@@ -323,9 +323,29 @@ Terraform 변경:
 - `.terraform/` 내 파일
 - `*.tfvars` (`.tfvars.example` 제외)
 
+**스테이징 금지 변경** — 파일이 아니라 *특정 라인의 변경*이 대상이다:
+- `**/shared/vpc/locals.tf`의 `enable_nat_gateway` 값 변경 (`true` ↔ `false`)
+
+  `/env-provision`이 켜고 `/env-teardown`이 끄는 **실습 환경 운영 상태**이지 설계 결정이
+  아니다. 커밋하면 실습 사이클마다 의미 없는 히스토리가 쌓이고, 다음 사이클에서 반대 방향
+  커밋이 또 필요해진다. teardown 상태에서 이 파일이 dirty로 남는 것은 정상이며 오히려
+  "현재 이 환경의 NAT Gateway가 꺼져 있다"는 신호로 쓴다.
+
+  같은 파일의 다른 라인(서브넷 CIDR, `single_nat_gateway`, 태그 등)이 함께 변경된 경우에는
+  `git add -p` 등으로 해당 라인만 제외하고 나머지는 정상 스테이징한다. 제외했다는 사실을
+  사용자에게 반드시 출력한다:
+
+  ```
+  [스테이징 제외] project/environments/develop/.../vpc/locals.tf
+    enable_nat_gateway: true -> false (env-provision/teardown 운영 토글 — 커밋 대상 아님)
+  ```
+
+  사용자가 명시적으로 "NGW 값도 커밋해달라"고 요청하면 그 요청을 따른다.
+
 **분리 커밋 선택 시** (Step 2에서 그룹 1 선택): 해당 그룹 파일만 `git add <파일>` 개별 스테이징
 
-**전체 커밋 시**: `git add -A` (금지 패턴 제외)
+**전체 커밋 시**: `git add -A` (금지 패턴·금지 변경 제외 — `git add -A` 전에 금지 변경이
+있는지 먼저 확인하고, 있으면 해당 파일은 `-A` 대상에서 빼고 `git add -p`로 개별 처리한다)
 
 사용자가 특정 파일을 지정한 경우: 해당 파일만 스테이징
 

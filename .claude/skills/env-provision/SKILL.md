@@ -352,6 +352,9 @@ cd {root}/vpc && terraform apply -auto-approve
 
 이 apply가 실패하면 Step 2 진행 상황과 무관하게 즉시 사용자에게 보고한다.
 
+> **이 `enable_nat_gateway` 변경은 커밋하지 않는다.** `/env-teardown`이 다시 끌 실습 환경
+> 운영 상태이지 설계 결정이 아니다. `/git-commit`도 이 라인을 스테이징 금지 변경으로 제외한다.
+
 ### Step 1.5: pods-sg apply — SGP Pod SG ({root}/pods-sg가 있는 환경만 — 현재 develop)
 
 `{root}/pods-sg`가 존재하는 환경만 실행한다. 없으면 건너뛴다.

@@ -1082,6 +1082,10 @@ cd {root}/vpc && ALLOW_PRODUCTION_TEARDOWN_APPLY=1 terraform apply -auto-approve
 **VPC 자체, 서브넷, 파라미터 스토어 등 비용이 없는 리소스는 삭제하지 않는다** — plan에
 NAT Gateway/EIP/private route 외의 destroy가 나타나면 즉시 중단하고 사용자에게 확인받는다.
 
+> **이 `enable_nat_gateway` 변경은 커밋하지 않는다.** `/env-provision`이 다시 켤 실습 환경
+> 운영 상태이지 설계 결정이 아니다. teardown 이후 `git status`에 이 파일이 dirty로 남는 것이
+> 정상이며, `/git-commit`도 이 라인을 스테이징 금지 변경으로 제외한다.
+
 Step 11로 넘어가기 전에 이 apply와 Step 8의 EKS destroy가 **둘 다** 완료됐는지 확인한다.
 
 ### Step 11: 완료 안내 및 잔여 비용 리소스 최종 확인
