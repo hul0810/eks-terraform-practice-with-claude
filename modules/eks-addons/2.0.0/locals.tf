@@ -144,9 +144,4 @@ locals {
       } : {}
     )
   }
-
-  # OTel Collector namespace 이름 단일 정의.
-  # kubernetes_manifest의 metadata.namespace와 kubernetes_namespace_v1이 이 값을 공유하여
-  # namespace 이름 변경 시 한 곳만 수정하면 된다.
-  otel_collector_namespace = "otel-collector"
 }

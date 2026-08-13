@@ -91,7 +91,7 @@ variable "external_dns_config" {
 variable "enable_external_secrets" {
   description = "External Secrets Operator 설치 여부"
   type        = bool
-  default     = false # 신규 애드온이므로 opt-in (enable_otel_spoke_collector와 동일한 정책)
+  default     = false # 모든 환경이 쓰지는 않는 애드온이라 opt-in
 }
 
 # 기본값 없음 — lbc_config와 동일한 이유(위 참고). validation은 nested key(chart_version)를
@@ -295,37 +295,6 @@ variable "additional_tags" {
   description = "모든 리소스에 추가할 태그 맵. providers.tf의 default_tags로 공통 태그를 관리하므로, 이 변수는 호출자가 추가로 전달할 태그에만 사용한다"
   type        = map(string)
   default     = {}
-}
-
-# ── OTel Spoke Collector ──────────────────────────────────────────────────────
-
-variable "enable_otel_spoke_collector" {
-  description = "OTel spoke collector 설치 여부. true로 설정하면 OTel Operator와 DaemonSet·Deployment 수집기를 otel-collector 네임스페이스에 배포한다. otel_gateway_endpoint와 otel_spoke_operator_chart_version을 함께 설정해야 한다"
-  type        = bool
-  default     = false
-}
-
-variable "otel_gateway_endpoint" {
-  description = "monitoring 클러스터 OTel Gateway Internal NLB 엔드포인트 (예: 'internal-xxxx.elb.ap-northeast-2.amazonaws.com:4317'). enable_otel_spoke_collector=true일 때 필수"
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = !var.enable_otel_spoke_collector || length(var.otel_gateway_endpoint) > 0
-    error_message = "enable_otel_spoke_collector=true일 때 otel_gateway_endpoint는 비어 있을 수 없습니다."
-  }
-}
-
-variable "otel_spoke_operator_chart_version" {
-  description = "OTel Operator Helm chart 버전 (예: '0.76.1'). enable_otel_spoke_collector=true일 때 필수"
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = !var.enable_otel_spoke_collector || (var.otel_spoke_operator_chart_version != null && length(var.otel_spoke_operator_chart_version) > 0)
-    error_message = "enable_otel_spoke_collector=true일 때 otel_spoke_operator_chart_version은 설정되어야 합니다."
-  }
 }
 
 variable "external_dns_assume_role_arn" {

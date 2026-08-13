@@ -108,9 +108,6 @@ module "eks_addons" {
   # (modules/eks-addons/2.0.0/variables.tf의 argo_rollouts_extension_enabled 참조).
   argo_rollouts_extension_enabled = true
 
-  # monitoring 클러스터는 OTel Hub — spoke collector 미설치
-  enable_otel_spoke_collector = local.eks_addons.enable_otel_spoke_collector
-
   # GitOps Bridge Hub: monitoring이 자기 자신을 spoke로 명시 등록하는 cluster Secret +
   # App-of-Apps 부트스트랩. develop/production은 이 변수를 안 넘기면(기본값 null) spoke로
   # 동작한다 — locals.tf의 local.gitops_bridge_hub_cluster 상단 WHY 참고.

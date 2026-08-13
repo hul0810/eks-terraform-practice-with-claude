@@ -98,10 +98,6 @@ locals {
     # SSM SecureString 기본 키(alias/aws/ssm)만 복호화 허용 — 계정 내 모든 KMS 키 와일드카드 대신 최소 권한
     external_secrets_kms_key_arns = [data.aws_kms_alias.ssm_default.target_key_arn]
 
-    # monitoring 클러스터는 OTel의 Hub이므로 spoke collector를 설치하지 않는다.
-    # OTel Operator와 Gateway는 observability/ root module에서 관리한다.
-    enable_otel_spoke_collector = false
-
     enable_argocd = true
     # ArgoCD Application Notifications의 Slack 알림 서비스 활성화 여부. 전용
     # IRSA/SecretStore(notifications-irsa.tf)가 준비되어 있어야 한다. Argo Rollouts는

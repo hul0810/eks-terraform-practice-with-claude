@@ -86,15 +86,6 @@ locals {
     # 주의: Terraform bcrypt() 함수를 직접 사용하지 말 것 — apply마다 ArgoCD pod 재시작 유발
     argocd_admin_password_bcrypt = data.aws_ssm_parameter.argocd_admin_password_bcrypt.value
     argocd_admin_password_mtime  = "2026-06-16T00:00:00Z"
-
-    # OTel Spoke Collector (GitOps로 OTel Gateway 배포 완료 후 활성화)
-    # 활성화 순서:
-    #   1. monitoring vpc apply → dev vpc peering_routes 주석 해제 + pcx ID 입력 → apply
-    #   2. Phase 6 ArgoCD Hub-Spoke 구성 후 devops-manifest 저장소에서 OTel Gateway 배포
-    #   3. OTel Gateway Internal NLB DNS 확인 후 아래 값 설정 → apply
-    enable_otel_spoke_collector       = false
-    otel_gateway_endpoint             = "" # "<NLB DNS>:4317" — ArgoCD 배포 후 Internal NLB DNS 확인
-    otel_spoke_operator_chart_version = "0.76.1"
   }
 
   # Karpenter NodePool 정의는 여기 없다 — 4종(general/arm64/gpu/spot) 전부

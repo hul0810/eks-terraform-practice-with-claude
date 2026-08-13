@@ -53,8 +53,8 @@ state mv/Helm state rm 외에, EC2NodeClass/NodePool 같은 Kubernetes 리소스
 
 | 파일 | 내용 |
 |------|------|
-| `main.tf` | module/resource 선언만(`gitops_bridge_bootstrap`, `eks_blueprints_addons_gitops`, OTel spoke 리소스 등) |
-| `locals.tf` | 핵심 계산 로직(`rollout_extension_version`, `argocd_values`, `otel_collector_namespace`) |
+| `main.tf` | module/resource 선언만(`gitops_bridge_bootstrap`, `eks_blueprints_addons_gitops` 등) |
+| `locals.tf` | 핵심 계산 로직(`rollout_extension_version`, `argocd_values`) |
 | `notifications.tf` | ArgoCD 자신의 Slack notifications-engine 설정(`argocd_notifications_values`) — 공식 카탈로그 template/trigger를 그대로 옮긴 정적 보일러플레이트. Argo Rollouts용 Slack 설정은 여기 없다 — Argo Rollouts는 Terraform이 전혀 관여하지 않는 addon이라 그 Slack 설정도 devops-manifest의 values-override.yaml 쪽 관심사다(2026-07-20 `eks_blueprints_addons` 삭제와 함께 제거) |
 
 Terraform은 같은 디렉토리의 `.tf` 파일을 전부 하나로 합쳐서 컴파일하므로 파일을 나눠도
@@ -62,7 +62,7 @@ Terraform은 같은 디렉토리의 `.tf` 파일을 전부 하나로 합쳐서 �
 
 ---
 
-## 이 모듈이 관리하는 애드온 (11종)
+## 이 모듈이 관리하는 애드온 (8종)
 
 | 애드온 | 설치 방법 | IAM 방식 | 활성화 조건 |
 |--------|-----------|---------|------------|
@@ -74,9 +74,6 @@ Terraform은 같은 디렉토리의 `.tf` 파일을 전부 하나로 합쳐서 �
 | cluster-autoscaler | Helm은 ArgoCD(GitOps Bridge, devops-manifest), IAM만 Terraform 유지 | IRSA(blueprints의 `cluster_autoscaler` 서브모듈이 `oidc_providers`만 받음 — Pod Identity 미지원, docs/addon-strategy.md IAM 전략 참조) | `enable_cluster_autoscaler=true`. Karpenter가 관리하는 general NodePool이 아니라 `modules/eks`의 시스템 노드 그룹(정적 Managed Node Group) 전용. 노드 집합은 갈리지만(Karpenter는 ASG를 쓰지 않음) 두 오토스케일러의 트리거는 똑같이 Pending Pod라, 대상 Pod 집합을 taint/toleration + `role=system` nodeAffinity로 분리해야 비로소 충돌하지 않는다 — `docs/addon-strategy.md` "오토스케일러 이원화와 노드 배치 규칙" 참조 |
 | argocd | Helm (`gitops-bridge-dev/gitops-bridge/helm`) — **GitOps Bridge 대상에서 영구 제외**(부트스트랩 예외, 아래 참조) | 없음(단, Hub 자신의 Pod Identity는 root `gitops-bridge-irsa.tf`에 손코드로 별도 존재) | 기본 활성 |
 | argo-rollouts | ~~Helm~~ → **ArgoCD(GitOps Bridge, Phase 6-4)** | 없음 | 이 모듈은 전혀 관여하지 않음 — devops-manifest의 ArgoCD Application이 처음부터 전담(아래 1.0.0→2.0.0 표 참고) |
-| opentelemetry-operator | Helm (직접) | 없음 | `enable_otel_spoke_collector=true` |
-| otel-spoke-node (DaemonSet) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
-| otel-spoke-singleton (Deployment) | OpenTelemetryCollector CRD | 없음 | `enable_otel_spoke_collector=true` |
 
 > **갱신(2026-07-21)**: develop도 이 표와 동일한 상태로 전환 완료했다(Phase 6-5) — LBC/
 > external-dns/metrics-server/external-secrets/karpenter/argo-rollouts 전부 GitOps Bridge
@@ -107,7 +104,8 @@ Terraform은 같은 디렉토리의 `.tf` 파일을 전부 하나로 합쳐서 �
 > 상태를 설명하는 참고용으로만 남는다.
 
 > EBS CSI Driver와 Secrets Store CSI Driver + ASCP는 Bootstrap 애드온으로 분류되어 `modules/eks`에서 관리한다.
-> cert-manager도 Bootstrap 애드온(`modules/eks`) — OTel Operator의 webhook 인증서 발급에 활용된다.
+> cert-manager도 Bootstrap 애드온(`modules/eks`) — ArgoCD가 배포하는 OTel Operator의 webhook
+> 인증서 발급이 이에 의존한다.
 
 ---
 
@@ -580,59 +578,6 @@ Application을 분산 처리하지 않는다 — sharding을 위해 `controller.
 함께 shard 할당 알고리즘 설정이 추가로 필요하다. 이 단계에서는 sharding을
 구성하지 않으므로 `controller.replicas`를 변경하지 않고 기본값(1)을 유지한다.
 Application 수가 늘어나 컨트롤러가 병목이 되면 향후 단계에서 sharding을 도입한다.
-
----
-
-## OTel Spoke Collector (Phase 5)
-
-`enable_otel_spoke_collector = true`로 활성화하면 dev/prd 클러스터에서 OTel Hub-Spoke 아키텍처의 spoke 역할을 수행한다.
-
-### 배포 구성
-
-| 리소스 | 모드 | 수집 대상 |
-|--------|------|----------|
-| `otel-spoke-node` (`OpenTelemetryCollector` CRD) | DaemonSet | 노드 메트릭(kubeletstats) + 컨테이너 로그(filelog) |
-| `otel-spoke-singleton` (`OpenTelemetryCollector` CRD) | Deployment (1 replica) | K8s 오브젝트 메트릭(k8s_cluster) + 앱 트레이스(otlp) |
-| `opentelemetry-operator` (Helm) | Deployment | OTel Operator — 위 CRD를 해석하여 Collector Pod 생성 |
-
-### k8s_cluster receiver를 DaemonSet에서 분리한 이유
-
-`k8s_cluster` receiver는 K8s API 서버를 폴링하여 Deployment, Pod, Node 등의 상태 메트릭을 수집한다.
-DaemonSet에 포함하면 노드 수만큼 동일한 메트릭이 중복 수집되어 Mimir에 n배 적재된다.
-단일 Deployment(`otel-spoke-singleton`)에 격리하여 클러스터당 1회만 수집한다.
-
-### 사전 조건
-
-1. **cert-manager** — OTel Operator의 admission webhook 인증서 발급에 필요. Bootstrap 애드온으로 `modules/eks`에서 관리.
-2. **VPC Peering** — `otel_gateway_endpoint`가 가리키는 monitoring NLB가 VPC Peering을 통해 라우팅 가능해야 함.
-   dev/prd vpc의 `vpc_peering_routes`에 monitoring VPC CIDR(10.12.0.0/16)을 추가한 후 apply.
-3. **OTel Operator 선설치** — `kubernetes_manifest` CRD 리소스는 plan 시점에 CRD 스키마를 조회한다.
-   Operator 설치 전 `plan`은 실패할 수 있으므로 `helm_release.otel_operator_spoke` apply 후 `plan`을 재실행한다.
-
-### 활성화 절차
-
-```hcl
-# eks-addons/locals.tf
-enable_otel_spoke_collector       = true
-otel_gateway_endpoint             = "internal-xxxx.ap-northeast-2.elb.amazonaws.com:4317"
-otel_spoke_operator_chart_version = "0.76.1"
-```
-
-`otel_gateway_endpoint`는 `monitoring/environments/ap-northeast-2/shared/observability/` 의
-`terraform output otel_gateway_nlb_hostname` 값에 `:4317`을 붙인 것이다.
-
-### GitOps 전환 계획 (Phase 6)
-
-현재 Phase 5에서는 Terraform `helm_release` + `kubernetes_manifest`로 직접 관리한다.
-Phase 6에서 ArgoCD Hub-Spoke 구성이 완료되면 아래 리소스를 ArgoCD Application으로 이관한다:
-
-| 현재 Terraform 리소스 | 이관 대상 (`devops-manifest` 경로) |
-|----------------------|----------------------------------|
-| `helm_release.otel_operator_spoke` | `observability/otel-operator/` |
-| `kubernetes_manifest.otel_spoke_node` | `observability/otel-collectors/node/` |
-| `kubernetes_manifest.otel_spoke_singleton` | `observability/otel-collectors/singleton/` |
-
-이관 시 Terraform에서 해당 리소스를 제거하고 `terraform state rm`으로 state에서도 분리한다.
 
 ---
 

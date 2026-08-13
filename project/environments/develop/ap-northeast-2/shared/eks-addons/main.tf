@@ -90,10 +90,6 @@ module "eks_addons" {
   # dev는 자체 ArgoCD를 운용하지 않는다(enable_argocd=false) — UI extension도 해당 없음.
   argo_rollouts_extension_enabled = false
 
-  enable_otel_spoke_collector       = local.eks_addons.enable_otel_spoke_collector
-  otel_gateway_endpoint             = local.eks_addons.otel_gateway_endpoint
-  otel_spoke_operator_chart_version = local.eks_addons.otel_spoke_operator_chart_version
-
   # replica_counts는 넘기지 않는다(기본값 {}) — 2.0.0의 replica_counts는 argocd_server만
   # 받는 strict object 타입이고, dev는 enable_argocd=false라 ArgoCD 자체를 안 켠다.
   additional_tags = local.common_tags
